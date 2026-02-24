@@ -1,3 +1,9 @@
+🇬🇧 [English](#-english) | 🇷🇺 [Русский](#-русский)
+
+---
+
+# 🇬🇧 English
+
 # 🌍 Terra Incognita
 
 **AI-powered exploration companion** — discover hidden, unusual, and forgotten places around you.
@@ -128,3 +134,138 @@ docker run -p 8000:8000 --env-file .env terra-incognita
 ## 📄 License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+---
+
+# 🇷🇺 Русский
+
+# 🌍 Terra Incognita
+
+**Исследовательский помощник на базе ИИ** — открывайте скрытые, необычные и забытые места вокруг вас.
+
+Terra Incognita объединяет открытые геоданные (OpenStreetMap, Wikidata, Atlas Obscura) с возможностями LLM, чтобы помочь путешественникам и городским исследователям находить места, которых нет в популярных путеводителях.
+
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
+---
+
+## ✨ Возможности
+
+- **🔍 Умный поиск** — находит заброшенные здания, военные объекты, подземные сооружения, исторические руины и другие необычные места поблизости
+- **🤖 ИИ-классификация** — категоризация и описание мест с помощью LLM, включая контекстный сторителлинг
+- **🗺️ Интерактивная карта** — обозреватель на базе MapLibre GL с механикой «тумана войны»
+- **📖 Дневник путешествий** — автоматическая фиксация посещений с определением близости к объекту
+- **🏆 Геймификация** — очки опыта, достижения и постепенное открытие карты из-под «тумана войны»
+- **🧭 Построение маршрутов** — генерация исследовательских маршрутов с обнаружением мест вдоль коридора движения
+- **💬 ИИ-чат** — разговорный помощник для планирования поездок и рекомендаций по местам
+- **👥 Сообщество** — делитесь маршрутами, местами и отзывами с другими исследователями
+- **📡 Офлайн-режим** — загрузка регионов для исследования без интернета
+
+## 🏗️ Архитектура
+
+```
+travel-assistant/
+├── backend/              # FastAPI-бэкенд (Discovery Engine)
+│   ├── app/
+│   │   ├── api/          # Эндпоинты REST API
+│   │   ├── models/       # Модели данных Pydantic
+│   │   ├── services/     # Бизнес-логика и интеграция с LLM
+│   │   ├── sources/      # Адаптеры источников данных (OSM, Wikidata, Atlas Obscura)
+│   │   └── utils/        # Утилиты (гео, rate limiting, HTTP)
+│   └── tests/            # Набор тестов Pytest
+├── map/                  # Фронтенд — интерактивная карта исследований
+│   ├── app.html          # Основной интерфейс приложения
+│   └── explorer.html     # Карта обозревателя
+└── data/                 # GeoJSON и статические геоданные
+```
+
+## 🚀 Быстрый старт
+
+### Требования
+
+- Python 3.11+
+- (Опционально) API-ключи для функций ИИ: OpenAI или Anthropic
+
+### Установка
+
+```bash
+cd backend
+pip install -e ".[dev]"
+```
+
+### Настройка
+
+```bash
+cp backend/.env.example backend/.env
+# Отредактируйте .env и добавьте API-ключи (опционально — базовый поиск работает без LLM)
+```
+
+| Переменная | Описание |
+|------------|----------|
+| `TERRA_OPENAI_API_KEY` | API-ключ OpenAI для функций ИИ |
+| `TERRA_ANTHROPIC_API_KEY` | API-ключ Anthropic (альтернативный) |
+| `TERRA_LLM_PROVIDER` | `openai` или `anthropic` |
+| `TERRA_GEMINI_API_KEY` | Ключ Google Gemini для глубокого анализа |
+
+Все доступные параметры описаны в [`backend/.env.example`](backend/.env.example).
+
+### Запуск
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+API будет доступен по адресу `http://localhost:8000`. Откройте `http://localhost:8000/map/app.html` для интерактивной карты.
+
+### Запуск тестов
+
+```bash
+cd backend
+pytest tests/ -v
+```
+
+## 🐳 Docker
+
+```bash
+cd backend
+docker build -t terra-incognita .
+docker run -p 8000:8000 --env-file .env terra-incognita
+```
+
+## 📡 Обзор API
+
+| Эндпоинт | Метод | Описание |
+|----------|-------|----------|
+| `/api/discover` | POST | Поиск интересных мест рядом с координатами |
+| `/api/route` | POST | Построение исследовательского маршрута |
+| `/api/chat` | POST | ИИ-чат для планирования поездок |
+| `/api/describe` | POST | Генерация ИИ-описания места |
+| `/api/recommend` | POST | Персонализированные рекомендации |
+| `/api/story` | POST | Генерация сторителлинг-нарратива |
+| `/api/visits` | GET/POST | Записи дневника путешествий |
+| `/api/fog/reveal` | POST | Открытие «тумана войны» на карте |
+| `/api/community/places` | GET/POST | Места, добавленные сообществом |
+| `/health` | GET | Проверка состояния и статус LLM |
+
+## 🛠️ Технологический стек
+
+- **Бэкенд**: Python, FastAPI, Pydantic, httpx
+- **Фронтенд**: Vanilla JS, MapLibre GL JS
+- **Источники данных**: OpenStreetMap Overpass API, Wikidata SPARQL, Atlas Obscura
+- **ИИ/LLM**: OpenAI GPT / Anthropic Claude (подключаемые)
+- **Кэширование**: файловое с настраиваемым TTL
+
+## 🤝 Участие в разработке
+
+1. Сделайте форк репозитория
+2. Создайте ветку для новой функциональности (`git checkout -b feature/amazing-feature`)
+3. Зафиксируйте изменения (`git commit -m 'Add amazing feature'`)
+4. Отправьте ветку в удалённый репозиторий (`git push origin feature/amazing-feature`)
+5. Откройте Pull Request
+
+## 📄 Лицензия
+
+Проект распространяется под лицензией MIT — подробности в файле [LICENSE](LICENSE).
