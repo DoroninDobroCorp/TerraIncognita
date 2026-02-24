@@ -1,0 +1,1966 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Terra Incognita — Explorer Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Interactive exploration map for discovering unusual and hidden places">
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"
+          integrity="sha256-G0W6/JRzbzxZYK5MP4SRlKnxYFr7F8kmnF0ZT1fnlxk="
+          crossorigin="anonymous"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet"
+        integrity="sha256-2O5Q3ujU9bBBT9Jnuc6Lu9m0bZVKMRW9xE164V9gqZQ="
+        crossorigin="anonymous" />
+  <style>
+    :root {
+      --bg-primary: #1a1a2e;
+      --bg-secondary: #16213e;
+      --bg-card: #1e2a45;
+      --text-primary: #e0e0e0;
+      --text-secondary: #a0a0b0;
+      --accent: #ff6b35;
+      --accent-glow: rgba(255, 107, 53, 0.3);
+      --fog-color: rgba(10, 10, 30, 0.65);
+      --radius: 10px;
+      --shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-primary); color: var(--text-primary); overflow: hidden; }
+    #map { width: 100%; height: 100%; }
+
+    /* ── Controls overlay ── */
+    .map-controls { position: absolute; top: 12px; right: 12px; z-index: 16; display: flex; flex-direction: column; gap: 8px; }
+    .ctrl-btn {
+      width: 42px; height: 42px; border: none; border-radius: var(--radius);
+      background: var(--bg-card); color: var(--text-primary); font-size: 20px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow); transition: background 0.2s, transform 0.1s;
+    }
+    .ctrl-btn:hover { background: var(--bg-secondary); }
+    .ctrl-btn:active { transform: scale(0.93); }
+    .ctrl-btn.active { background: var(--accent); color: #fff; }
+    #map.pin-mode { cursor: crosshair !important; }
+    #map.pin-mode canvas { cursor: crosshair !important; }
+    #pin-badge {
+      position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+      background: var(--bg-card); color: var(--text-secondary); padding: 6px 14px;
+      border-radius: var(--radius); font-size: 12px; box-shadow: var(--shadow);
+      z-index: 5; pointer-events: none; opacity: 0; transition: opacity 0.3s;
+    }
+    #pin-badge.visible { opacity: 1; }
+
+    /* ── Layer switcher ── */
+    #layer-menu {
+      position: absolute; top: 12px; left: 12px; z-index: 10;
+      display: flex; gap: 4px; background: var(--bg-card); border-radius: var(--radius);
+      padding: 4px; box-shadow: var(--shadow);
+    }
+    .layer-btn {
+      padding: 6px 12px; border: none; border-radius: 7px; cursor: pointer;
+      background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 600;
+      transition: all 0.2s;
+    }
+    .layer-btn.active { background: var(--accent); color: #fff; }
+
+    /* ── Filter panel ── */
+    #filter-panel {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 20;
+      background: var(--bg-card); border-radius: var(--radius) var(--radius) 0 0;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.5); padding: 16px 16px 24px;
+      transform: translateY(calc(100% - 64px)); transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+      max-height: 65vh; overflow-y: auto;
+    }
+    #filter-panel.open { transform: translateY(0); }
+    .filter-handle {
+      width: 60px; height: 5px; background: var(--accent); border-radius: 3px;
+      margin: 0 auto 8px; cursor: pointer; opacity: 0.8;
+      padding: 10px 30px; background-clip: content-box;
+      animation: handlePulse 2s ease-in-out 3;
+    }
+    .filter-handle-label {
+      text-align: center; font-size: 11px; color: var(--text-secondary);
+      margin-bottom: 8px; cursor: pointer;
+    }
+    @keyframes handlePulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; background: var(--accent); } }
+    .filter-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+    .filter-section { margin-bottom: 14px; }
+    .filter-section-title { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }
+
+    /* Category chips */
+    .category-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      padding: 5px 10px; border-radius: 16px; font-size: 12px; cursor: pointer;
+      border: 1.5px solid var(--text-secondary); color: var(--text-secondary);
+      transition: all 0.2s; user-select: none; white-space: nowrap;
+    }
+    .chip.active { border-color: var(--accent); color: #fff; background: var(--accent); }
+    .chip .chip-icon { margin-right: 3px; }
+
+    /* Presets */
+    .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+    .preset-btn {
+      padding: 5px 10px; border-radius: 16px; font-size: 11px; cursor: pointer;
+      border: 1px solid var(--accent); color: var(--accent); background: transparent;
+      transition: all 0.2s; font-weight: 600;
+    }
+    .preset-btn:hover, .preset-btn.active { background: var(--accent); color: #fff; }
+
+    /* Slider */
+    .slider-row { display: flex; align-items: center; gap: 10px; }
+    .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+    .slider-value { font-size: 13px; font-weight: 600; min-width: 55px; text-align: right; color: var(--accent); }
+
+    /* Toggle */
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
+    .toggle-label { font-size: 13px; }
+    .toggle {
+      position: relative; width: 40px; height: 22px; background: #444; border-radius: 11px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle.on { background: var(--accent); }
+    .toggle::after {
+      content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+      background: #fff; border-radius: 50%; transition: transform 0.2s;
+    }
+    .toggle.on::after { transform: translateX(18px); }
+
+    /* ── Place card (detail) ── */
+    #place-card {
+      position: absolute; bottom: 60px; left: 12px; right: 12px; z-index: 25;
+      background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 16px; display: none; max-height: 45vh; overflow-y: auto;
+      border-left: 4px solid var(--accent);
+    }
+    #place-card.visible { display: block; animation: slideUp 0.3s ease; }
+    @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .card-close { position: absolute; top: 8px; right: 12px; background: none; border: none; color: var(--text-secondary); font-size: 20px; cursor: pointer; }
+    .card-category { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; background: var(--accent); color: #fff; margin-right: 4px; margin-bottom: 4px; }
+    .card-name { font-size: 18px; font-weight: 700; margin: 6px 0 4px; }
+    .card-meta { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+    .card-desc { font-size: 13px; line-height: 1.5; color: var(--text-primary); }
+    .card-confidence { margin-top: 8px; }
+    .confidence-bar { height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
+    .confidence-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+    .card-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .card-action-btn {
+      flex: 1; padding: 8px; border: none; border-radius: 8px; font-size: 12px;
+      font-weight: 600; cursor: pointer; transition: all 0.2s;
+    }
+    .btn-navigate { background: var(--accent); color: #fff; }
+    .btn-navigate:hover { background: #ff8555; }
+    .btn-save { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--text-secondary); }
+
+    /* ── Fog of War stats ── */
+    #fog-stats {
+      position: absolute; top: 60px; left: 12px; z-index: 10;
+      background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 8px 14px; font-size: 12px; display: none;
+    }
+    #fog-stats.visible { display: block; }
+    .fog-progress { display: flex; align-items: center; gap: 8px; }
+    .fog-bar { width: 80px; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+    .fog-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #ffb347); border-radius: 3px; transition: width 0.5s; }
+    .fog-pct { font-weight: 700; color: var(--accent); }
+
+    /* ── Search bar ── */
+    #search-bar {
+      position: absolute; top: 56px; left: 50%; transform: translateX(-50%); z-index: 15;
+      width: min(400px, calc(100% - 120px));
+    }
+    #search-input {
+      width: 100%; padding: 10px 16px; border: none; border-radius: var(--radius);
+      background: var(--bg-card); color: var(--text-primary); font-size: 14px;
+      box-shadow: var(--shadow); outline: none;
+    }
+    #search-input::placeholder { color: var(--text-secondary); }
+    #search-input:focus { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+
+    /* ── Cluster count badge ── */
+    .cluster-marker {
+      width: 36px; height: 36px; border-radius: 50%; display: flex;
+      align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+      color: #fff; border: 2px solid rgba(255,255,255,0.3);
+    }
+
+    /* ── Loading overlay ── */
+    #loading {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      z-index: 30; background: var(--bg-card); border-radius: var(--radius);
+      padding: 16px 24px; box-shadow: var(--shadow); display: none;
+      font-size: 14px; align-items: center; gap: 10px;
+    }
+    #loading.visible { display: flex; }
+    .spinner { width: 20px; height: 20px; border: 3px solid var(--text-secondary); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Deep Research notification ── */
+    #deep-research-badge {
+      position: absolute; top: 110px; left: 12px; z-index: 15;
+      background: linear-gradient(135deg, var(--accent), #ff8555);
+      color: white; border-radius: var(--radius); padding: 10px 14px;
+      box-shadow: var(--shadow); font-size: 12px; line-height: 1.4;
+      max-width: 280px; display: none; cursor: pointer;
+      transition: transform 0.2s;
+    }
+    #deep-research-badge:hover { transform: translateY(-2px); box-shadow: 0 6px 25px rgba(0,0,0,0.6); }
+    #deep-research-badge.visible { display: block; animation: slideInLeft 0.5s ease; }
+    @keyframes slideInLeft { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    #deep-research-badge .badge-icon { font-size: 16px; margin-right: 6px; }
+    #deep-research-badge .badge-text { font-weight: 600; }
+    #deep-research-badge .badge-hint { font-size: 11px; opacity: 0.9; margin-top: 4px; }
+
+    /* ── Route panel ── */
+    #route-panel {
+      position: absolute; top: 0; right: 0; bottom: 0; z-index: 30;
+      width: min(380px, 90vw); background: var(--bg-card);
+      box-shadow: -4px 0 20px rgba(0,0,0,0.5); display: none;
+      flex-direction: column; overflow: hidden;
+      animation: slideInRight 0.35s ease;
+    }
+    #route-panel.visible { display: flex; }
+    @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+    .route-header {
+      padding: 16px; border-bottom: 1px solid rgba(255,255,255,0.1);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .route-header h3 { font-size: 16px; }
+    .route-close { background: none; border: none; color: var(--text-secondary); font-size: 22px; cursor: pointer; }
+    .route-from-to {
+      padding: 12px 16px; background: var(--bg-secondary); border-bottom: 1px solid rgba(255,255,255,0.06);
+      font-size: 13px;
+    }
+    .route-from-to .route-endpoint { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .route-from-to .route-endpoint:last-child { margin-bottom: 0; }
+    .route-from-to .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .route-from-to .dot.from { background: #4fc3f7; border: 2px solid #0288d1; }
+    .route-from-to .dot.to { background: #ff6b35; border: 2px solid #e65100; }
+    .route-from-to .ep-label { color: var(--text-secondary); font-size: 11px; min-width: 28px; }
+    .route-from-to .ep-name { font-weight: 600; flex: 1; }
+    #route-from-input {
+      flex: 1; background: var(--bg-secondary); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px; padding: 5px 8px; color: var(--text-primary); font-size: 13px;
+    }
+    #route-from-input::placeholder { color: var(--text-secondary); }
+    .route-from-warning {
+      background: rgba(255,152,0,0.15); border-left: 3px solid #ff9800;
+      padding: 6px 10px; margin-top: 6px; border-radius: 4px;
+      font-size: 11px; color: #ffb74d; display: none;
+    }
+    .route-from-warning.visible { display: block; }
+    .route-info {
+      padding: 12px 16px; background: var(--bg-secondary); font-size: 13px;
+      display: flex; gap: 16px;
+    }
+    .route-info span { display: flex; align-items: center; gap: 4px; }
+    .route-suggestions {
+      flex: 1; overflow-y: auto; padding: 12px 16px;
+    }
+    .route-suggestions h4 { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .suggestion-card {
+      background: var(--bg-secondary); border-radius: 8px; padding: 12px;
+      margin-bottom: 10px; cursor: pointer; transition: all 0.2s;
+      border: 2px solid transparent;
+    }
+    .suggestion-card:hover { border-color: var(--accent); }
+    .suggestion-card.added { border-color: #28a745; background: rgba(40,167,69,0.15); }
+    .suggestion-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .suggestion-meta { font-size: 12px; color: var(--text-secondary); display: flex; gap: 10px; }
+    .suggestion-desc { font-size: 12px; color: var(--text-secondary); margin-top: 6px; line-height: 1.4; }
+    .suggestion-add {
+      margin-top: 8px; padding: 4px 10px; border-radius: 6px; font-size: 11px;
+      font-weight: 600; cursor: pointer; border: 1px solid var(--accent);
+      color: var(--accent); background: transparent; transition: all 0.2s;
+    }
+    .suggestion-add:hover { background: var(--accent); color: #fff; }
+    .suggestion-add.added { background: #28a745; color: #fff; border-color: #28a745; }
+    .route-actions {
+      padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.1);
+    }
+    .route-go-btn {
+      width: 100%; padding: 12px; border: none; border-radius: 8px;
+      background: var(--accent); color: #fff; font-size: 14px; font-weight: 700;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .route-go-btn:hover { background: #ff8555; }
+
+    /* ── Mobile touch improvements ── */
+    @media (max-width: 600px) {
+      #search-bar { width: calc(100% - 24px); top: 52px; }
+      #place-card { left: 8px; right: 8px; bottom: 56px; }
+      .ctrl-btn { width: 38px; height: 38px; font-size: 18px; }
+    }
+
+    /* ── Maplibre popup override ── */
+    .maplibregl-popup-content {
+      background: var(--bg-card) !important; color: var(--text-primary) !important;
+      border-radius: 8px !important; padding: 10px 14px !important; box-shadow: var(--shadow) !important;
+      font-size: 13px; max-width: 240px;
+    }
+    .maplibregl-popup-tip { border-top-color: var(--bg-card) !important; }
+    .maplibregl-popup-close-button { color: var(--text-secondary) !important; font-size: 18px; }
+    .popup-title { font-weight: 700; margin-bottom: 4px; }
+    .popup-cat { font-size: 11px; color: var(--accent); }
+    .popup-dist { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .popup-more { margin-top: 6px; color: var(--accent); font-size: 11px; cursor: pointer; text-decoration: underline; }
+
+    /* ── Accessibility focus styles ── */
+    .ctrl-btn:focus-visible, .layer-btn:focus-visible, .chip:focus-visible, .preset-btn:focus-visible, .card-action-btn:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+
+    /* ── Error toast ── */
+    #error-toast {
+      position: absolute; top: 100px; left: 50%; transform: translateX(-50%); z-index: 50;
+      background: #c0392b; color: #fff; padding: 10px 20px; border-radius: var(--radius);
+      font-size: 13px; box-shadow: var(--shadow); display: none; max-width: 90%;
+      text-align: center; animation: fadeIn 0.3s ease;
+    }
+    #error-toast.visible { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+    /* ── Onboarding tooltip ── */
+    #onboarding {
+      position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 30;
+      background: var(--bg-card); border: 1px solid var(--accent); border-radius: var(--radius);
+      padding: 12px 18px; box-shadow: var(--shadow); max-width: 320px; text-align: center;
+      font-size: 13px; line-height: 1.5; display: none;
+    }
+    #onboarding.visible { display: block; animation: slideUp 0.4s ease; }
+    .onboarding-close { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 5px 14px; margin-top: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
+
+    /* ── Screen reader only ── */
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+
+    /* ── Historical overlay time-slider ── */
+    #historical-panel {
+      position: absolute; top: 56px; right: 66px; z-index: 15;
+      background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 12px 16px; width: 260px; display: none;
+    }
+    #historical-panel.visible { display: block; animation: fadeIn 0.3s ease; }
+    .hist-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .hist-layer-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+    .hist-layer-btn {
+      padding: 6px 10px; border: 1px solid var(--text-secondary); border-radius: 8px;
+      background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer;
+      text-align: left; transition: all 0.2s;
+    }
+    .hist-layer-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .hist-layer-btn.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .hist-layer-period { font-size: 10px; opacity: 0.7; }
+    .hist-slider-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+    .hist-slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+    .hist-slider-label { font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+    .hist-opacity-value { font-size: 12px; font-weight: 700; color: var(--accent); min-width: 36px; text-align: right; }
+    .hist-close { position: absolute; top: 6px; right: 10px; background: none; border: none; color: var(--text-secondary); font-size: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<!-- Layer switcher -->
+<div id="layer-menu" role="tablist" aria-label="Map layer selection">
+  <button class="layer-btn active" data-layer="dark" role="tab" aria-selected="true">🌙 Dark</button>
+  <button class="layer-btn" data-layer="satellite" role="tab" aria-selected="false">🛰️ Satellite</button>
+  <button class="layer-btn" data-layer="terrain" role="tab" aria-selected="false">⛰️ Terrain</button>
+  <button class="layer-btn" data-layer="historical" role="tab" aria-selected="false" id="btn-historical">🕰️ History</button>
+</div>
+
+<!-- Right controls -->
+<div class="map-controls" role="toolbar" aria-label="Map controls">
+  <button class="ctrl-btn" id="btn-locate" title="My location" aria-label="Center on my location">📍</button>
+  <button class="ctrl-btn" id="btn-pin" title="Set search point" aria-label="Set custom search point on map">📌</button>
+  <button class="ctrl-btn" id="btn-fog" title="Fog of War" aria-label="Toggle fog of war" aria-pressed="false">🌫️</button>
+  <button class="ctrl-btn" id="btn-refresh" title="Refresh places" aria-label="Refresh discovered places">🔄</button>
+</div>
+
+<!-- Search -->
+<div id="search-bar">
+  <label for="search-input" class="sr-only">Search for places</label>
+  <input type="text" id="search-input" placeholder="🔍 Поиск: город, место или &quot;заброшки у воды&quot;" autocomplete="off" aria-label="Search for places using natural language" />
+</div>
+
+<!-- Fog of War stats -->
+<div id="fog-stats">
+  <div class="fog-progress">
+    <span>🗺️ Explored:</span>
+    <div class="fog-bar"><div class="fog-bar-fill" id="fog-fill" style="width:0%"></div></div>
+    <span class="fog-pct" id="fog-pct">0%</span>
+  </div>
+</div>
+
+<!-- Deep Research notification -->
+<div id="deep-research-badge">
+  <div style="display: flex; align-items: center;">
+    <span class="badge-icon">🔍</span>
+    <div>
+      <div class="badge-text" id="dr-text">Searching for hidden gems...</div>
+      <div class="badge-hint" id="dr-hint">Deep Research in progress</div>
+    </div>
+  </div>
+</div>
+
+<!-- Historical Map Overlay panel -->
+<div id="historical-panel" role="region" aria-label="Historical map overlay">
+  <button class="hist-close" id="hist-close" aria-label="Close historical panel">✕</button>
+  <div class="hist-title">🕰️ Time Travel</div>
+  <div class="hist-layer-list" id="hist-layers"></div>
+  <div class="hist-slider-row">
+    <span class="hist-slider-label">Opacity</span>
+    <input type="range" id="hist-opacity" min="0" max="100" step="5" value="50" aria-label="Historical overlay opacity">
+    <span class="hist-opacity-value" id="hist-opacity-value">50%</span>
+  </div>
+</div>
+
+<!-- Error toast -->
+<div id="error-toast" role="alert" aria-live="polite"></div>
+
+<!-- Onboarding -->
+<div id="onboarding" role="dialog" aria-label="Welcome tips">
+  <div>🗺️ <strong>Welcome to Terra Incognita!</strong></div>
+  <div style="margin-top:6px">Tap markers to discover places. Use the filter panel at the bottom to narrow your search. Search with natural language above.</div>
+  <button class="onboarding-close" id="onboarding-close">Got it!</button>
+</div>
+
+<!-- Loading -->
+<div id="loading" role="status" aria-live="polite"><div class="spinner"></div><span>Discovering places...</span></div>
+
+<!-- Map -->
+<div id="map"></div>
+<div id="pin-badge"></div>
+
+<!-- Place detail card -->
+<div id="place-card">
+  <button class="card-close" id="card-close">✕</button>
+  <div id="card-categories"></div>
+  <div class="card-name" id="card-name"></div>
+  <div class="card-meta" id="card-meta"></div>
+  <div class="card-desc" id="card-desc"></div>
+  <div class="card-confidence">
+    <div style="font-size:11px;color:var(--text-secondary);margin-bottom:3px">Confidence</div>
+    <div class="confidence-bar"><div class="confidence-fill" id="card-conf-fill"></div></div>
+  </div>
+  <div class="card-actions">
+    <button class="card-action-btn btn-navigate" id="card-navigate">🧭 Navigate</button>
+    <button class="card-action-btn btn-save" id="card-save">⭐ Save</button>
+    <button class="card-action-btn btn-navigate" id="card-route" style="background:#28a745">🛣️ Route</button>
+  </div>
+</div>
+
+<!-- Route panel -->
+<div id="route-panel">
+  <div class="route-header">
+    <h3>🛣️ Route planner</h3>
+    <button class="route-close" id="route-close">✕</button>
+  </div>
+  <div class="route-from-to">
+    <div class="route-endpoint">
+      <div class="dot from"></div>
+      <span class="ep-label">From</span>
+      <span class="ep-name" id="route-from-name">My location</span>
+      <input type="text" id="route-from-input" placeholder="Enter city..." style="display:none">
+    </div>
+    <div class="route-endpoint">
+      <div class="dot to"></div>
+      <span class="ep-label">To</span>
+      <span class="ep-name" id="route-to-name">—</span>
+    </div>
+    <div class="route-from-warning" id="route-from-warning">
+      ⚠️ Геолокация не определена. Введите город отправления или нажмите 📍
+    </div>
+  </div>
+  <div class="route-info" id="route-info">
+    <span>📏 <span id="route-distance">--</span></span>
+    <span>⏱️ <span id="route-duration">--</span></span>
+    <span>📍 <span id="route-stops">0 stops</span></span>
+  </div>
+  <div class="route-suggestions" id="route-suggestions">
+    <h4>✨ Worth visiting along the way</h4>
+    <div id="suggestion-list"><em style="color:var(--text-secondary);font-size:13px">Calculating route...</em></div>
+  </div>
+  <div class="route-actions">
+    <button class="route-go-btn" id="route-go">🧭 Open full route in Google Maps</button>
+  </div>
+</div>
+
+<!-- Filter panel -->
+<div id="filter-panel" role="region" aria-label="Filter controls">
+  <div class="filter-handle" id="filter-handle" role="button" aria-label="Toggle filter panel" tabindex="0"></div>
+  <div class="filter-handle-label">▲ Filters &amp; Settings</div>
+  <div class="filter-title">
+    <span>🎛️ Filters</span>
+    <span id="place-count" style="font-size:12px;color:var(--text-secondary)">0 places</span>
+  </div>
+
+  <div class="filter-section">
+    <div class="filter-section-title">Presets</div>
+    <div class="presets">
+      <button class="preset-btn active" data-preset="all">🌍 All Interesting</button>
+      <button class="preset-btn" data-preset="hidden">🕵️ Hidden Only</button>
+      <button class="preset-btn" data-preset="urbex">🏚️ Urbex</button>
+      <button class="preset-btn" data-preset="nature">🌿 Nature</button>
+      <button class="preset-btn" data-preset="history">🏛️ History</button>
+      <button class="preset-btn" data-preset="classic">⭐ Classic</button>
+    </div>
+  </div>
+
+  <div class="filter-section">
+    <div class="filter-section-title">Categories</div>
+    <div class="category-chips" id="category-chips"></div>
+  </div>
+
+  <div class="filter-section">
+    <div class="filter-section-title">Radius</div>
+    <div class="slider-row">
+      <input type="range" id="radius-slider" min="0.5" max="50" step="0.5" value="5">
+      <span class="slider-value" id="radius-value">5.0 km</span>
+    </div>
+  </div>
+
+  <div class="filter-section">
+    <div class="filter-section-title">Confidence</div>
+    <div class="slider-row">
+      <input type="range" id="confidence-slider" min="0" max="100" step="5" value="0">
+      <span class="slider-value" id="confidence-value">All</span>
+    </div>
+  </div>
+
+  <div class="filter-section">
+    <div class="toggle-row">
+      <span class="toggle-label">Hide visited places</span>
+      <div class="toggle" id="toggle-visited"></div>
+    </div>
+    <div class="toggle-row" style="margin-top:6px">
+      <span class="toggle-label">Show fog of war</span>
+      <div class="toggle on" id="toggle-fog"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  Terra Incognita — Explorer Map (Epic 3)
+// ═══════════════════════════════════════════════════════
+
+const API_BASE = window.location.origin || 'http://localhost:1312';
+
+// ── Category definitions (loaded from API or defaults) ──
+let CATEGORIES = {
+  abandoned:     { icon: '🏚️', label: 'Abandoned',    color: '#e74c3c', group: 'unusual' },
+  underground:   { icon: '🕳️', label: 'Underground',  color: '#8e44ad', group: 'unusual' },
+  industrial:    { icon: '🏭', label: 'Industrial',   color: '#d35400', group: 'unusual' },
+  ruins:         { icon: '🏛️', label: 'Ruins',        color: '#c0392b', group: 'unusual' },
+  military:      { icon: '🎖️', label: 'Military',     color: '#2c3e50', group: 'unusual' },
+  nature_hidden: { icon: '🌿', label: 'Hidden Nature',color: '#27ae60', group: 'unusual' },
+  viewpoint:     { icon: '👁️', label: 'Viewpoint',    color: '#2980b9', group: 'classic' },
+  street_art:    { icon: '🎨', label: 'Street Art',   color: '#e91e63', group: 'unusual' },
+  transport:     { icon: '🚂', label: 'Transport',    color: '#f39c12', group: 'unusual' },
+  water:         { icon: '💧', label: 'Water',        color: '#3498db', group: 'unusual' },
+  cave:          { icon: '🦇', label: 'Cave',         color: '#34495e', group: 'unusual' },
+  religious:     { icon: '⛪', label: 'Religious',    color: '#9b59b6', group: 'classic' },
+  landmark:      { icon: '🗿', label: 'Landmark',     color: '#e67e22', group: 'classic' },
+  museum:        { icon: '🏛️', label: 'Museum',       color: '#1abc9c', group: 'classic' },
+  architecture:  { icon: '🏰', label: 'Architecture', color: '#16a085', group: 'classic' },
+  monument:      { icon: '🗽', label: 'Monument',     color: '#f1c40f', group: 'classic' },
+  park:          { icon: '🌳', label: 'Park',         color: '#2ecc71', group: 'classic' },
+};
+
+const PRESETS = {
+  all:     Object.keys(CATEGORIES),
+  hidden:  Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'unusual'),
+  urbex:   ['abandoned', 'underground', 'industrial', 'ruins', 'military'],
+  nature:  ['nature_hidden', 'viewpoint', 'water', 'cave', 'park'],
+  history: ['ruins', 'military', 'religious', 'landmark', 'museum', 'monument', 'architecture'],
+  classic: Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'classic'),
+};
+
+// ── State ──
+const FOG_REVEAL_RADIUS_DEG = 0.002;  // ~200m radius for fog holes
+const FOG_CIRCLE_SEGMENTS = 24;       // polygon approximation of circles
+const CLUSTER_MAX_ZOOM = 14;
+const CLUSTER_RADIUS_PX = 50;
+const MAX_DISCOVER_LIMIT = 200;
+
+function safeParseArray(key) {
+  try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
+  catch { localStorage.removeItem(key); return []; }
+}
+
+let state = {
+  places: [],
+  filteredPlaces: [],
+  activeCategories: new Set(Object.keys(CATEGORIES)),
+  radius: 5.0,
+  minConfidence: 0,
+  hideVisited: false,
+  fogEnabled: true,
+  visitedPlaces: new Set(safeParseArray('ti_visited')),
+  savedPlaces: new Set(safeParseArray('ti_saved')),
+  userLat: 42.4410,  // default: Kotor, Montenegro
+  userLng: 18.7712,
+  geolocated: false, // true when real GPS or user-set origin
+  currentPreset: 'all',
+  selectedPlace: null,
+  pinMode: false,
+};
+
+// ── Map styles ──
+const STYLES = {
+  dark: {
+    version: 8,
+    name: 'Terra Dark',
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources: {
+      osm: {
+        type: 'raster',
+        tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '&copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors'
+      }
+    },
+    layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+  },
+  satellite: {
+    version: 8,
+    name: 'Satellite',
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources: {
+      satellite: {
+        type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        attribution: '&copy; Esri, Maxar, Earthstar Geographics'
+      }
+    },
+    layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }]
+  },
+  terrain: {
+    version: 8,
+    name: 'Terrain',
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    sources: {
+      terrain: {
+        type: 'raster',
+        tiles: ['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> &copy; <a href="http://openstreetmap.org">OpenStreetMap</a>'
+      }
+    },
+    layers: [{ id: 'terrain', type: 'raster', source: 'terrain' }]
+  }
+};
+
+// ═══════════════════════════════════════════════════════
+//  Initialize Map
+// ═══════════════════════════════════════════════════════
+
+let map;
+let mapAvailable = false;
+try {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: STYLES.dark,
+    center: [state.userLng, state.userLat],
+    zoom: 13,
+    maxZoom: 19,
+    minZoom: 3,
+    attributionControl: true,
+    touchZoomRotate: true,
+    dragRotate: false
+  });
+  mapAvailable = true;
+} catch (e) {
+  console.warn('Map initialization failed (WebGL unavailable):', e.message);
+  document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);text-align:center;padding:20px"><div><div style="font-size:48px;margin-bottom:12px">🗺️</div><div>Map requires WebGL support.<br>Filters and controls are still available below.</div></div></div>';
+  // Create a no-op map proxy so subsequent code doesn't crash
+  map = new Proxy({}, { get: () => (...args) => map });
+}
+
+if (mapAvailable) {
+  map.addControl(new maplibregl.NavigationControl({ showCompass: true, showZoom: true }), 'bottom-right');
+}
+
+// Handle map tile loading errors gracefully
+map.on('error', e => {
+  if (e.error && e.error.status === 403) {
+    showError('⚠️ Map tiles unavailable — try switching layers');
+  }
+});
+
+let userMarker = null;
+
+// ═══════════════════════════════════════════════════════
+//  Layer Switcher
+// ═══════════════════════════════════════════════════════
+
+document.querySelectorAll('.layer-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const layer = btn.dataset.layer;
+    // Historical button is handled separately (toggles overlay panel, not base style)
+    if (layer === 'historical') return;
+    document.querySelectorAll('.layer-btn').forEach(b => {
+      if (b.dataset.layer !== 'historical') { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); }
+    });
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    map.setStyle(STYLES[btn.dataset.layer]);
+    // Re-add sources and layers after style change
+    map.once('styledata', () => {
+      addMapSources();
+      renderPlaces();
+      if (state.fogEnabled) renderFog();
+      // Re-apply historical overlay if active
+      if (historicalState.activeLayerId) {
+        applyHistoricalOverlay(historicalState.activeLayerId);
+      }
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+//  Geolocation
+// ═══════════════════════════════════════════════════════
+
+document.getElementById('btn-locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return alert('Geolocation not supported');
+  exitPinMode();
+  const btn = document.getElementById('btn-locate');
+  btn.classList.add('active');
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      state.userLat = pos.coords.latitude;
+      state.userLng = pos.coords.longitude;
+      state.geolocated = true;
+      map.flyTo({ center: [state.userLng, state.userLat], zoom: 14 });
+      updateUserMarker();
+      updatePinBadge('📍 Моё местоположение');
+      btn.classList.remove('active');
+      fetchPlaces();
+    },
+    () => { btn.classList.remove('active'); alert('Could not get location'); },
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
+
+function updateUserMarker() {
+  if (userMarker) userMarker.remove();
+  const el = document.createElement('div');
+  el.style.cssText = 'width:18px;height:18px;background:var(--accent);border:3px solid #fff;border-radius:50%;box-shadow:0 0 12px var(--accent-glow);';
+  userMarker = new maplibregl.Marker({ element: el }).setLngLat([state.userLng, state.userLat]).addTo(map);
+}
+
+// ═══════════════════════════════════════════════════════
+//  Pin mode — set custom search location
+// ═══════════════════════════════════════════════════════
+
+function enterPinMode() {
+  state.pinMode = true;
+  document.getElementById('btn-pin').classList.add('active');
+  document.getElementById('map').classList.add('pin-mode');
+  updatePinBadge('🎯 Кликните на карту чтобы задать точку поиска');
+}
+
+function exitPinMode() {
+  state.pinMode = false;
+  document.getElementById('btn-pin').classList.remove('active');
+  document.getElementById('map').classList.remove('pin-mode');
+}
+
+function updatePinBadge(text) {
+  const badge = document.getElementById('pin-badge');
+  badge.textContent = text;
+  badge.classList.add('visible');
+}
+
+document.getElementById('btn-pin').addEventListener('click', () => {
+  if (state.pinMode) { exitPinMode(); document.getElementById('pin-badge').classList.remove('visible'); }
+  else enterPinMode();
+});
+
+map.on('click', e => {
+  if (!state.pinMode) return;
+  state.userLat = e.lngLat.lat;
+  state.userLng = e.lngLat.lng;
+  state.geolocated = true;
+  updateUserMarker();
+  updatePinBadge(`📌 ${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`);
+  exitPinMode();
+  fetchPlaces();
+});
+
+// ═══════════════════════════════════════════════════════
+//  Fog of War toggle
+// ═══════════════════════════════════════════════════════
+
+document.getElementById('btn-fog').addEventListener('click', () => {
+  state.fogEnabled = !state.fogEnabled;
+  document.getElementById('btn-fog').classList.toggle('active', state.fogEnabled);
+  document.getElementById('toggle-fog').classList.toggle('on', state.fogEnabled);
+  document.getElementById('fog-stats').classList.toggle('visible', state.fogEnabled);
+  renderFog();
+  renderPlaces();
+});
+
+// ═══════════════════════════════════════════════════════
+//  Refresh
+// ═══════════════════════════════════════════════════════
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  if (mapAvailable) {
+    const center = map.getCenter();
+    if (center && typeof center.lat === 'number') {
+      state.userLat = center.lat;
+      state.userLng = center.lng;
+    }
+  }
+  fetchPlaces();
+});
+
+// ═══════════════════════════════════════════════════════
+//  Search
+// ═══════════════════════════════════════════════════════
+
+let searchTimeout;
+let currentFetchController = null;
+
+document.getElementById('search-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const query = e.target.value.trim();
+    if (!query) return;
+    // If query looks like a place name (no "покажи", "найди", etc.) — geocode it
+    const chatKeywords = /покажи|найди|хочу|ищу|search|find|show|where|что|какие|заброш|необычн|скрыт/i;
+    if (chatKeywords.test(query)) {
+      fetchChat(query);
+    } else {
+      geocodeAndFly(query);
+    }
+  }
+});
+
+async function fetchChat(query) {
+  showLoading(true);
+  if (currentFetchController) currentFetchController.abort();
+  currentFetchController = new AbortController();
+  try {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: query, lat: state.userLat, lng: state.userLng, radius_km: state.radius }),
+      signal: currentFetchController.signal
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.places && data.places.length > 0) {
+      state.places = data.places;
+      applyFilters();
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') console.error('Chat error:', err);
+  }
+  showLoading(false);
+}
+
+async function geocodeAndFly(query) {
+  showLoading(true);
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&accept-language=ru`;
+    const res = await fetch(url);
+    const results = await res.json();
+    if (results.length > 0) {
+      const r = results[0];
+      const lat = parseFloat(r.lat);
+      const lng = parseFloat(r.lon);
+      state.userLat = lat;
+      state.userLng = lng;
+      updateUserMarker();
+      map.flyTo({ center: [lng, lat], zoom: 13 });
+      updatePinBadge(`📍 ${r.display_name.split(',').slice(0, 2).join(',')}`);
+      fetchPlaces();
+    } else {
+      // Fallback: try AI chat search
+      fetchChat(query);
+    }
+  } catch (err) {
+    console.error('Geocode error:', err);
+    fetchChat(query);
+  }
+  showLoading(false);
+}
+
+function refreshPlaces() {
+  fetchPlaces();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Fetch places from API
+// ═══════════════════════════════════════════════════════
+
+async function fetchPlaces() {
+  showLoading(true);
+  if (currentFetchController) currentFetchController.abort();
+  currentFetchController = new AbortController();
+  try {
+    const body = {
+      lat: state.userLat,
+      lng: state.userLng,
+      radius_km: state.radius,
+      categories: [...state.activeCategories],
+      exclude_visited: state.hideVisited ? [...state.visitedPlaces] : [],
+      limit: MAX_DISCOVER_LIMIT,
+      sort_by: 'confidence'
+    };
+    const res = await fetch(`${API_BASE}/api/discover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: currentFetchController.signal
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.places = data.places || [];
+    
+    // Handle Deep Research status
+    if (data.deep_research_status) {
+      handleDeepResearchStatus(data.deep_research_status, data.deep_research_message);
+    }
+    
+    applyFilters();
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error('Discover error:', err);
+      showError('⚠️ Could not connect to API — loading demo data');
+      loadDemoData();
+    }
+  }
+  showLoading(false);
+}
+
+function loadDemoData() {
+  // Demo places for offline/preview mode
+  const demoPlaces = [
+    { id: 'demo-1', source: 'osm', name: 'Заброшенный бункер', description: 'Старый военный бункер времён Второй мировой войны. Частично разрушен, но доступен для исследования.', categories: ['abandoned', 'military'], coordinates: { lat: 42.4450, lng: 18.7650 }, confidence: 0.85, distance_m: 350, tags: ['wwii', 'bunker'] },
+    { id: 'demo-2', source: 'osm', name: 'Подземный тоннель к морю', description: 'Скрытый каменный тоннель, ведущий от крепости к побережью.', categories: ['underground'], coordinates: { lat: 42.4380, lng: 18.7730 }, confidence: 0.7, distance_m: 520, tags: ['tunnel', 'secret'] },
+    { id: 'demo-3', source: 'atlas', name: 'Заброшенный хлебозавод', description: 'Промышленное здание советской эпохи, покрытое граффити.', categories: ['abandoned', 'industrial'], coordinates: { lat: 42.4470, lng: 18.7800 }, confidence: 0.6, distance_m: 820, tags: ['factory', 'graffiti'] },
+    { id: 'demo-4', source: 'wiki', name: 'Крепость Святого Иоанна', description: 'Средневековая крепость на вершине горы с панорамным видом на Которский залив.', categories: ['landmark', 'ruins'], coordinates: { lat: 42.4290, lng: 18.7710 }, confidence: 0.95, distance_m: 1200, tags: ['fortress', 'medieval'] },
+    { id: 'demo-5', source: 'osm', name: 'Скрытая бухта за скалой', description: 'Маленький пляж, доступный только по узкой тропе через скалы.', categories: ['nature_hidden', 'water'], coordinates: { lat: 42.4340, lng: 18.7550 }, confidence: 0.75, distance_m: 1500, tags: ['beach', 'hidden'] },
+    { id: 'demo-6', source: 'osm', name: 'Смотровая площадка Ловчен', description: 'Панорамный обзор на всю бухту и горы. Лучше всего на закате.', categories: ['viewpoint'], coordinates: { lat: 42.4500, lng: 18.7580 }, confidence: 0.9, distance_m: 2300, tags: ['panorama', 'sunset'] },
+    { id: 'demo-7', source: 'atlas', name: 'Граффити-тоннель', description: 'Заброшенный железнодорожный тоннель, превращённый в галерею уличного искусства.', categories: ['underground', 'street_art'], coordinates: { lat: 42.4420, lng: 18.7850 }, confidence: 0.65, distance_m: 950, tags: ['graffiti', 'tunnel', 'art'] },
+    { id: 'demo-8', source: 'wiki', name: 'Церковь Богородицы на рифе', description: 'Искусственный остров с барочной церковью XVII века.', categories: ['religious', 'landmark'], coordinates: { lat: 42.4870, lng: 18.6870 }, confidence: 0.98, distance_m: 6200, tags: ['church', 'island', 'baroque'] },
+    { id: 'demo-9', source: 'osm', name: 'Заброшенные казармы', description: 'Военные казармы югославской эпохи. Стены разрисованы, крыша частично обвалилась.', categories: ['abandoned', 'military'], coordinates: { lat: 42.4530, lng: 18.7920 }, confidence: 0.55, distance_m: 2800, tags: ['military', 'yugoslavia'] },
+    { id: 'demo-10', source: 'osm', name: 'Пещера Липци', description: 'Небольшая известняковая пещера с наскальными рисунками.', categories: ['cave'], coordinates: { lat: 42.4200, lng: 18.7600 }, confidence: 0.7, distance_m: 3100, tags: ['cave', 'prehistoric'] },
+    { id: 'demo-11', source: 'wiki', name: 'Старые железнодорожные вагоны', description: 'Два ржавых вагона на заброшенном запасном пути, поросшие мхом.', categories: ['transport', 'abandoned'], coordinates: { lat: 42.4600, lng: 18.7400 }, confidence: 0.5, distance_m: 3500, tags: ['trains', 'decay'] },
+    { id: 'demo-12', source: 'osm', name: 'Парк-монумент Партизанам', description: 'Мемориальный парк с монументальной бетонной скульптурой в стиле Spomenik.', categories: ['monument', 'park'], coordinates: { lat: 42.4350, lng: 18.7900 }, confidence: 0.85, distance_m: 1800, tags: ['spomenik', 'memorial'] },
+  ];
+  state.places = demoPlaces;
+  applyFilters();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Deep Research status handler
+// ═══════════════════════════════════════════════════════
+
+function handleDeepResearchStatus(status, message) {
+  const badge = document.getElementById('deep-research-badge');
+  const textEl = document.getElementById('dr-text');
+  const hintEl = document.getElementById('dr-hint');
+  
+  if (status === 'pending') {
+    // Show notification that Deep Research is in progress
+    badge.classList.add('visible');
+    textEl.textContent = 'Searching for hidden gems...';
+    hintEl.textContent = message || 'Deep Research in progress. Check back in 2-5 minutes!';
+    
+    // Add click handler to refresh
+    badge.onclick = () => {
+      badge.classList.remove('visible');
+      refreshPlaces();
+    };
+    
+    // Auto-hide after 10 seconds with hint to refresh later
+    setTimeout(() => {
+      if (badge.classList.contains('visible')) {
+        hintEl.textContent = 'Click to refresh when ready';
+      }
+    }, 10000);
+    
+  } else if (status === 'cached') {
+    // Show success notification that new places were found
+    badge.classList.add('visible');
+    badge.style.background = 'linear-gradient(135deg, #28a745, #20c997)';
+    textEl.textContent = '✨ New places discovered!';
+    hintEl.textContent = message || 'Deep Research found additional hidden spots';
+    
+    badge.onclick = () => {
+      badge.classList.remove('visible');
+    };
+    
+    // Auto-hide after 8 seconds
+    setTimeout(() => {
+      badge.classList.remove('visible');
+      badge.style.background = ''; // Reset color
+    }, 8000);
+    
+  } else {
+    // idle or disabled - hide badge
+    badge.classList.remove('visible');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Filter logic
+// ═══════════════════════════════════════════════════════
+
+function applyFilters() {
+  state.filteredPlaces = state.places.filter(p => {
+    // Category filter
+    const cats = p.categories || [];
+    if (cats.length > 0 && !cats.some(c => state.activeCategories.has(c))) return false;
+    // Confidence filter
+    if ((p.confidence || 0) < state.minConfidence / 100) return false;
+    // Visited filter
+    if (state.hideVisited && state.visitedPlaces.has(p.id)) return false;
+    return true;
+  });
+  document.getElementById('place-count').textContent = `${state.filteredPlaces.length} places`;
+  renderPlaces();
+  if (state.fogEnabled) updateFogStats();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Map sources & rendering
+// ═══════════════════════════════════════════════════════
+
+function addMapSources() {
+  if (map.getSource('places')) {
+    map.removeLayer('place-clusters');
+    map.removeLayer('cluster-count');
+    map.removeLayer('unclustered-bg');
+    map.removeLayer('unclustered-icon');
+    map.removeSource('places');
+  }
+  if (map.getSource('fog')) {
+    map.removeLayer('fog-layer');
+    map.removeSource('fog');
+  }
+}
+
+function renderPlaces() {
+  // Remove existing layers
+  ['place-clusters', 'cluster-count', 'unclustered-bg', 'unclustered-icon', 'place-silhouettes'].forEach(id => {
+    if (map.getLayer(id)) map.removeLayer(id);
+  });
+  if (map.getSource('places')) map.removeSource('places');
+
+  const features = state.filteredPlaces.map(p => {
+    const cat = (p.categories && p.categories[0]) || 'landmark';
+    const catDef = CATEGORIES[cat] || CATEGORIES.landmark;
+    const inFog = state.fogEnabled && !state.visitedPlaces.has(p.id);
+    return {
+      type: 'Feature',
+      properties: {
+        id: p.id,
+        name: p.name || 'Unknown place',
+        icon: catDef.icon,
+        color: catDef.color,
+        category: cat,
+        confidence: p.confidence || 0.5,
+        distance: p.distance_m || 0,
+        inFog: inFog,
+        description: p.description || '',
+        source: p.source || 'osm',
+      },
+      geometry: { type: 'Point', coordinates: [p.coordinates.lng, p.coordinates.lat] }
+    };
+  });
+
+  map.addSource('places', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features },
+    cluster: true,
+    clusterMaxZoom: CLUSTER_MAX_ZOOM,
+    clusterRadius: CLUSTER_RADIUS_PX
+  });
+
+  // Cluster circles
+  map.addLayer({
+    id: 'place-clusters',
+    type: 'circle',
+    source: 'places',
+    filter: ['has', 'point_count'],
+    paint: {
+      'circle-color': ['step', ['get', 'point_count'], '#ff6b35', 10, '#e74c3c', 30, '#8e44ad'],
+      'circle-radius': ['step', ['get', 'point_count'], 18, 10, 24, 30, 30],
+      'circle-opacity': 0.85,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': 'rgba(255,255,255,0.3)'
+    }
+  });
+
+  // Cluster count labels
+  map.addLayer({
+    id: 'cluster-count',
+    type: 'symbol',
+    source: 'places',
+    filter: ['has', 'point_count'],
+    layout: {
+      'text-field': '{point_count_abbreviated}',
+      'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+      'text-size': 13
+    },
+    paint: { 'text-color': '#ffffff' }
+  });
+
+  // Unclustered points — background circle
+  map.addLayer({
+    id: 'unclustered-bg',
+    type: 'circle',
+    source: 'places',
+    filter: ['!', ['has', 'point_count']],
+    paint: {
+      'circle-color': ['get', 'color'],
+      'circle-radius': ['case', ['get', 'inFog'], 8, 10],
+      'circle-opacity': ['case', ['get', 'inFog'], 0.3, ['interpolate', ['linear'], ['get', 'confidence'], 0, 0.4, 1, 0.9]],
+      'circle-stroke-width': 2,
+      'circle-stroke-color': ['case', ['get', 'inFog'], 'rgba(255,255,255,0.1)', 'rgba(255,255,255,0.4)']
+    }
+  });
+
+  // Unclustered points — emoji icon
+  map.addLayer({
+    id: 'unclustered-icon',
+    type: 'symbol',
+    source: 'places',
+    filter: ['all', ['!', ['has', 'point_count']], ['!', ['get', 'inFog']]],
+    layout: {
+      'text-field': ['get', 'icon'],
+      'text-size': 18,
+      'text-offset': [0, -1.5],
+      'text-allow-overlap': true
+    }
+  });
+
+  // Silhouette icons for fog (dimmed ?)
+  map.addLayer({
+    id: 'place-silhouettes',
+    type: 'symbol',
+    source: 'places',
+    filter: ['all', ['!', ['has', 'point_count']], ['get', 'inFog']],
+    layout: {
+      'text-field': '❓',
+      'text-size': 14,
+      'text-offset': [0, -1.5],
+      'text-allow-overlap': true
+    },
+    paint: { 'text-opacity': 0.4 }
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  Fog of War rendering
+// ═══════════════════════════════════════════════════════
+
+function renderFog() {
+  if (map.getLayer('fog-layer')) map.removeLayer('fog-layer');
+  if (map.getSource('fog')) map.removeSource('fog');
+
+  if (!state.fogEnabled) return;
+
+  // Create fog polygon with holes for visited places
+  const visited = [...state.visitedPlaces].map(id => {
+    const p = state.places.find(pl => pl.id === id);
+    if (!p) return null;
+    return [p.coordinates.lng, p.coordinates.lat];
+  }).filter(Boolean);
+
+  // World polygon (outer boundary of fog)
+  const worldOuter = [[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]];
+
+  // Create holes for visited places (approximate circles as polygon)
+  const holes = visited.map(([lng, lat]) => createCircle(lng, lat, FOG_REVEAL_RADIUS_DEG));
+
+  const fogGeoJSON = {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [worldOuter, ...holes]
+      }
+    }]
+  };
+
+  map.addSource('fog', { type: 'geojson', data: fogGeoJSON });
+  map.addLayer({
+    id: 'fog-layer',
+    type: 'fill',
+    source: 'fog',
+    paint: {
+      'fill-color': '#0a0a1e',
+      'fill-opacity': 0.55
+    }
+  }, 'place-clusters'); // Insert below markers
+}
+
+function createCircle(lng, lat, radiusDeg) {
+  const points = [];
+  for (let i = 0; i <= FOG_CIRCLE_SEGMENTS; i++) {
+    const angle = (i / FOG_CIRCLE_SEGMENTS) * Math.PI * 2;
+    const latFactor = 1.0;
+    const lngFactor = 1.0 / Math.cos(lat * Math.PI / 180);
+    points.push([
+      lng + radiusDeg * lngFactor * Math.cos(angle),
+      lat + radiusDeg * latFactor * Math.sin(angle)
+    ]);
+  }
+  return points;
+}
+
+function updateFogStats() {
+  const total = state.places.length;
+  const visited = state.visitedPlaces.size;
+  const pct = total > 0 ? Math.round((visited / total) * 100) : 0;
+  document.getElementById('fog-pct').textContent = `${pct}%`;
+  document.getElementById('fog-fill').style.width = `${pct}%`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  Map interactions
+// ═══════════════════════════════════════════════════════
+
+// Click on cluster → zoom in
+map.on('click', 'place-clusters', e => {
+  if (state.pinMode) return;
+  const features = map.queryRenderedFeatures(e.point, { layers: ['place-clusters'] });
+  if (!features.length) return;
+  const clusterId = features[0].properties.cluster_id;
+  map.getSource('places').getClusterExpansionZoom(clusterId, (err, zoom) => {
+    if (err) return;
+    map.easeTo({ center: features[0].geometry.coordinates, zoom: zoom + 1 });
+  });
+});
+
+// Click on unclustered point → popup + card
+map.on('click', 'unclustered-bg', e => {
+  if (state.pinMode) return;
+  const feature = e.features[0];
+  const props = feature.properties;
+  const coords = feature.geometry.coordinates;
+
+  // Show popup
+  const catDef = CATEGORIES[props.category] || CATEGORIES.landmark;
+  const distText = props.distance > 0 ? `${(props.distance / 1000).toFixed(1)} km away` : '';
+  new maplibregl.Popup({ offset: 15, maxWidth: '250px' })
+    .setLngLat(coords)
+    .setHTML(`
+      <div class="popup-title">${props.inFog === true || props.inFog === 'true' ? '❓ Mystery Place' : (catDef.icon + ' ' + props.name)}</div>
+      <div class="popup-cat">${catDef.label}</div>
+      ${distText ? `<div class="popup-dist">📏 ${distText}</div>` : ''}
+      <div class="popup-more" onclick="showPlaceCard('${props.id}')">Show details →</div>
+    `)
+    .addTo(map);
+});
+
+// Cursor changes
+map.on('mouseenter', 'unclustered-bg', () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'unclustered-bg', () => { map.getCanvas().style.cursor = ''; });
+map.on('mouseenter', 'place-clusters', () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'place-clusters', () => { map.getCanvas().style.cursor = ''; });
+
+// ═══════════════════════════════════════════════════════
+//  Place card
+// ═══════════════════════════════════════════════════════
+
+function showPlaceCard(placeId) {
+  const place = state.places.find(p => p.id === placeId);
+  if (!place) return;
+  state.selectedPlace = place;
+
+  const card = document.getElementById('place-card');
+  const cats = (place.categories || []);
+
+  // Categories
+  document.getElementById('card-categories').innerHTML = cats.map(c => {
+    const def = CATEGORIES[c] || CATEGORIES.landmark;
+    return `<span class="card-category" style="background:${def.color}">${def.icon} ${def.label}</span>`;
+  }).join('');
+
+  // Name
+  const inFog = state.fogEnabled && !state.visitedPlaces.has(place.id);
+  document.getElementById('card-name').textContent = inFog ? '❓ Mystery Place' : (place.name || 'Unknown place');
+
+  // Meta
+  const source = { osm: 'OpenStreetMap', atlas: 'Atlas Obscura', wiki: 'Wikidata', flickr: 'Flickr', llm: 'AI Generated', community: 'Community' };
+  const dist = place.distance_m ? `${(place.distance_m / 1000).toFixed(1)} km` : '';
+  document.getElementById('card-meta').textContent = `📡 ${source[place.source] || place.source}${dist ? ' · 📏 ' + dist : ''}`;
+
+  // Description
+  document.getElementById('card-desc').textContent = inFog ? 'Visit this place to reveal its secrets...' : (place.description || 'No description available');
+
+  // Confidence bar
+  const conf = place.confidence || 0.5;
+  const confFill = document.getElementById('card-conf-fill');
+  const confColor = conf > 0.7 ? '#2ecc71' : conf > 0.4 ? '#f39c12' : '#e74c3c';
+  confFill.style.width = `${conf * 100}%`;
+  confFill.style.background = confColor;
+
+  // Save button state
+  const saveBtn = document.getElementById('card-save');
+  saveBtn.textContent = state.savedPlaces.has(place.id) ? '★ Saved' : '⭐ Save';
+
+  card.classList.add('visible');
+}
+
+document.getElementById('card-close').addEventListener('click', () => {
+  document.getElementById('place-card').classList.remove('visible');
+  state.selectedPlace = null;
+});
+
+document.getElementById('card-navigate').addEventListener('click', () => {
+  if (!state.selectedPlace) return;
+  const p = state.selectedPlace;
+  // Mark as visited
+  state.visitedPlaces.add(p.id);
+  localStorage.setItem('ti_visited', JSON.stringify([...state.visitedPlaces]));
+  // Open in Google Maps
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.coordinates.lat},${p.coordinates.lng}&travelmode=walking`, '_blank');
+  renderFog();
+  renderPlaces();
+});
+
+document.getElementById('card-save').addEventListener('click', () => {
+  if (!state.selectedPlace) return;
+  const id = state.selectedPlace.id;
+  if (state.savedPlaces.has(id)) {
+    state.savedPlaces.delete(id);
+  } else {
+    state.savedPlaces.add(id);
+  }
+  localStorage.setItem('ti_saved', JSON.stringify([...state.savedPlaces]));
+  document.getElementById('card-save').textContent = state.savedPlaces.has(id) ? '★ Saved' : '⭐ Save';
+});
+
+// ═══════════════════════════════════════════════════════
+//  Route planner
+// ═══════════════════════════════════════════════════════
+
+let routeWaypoints = [];  // [{lat, lng, name}]
+let routeSuggestions = []; // places along the route
+let routeLine = null;
+
+document.getElementById('card-route').addEventListener('click', async () => {
+  if (!state.selectedPlace) return;
+  const dest = state.selectedPlace;
+  document.getElementById('place-card').classList.remove('visible');
+  await buildRoute(dest);
+});
+
+document.getElementById('route-close').addEventListener('click', () => {
+  document.getElementById('route-panel').classList.remove('visible');
+  clearRouteFromMap();
+});
+
+// Geocode origin city from route panel input
+document.getElementById('route-from-input').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  const q = e.target.value.trim();
+  if (!q) return;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=ru`);
+    const data = await res.json();
+    if (data.length > 0) {
+      state.userLat = parseFloat(data[0].lat);
+      state.userLng = parseFloat(data[0].lon);
+      state.geolocated = true;
+      updateUserMarker();
+      document.getElementById('route-from-name').textContent = data[0].display_name.split(',')[0];
+      document.getElementById('route-from-name').style.display = '';
+      document.getElementById('route-from-input').style.display = 'none';
+      document.getElementById('route-from-warning').classList.remove('visible');
+      // Rebuild route with new origin
+      if (routeWaypoints.length > 0) {
+        const dest = routeWaypoints[routeWaypoints.length - 1];
+        const destPlace = state.places.find(p => p.coordinates.lat === dest.lat && p.coordinates.lng === dest.lng) || { coordinates: dest, name: dest.name, id: null };
+        await buildRoute(destPlace);
+      }
+    }
+  } catch (err) { console.error('Geocode origin error:', err); }
+});
+
+document.getElementById('route-go').addEventListener('click', () => {
+  if (routeWaypoints.length === 0) return;
+  // Build Google Maps URL with waypoints
+  const origin = `${state.userLat},${state.userLng}`;
+  const dest = routeWaypoints[routeWaypoints.length - 1];
+  const destStr = `${dest.lat},${dest.lng}`;
+  const midpoints = routeWaypoints.slice(0, -1);
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destStr}&travelmode=driving`;
+  if (midpoints.length > 0) {
+    const wp = midpoints.map(w => `${w.lat},${w.lng}`).join('|');
+    url += `&waypoints=${wp}`;
+  }
+  window.open(url, '_blank');
+});
+
+async function buildRoute(destination) {
+  const panel = document.getElementById('route-panel');
+  panel.classList.add('visible');
+  document.getElementById('suggestion-list').innerHTML = '<em style="color:var(--text-secondary);font-size:13px">Calculating route...</em>';
+
+  // Show destination name
+  document.getElementById('route-to-name').textContent = destination.name || 'Destination';
+
+  // Handle origin: show warning if not geolocated
+  const warning = document.getElementById('route-from-warning');
+  const fromInput = document.getElementById('route-from-input');
+  const fromName = document.getElementById('route-from-name');
+  if (!state.geolocated) {
+    warning.classList.add('visible');
+    fromInput.style.display = '';
+    fromName.style.display = 'none';
+    fromName.textContent = 'Not set';
+  } else {
+    warning.classList.remove('visible');
+    fromInput.style.display = 'none';
+    fromName.style.display = '';
+    fromName.textContent = `📍 ${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+    // Reverse geocode origin name
+    fetch(`https://nominatim.openstreetmap.org/reverse?lat=${state.userLat}&lon=${state.userLng}&format=json&accept-language=ru`)
+      .then(r => r.json()).then(d => { if (d.address) fromName.textContent = d.address.city || d.address.town || d.address.village || d.display_name.split(',')[0]; })
+      .catch(() => {});
+  }
+
+  routeWaypoints = [{ lat: destination.coordinates.lat, lng: destination.coordinates.lng, name: destination.name }];
+
+  const fromLng = state.userLng, fromLat = state.userLat;
+  const toLng = destination.coordinates.lng, toLat = destination.coordinates.lat;
+
+  try {
+    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
+    const res = await fetch(osrmUrl);
+    const data = await res.json();
+
+    if (data.routes && data.routes.length > 0) {
+      const route = data.routes[0];
+      const distKm = (route.distance / 1000).toFixed(1);
+      const durMin = Math.round(route.duration / 60);
+      document.getElementById('route-distance').textContent = `${distKm} km`;
+      document.getElementById('route-duration').textContent = durMin < 60 ? `${durMin} min` : `${Math.floor(durMin/60)}h ${durMin%60}m`;
+
+      drawRouteOnMap(route.geometry);
+      const coords = route.geometry.coordinates;
+      findPlacesAlongRoute(coords, destination.id);
+    } else {
+      document.getElementById('route-distance').textContent = '~' + (haversineJS(fromLat, fromLng, toLat, toLng) / 1000).toFixed(1) + ' km';
+      document.getElementById('route-duration').textContent = '—';
+      findPlacesAlongRoute([[fromLng,fromLat],[toLng,toLat]], destination.id);
+    }
+  } catch (err) {
+    console.error('OSRM error:', err);
+    document.getElementById('route-distance').textContent = '~' + (haversineJS(fromLat, fromLng, toLat, toLng) / 1000).toFixed(1) + ' km';
+    document.getElementById('route-duration').textContent = '—';
+    findPlacesAlongRoute([[fromLng,fromLat],[toLng,toLat]], destination.id);
+  }
+}
+
+function haversineJS(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function drawRouteOnMap(geometry) {
+  clearRouteFromMap();
+  if (!map.getSource('route-line')) {
+    map.addSource('route-line', { type: 'geojson', data: { type: 'Feature', geometry } });
+    map.addLayer({
+      id: 'route-line-layer',
+      type: 'line',
+      source: 'route-line',
+      paint: {
+        'line-color': '#ff6b35',
+        'line-width': 4,
+        'line-opacity': 0.8,
+        'line-dasharray': [2, 1]
+      }
+    });
+  } else {
+    map.getSource('route-line').setData({ type: 'Feature', geometry });
+  }
+  // Fit bounds
+  const coords = geometry.coordinates;
+  const bounds = coords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(coords[0], coords[0]));
+  map.fitBounds(bounds, { padding: { top: 60, bottom: 80, left: 60, right: 400 } });
+}
+
+function clearRouteFromMap() {
+  if (map.getLayer('route-line-layer')) map.removeLayer('route-line-layer');
+  if (map.getSource('route-line')) map.removeSource('route-line');
+}
+
+function findPlacesAlongRoute(routeCoords, destId) {
+  // Find all known places within ~2km of the route
+  const MAX_DETOUR_M = 2000;
+  const candidates = state.places.filter(p => {
+    if (p.id === destId) return false;
+    if (state.visitedPlaces.has(p.id)) return false;
+    const dist = minDistToRoute(p.coordinates.lat, p.coordinates.lng, routeCoords);
+    p._detourM = dist;
+    return dist <= MAX_DETOUR_M;
+  });
+
+  // Sort by confidence (best first)
+  candidates.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+  routeSuggestions = candidates.slice(0, 15);
+
+  const list = document.getElementById('suggestion-list');
+  document.getElementById('route-stops').textContent = `${routeWaypoints.length} stop${routeWaypoints.length > 1 ? 's' : ''}`;
+
+  if (routeSuggestions.length === 0) {
+    list.innerHTML = '<em style="color:var(--text-secondary);font-size:13px">No interesting places found along this route. Try a longer route or wider radius.</em>';
+    return;
+  }
+
+  list.innerHTML = routeSuggestions.map((p, i) => {
+    const cats = (p.categories || []).map(c => {
+      const def = CATEGORIES[c] || CATEGORIES.landmark;
+      return `${def.icon}`;
+    }).join(' ');
+    const detour = p._detourM < 1000 ? `${Math.round(p._detourM)}m detour` : `${(p._detourM/1000).toFixed(1)}km detour`;
+    const desc = (p.description || '').substring(0, 100);
+    const isAdded = routeWaypoints.some(w => w.lat === p.coordinates.lat && w.lng === p.coordinates.lng);
+    return `
+      <div class="suggestion-card ${isAdded ? 'added' : ''}" data-idx="${i}">
+        <div class="suggestion-name">${cats} ${p.name || 'Unknown'}</div>
+        <div class="suggestion-meta">
+          <span>📏 ${detour}</span>
+          <span>⭐ ${Math.round((p.confidence||0)*100)}%</span>
+        </div>
+        ${desc ? `<div class="suggestion-desc">${desc}...</div>` : ''}
+        <button class="suggestion-add ${isAdded ? 'added' : ''}" data-idx="${i}">${isAdded ? '✓ Added' : '+ Add to route'}</button>
+      </div>
+    `;
+  }).join('');
+
+  // Bind click handlers
+  list.querySelectorAll('.suggestion-add').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.idx);
+      toggleWaypoint(idx);
+    });
+  });
+  list.querySelectorAll('.suggestion-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const idx = parseInt(card.dataset.idx);
+      const p = routeSuggestions[idx];
+      if (p) map.flyTo({ center: [p.coordinates.lng, p.coordinates.lat], zoom: 15 });
+    });
+  });
+}
+
+function toggleWaypoint(idx) {
+  const p = routeSuggestions[idx];
+  if (!p) return;
+  const wp = { lat: p.coordinates.lat, lng: p.coordinates.lng, name: p.name };
+  const existingIdx = routeWaypoints.findIndex(w => w.lat === wp.lat && w.lng === wp.lng);
+  if (existingIdx >= 0 && existingIdx < routeWaypoints.length - 1) {
+    // Remove waypoint (but keep destination as last)
+    routeWaypoints.splice(existingIdx, 1);
+  } else if (existingIdx < 0) {
+    // Add before destination
+    routeWaypoints.splice(routeWaypoints.length - 1, 0, wp);
+  }
+  document.getElementById('route-stops').textContent = `${routeWaypoints.length} stop${routeWaypoints.length > 1 ? 's' : ''}`;
+  // Rebuild route with waypoints
+  rebuildRouteWithWaypoints();
+  // Update UI
+  const card = document.querySelectorAll('.suggestion-card')[idx];
+  const btn = card?.querySelector('.suggestion-add');
+  const isAdded = routeWaypoints.some(w => w.lat === wp.lat && w.lng === wp.lng);
+  if (card) card.classList.toggle('added', isAdded);
+  if (btn) {
+    btn.classList.toggle('added', isAdded);
+    btn.textContent = isAdded ? '✓ Added' : '+ Add to route';
+  }
+}
+
+async function rebuildRouteWithWaypoints() {
+  if (routeWaypoints.length === 0) return;
+  // Build OSRM URL with all waypoints
+  const points = [
+    `${state.userLng},${state.userLat}`,
+    ...routeWaypoints.map(w => `${w.lng},${w.lat}`)
+  ].join(';');
+  try {
+    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${points}?overview=full&geometries=geojson`);
+    const data = await res.json();
+    if (data.routes && data.routes.length > 0) {
+      const route = data.routes[0];
+      const distKm = (route.distance / 1000).toFixed(1);
+      const durMin = Math.round(route.duration / 60);
+      document.getElementById('route-distance').textContent = `${distKm} km`;
+      document.getElementById('route-duration').textContent = durMin < 60 ? `${durMin} min` : `${Math.floor(durMin/60)}h ${durMin%60}m`;
+      drawRouteOnMap(route.geometry);
+    }
+  } catch (err) {
+    console.error('OSRM rebuild error:', err);
+  }
+}
+
+function minDistToRoute(lat, lng, routeCoords) {
+  let minDist = Infinity;
+  // Sample every ~5th point for performance
+  const step = Math.max(1, Math.floor(routeCoords.length / 100));
+  for (let i = 0; i < routeCoords.length; i += step) {
+    const [rLng, rLat] = routeCoords[i];
+    const d = haversineJS(lat, lng, rLat, rLng);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
+// ═══════════════════════════════════════════════════════
+//  Filter panel
+// ═══════════════════════════════════════════════════════
+
+// Toggle panel
+const filterPanel = document.getElementById('filter-panel');
+document.getElementById('filter-handle').addEventListener('click', () => {
+  filterPanel.classList.toggle('open');
+});
+document.querySelector('.filter-handle-label').addEventListener('click', () => {
+  filterPanel.classList.toggle('open');
+});
+document.getElementById('filter-handle').addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); filterPanel.classList.toggle('open'); }
+});
+
+// Swipe support for filter panel
+let touchStartY = 0;
+filterPanel.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+filterPanel.addEventListener('touchend', e => {
+  const diff = e.changedTouches[0].clientY - touchStartY;
+  if (diff > 50) filterPanel.classList.remove('open');
+  else if (diff < -50) filterPanel.classList.add('open');
+}, { passive: true });
+
+// Category chips — built dynamically
+rebuildCategoryChips();
+
+// Presets
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.currentPreset = btn.dataset.preset;
+    state.activeCategories = new Set(PRESETS[btn.dataset.preset]);
+    // Update chips
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.classList.toggle('active', state.activeCategories.has(chip.dataset.cat));
+    });
+    applyFilters();
+  });
+});
+
+// Radius slider
+const radiusSlider = document.getElementById('radius-slider');
+const radiusValue = document.getElementById('radius-value');
+radiusSlider.addEventListener('input', () => {
+  state.radius = parseFloat(radiusSlider.value);
+  radiusValue.textContent = `${state.radius.toFixed(1)} km`;
+});
+radiusSlider.addEventListener('change', () => {
+  fetchPlaces();
+});
+
+// Confidence slider
+const confSlider = document.getElementById('confidence-slider');
+const confValue = document.getElementById('confidence-value');
+confSlider.addEventListener('input', () => {
+  state.minConfidence = parseInt(confSlider.value);
+  confValue.textContent = state.minConfidence === 0 ? 'All' : `≥ ${state.minConfidence}%`;
+  applyFilters();
+});
+
+// Toggles
+document.getElementById('toggle-visited').addEventListener('click', function() {
+  this.classList.toggle('on');
+  state.hideVisited = this.classList.contains('on');
+  applyFilters();
+});
+
+document.getElementById('toggle-fog').addEventListener('click', function() {
+  this.classList.toggle('on');
+  state.fogEnabled = this.classList.contains('on');
+  document.getElementById('btn-fog').classList.toggle('active', state.fogEnabled);
+  document.getElementById('fog-stats').classList.toggle('visible', state.fogEnabled);
+  renderFog();
+  renderPlaces();
+});
+
+// ═══════════════════════════════════════════════════════
+//  Historical Map Overlay (Story 3.5)
+// ═══════════════════════════════════════════════════════
+
+let historicalState = {
+  layers: [],
+  activeLayerId: null,
+  opacity: 0.5,
+};
+
+// Default historical layers (used if API unavailable)
+const DEFAULT_HISTORICAL_LAYERS = [
+  {
+    id: 'ohm', name: 'OpenHistoricalMap', period: 'Multi-era',
+    year_start: 1000, year_end: 2000,
+    url: 'https://tile.openhistoricalmap.org/historicmap/{z}/{x}/{y}.png',
+    attribution: '© OpenHistoricalMap contributors',
+    tile_size: 256, min_zoom: 1, max_zoom: 18,
+  },
+  {
+    id: 'esri_topo_1900', name: 'Esri World Topo (Historic)', period: 'Early 20th Century',
+    year_start: 1890, year_end: 1940,
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    attribution: '© Esri, DeLorme, NAVTEQ',
+    tile_size: 256, min_zoom: 1, max_zoom: 16,
+  },
+  {
+    id: 'owm_1880', name: 'Old World Maps (~1880)', period: 'Late 19th Century',
+    year_start: 1850, year_end: 1900,
+    url: 'https://maps.georeferencer.com/georeferences/28da2318-c4b3-5f25-83dc-3da27859fea2/2019-02-19T17:27:12.514288Z/map/{z}/{x}/{y}.png',
+    attribution: '© Georeferencer, David Rumsey Map Collection',
+    tile_size: 256, min_zoom: 3, max_zoom: 15,
+  },
+];
+
+async function loadHistoricalLayers() {
+  try {
+    const res = await fetch(`${API_BASE}/api/map/historical`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    historicalState.layers = data.layers || DEFAULT_HISTORICAL_LAYERS;
+    if (data.default_opacity !== undefined) historicalState.opacity = data.default_opacity;
+  } catch (e) {
+    console.log('Using default historical layers (API unavailable)');
+    historicalState.layers = DEFAULT_HISTORICAL_LAYERS;
+  }
+  buildHistoricalLayerButtons();
+}
+
+function buildHistoricalLayerButtons() {
+  const container = document.getElementById('hist-layers');
+  container.innerHTML = '';
+  historicalState.layers.forEach(layer => {
+    const btn = document.createElement('button');
+    btn.className = 'hist-layer-btn';
+    btn.dataset.layerId = layer.id;
+    btn.innerHTML = `<div>${layer.name}</div><div class="hist-layer-period">${layer.period} (${layer.year_start}–${layer.year_end})</div>`;
+    btn.addEventListener('click', () => toggleHistoricalLayer(layer.id));
+    container.appendChild(btn);
+  });
+}
+
+function toggleHistoricalLayer(layerId) {
+  if (historicalState.activeLayerId === layerId) {
+    removeHistoricalOverlay();
+    historicalState.activeLayerId = null;
+  } else {
+    historicalState.activeLayerId = layerId;
+    applyHistoricalOverlay(layerId);
+  }
+  // Update button states
+  document.querySelectorAll('.hist-layer-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.layerId === historicalState.activeLayerId);
+  });
+}
+
+function applyHistoricalOverlay(layerId) {
+  removeHistoricalOverlay();
+  const layer = historicalState.layers.find(l => l.id === layerId);
+  if (!layer) return;
+
+  // Show loading indicator
+  const btn = document.querySelector(`.hist-layer-btn[data-layer-id="${layerId}"]`);
+  if (btn) btn.style.opacity = '0.5';
+
+  map.addSource('historical-overlay', {
+    type: 'raster',
+    tiles: [layer.url],
+    tileSize: layer.tile_size || 256,
+    attribution: layer.attribution,
+    minzoom: layer.min_zoom || 1,
+    maxzoom: layer.max_zoom || 18,
+  });
+
+  // Insert below place markers but above base tiles
+  const firstSymbol = map.getStyle().layers.find(l => l.type === 'symbol' || l.id === 'place-clusters');
+  map.addLayer({
+    id: 'historical-overlay-layer',
+    type: 'raster',
+    source: 'historical-overlay',
+    paint: { 'raster-opacity': historicalState.opacity },
+  }, firstSymbol ? firstSymbol.id : undefined);
+
+  // Remove loading indicator when tiles start loading
+  map.once('data', (e) => {
+    if (e.sourceId === 'historical-overlay') {
+      if (btn) btn.style.opacity = '1';
+    }
+  });
+}
+
+function removeHistoricalOverlay() {
+  if (map.getLayer('historical-overlay-layer')) map.removeLayer('historical-overlay-layer');
+  if (map.getSource('historical-overlay')) map.removeSource('historical-overlay');
+}
+
+function setHistoricalOpacity(opacity) {
+  historicalState.opacity = opacity;
+  if (map.getLayer('historical-overlay-layer')) {
+    map.setPaintProperty('historical-overlay-layer', 'raster-opacity', opacity);
+  }
+}
+
+// Historical panel toggle
+document.getElementById('btn-historical').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const panel = document.getElementById('historical-panel');
+  const isVisible = panel.classList.contains('visible');
+  panel.classList.toggle('visible', !isVisible);
+
+  // If opening for the first time, load layers
+  if (!isVisible && historicalState.layers.length === 0) {
+    loadHistoricalLayers();
+  }
+});
+
+document.getElementById('hist-close').addEventListener('click', () => {
+  document.getElementById('historical-panel').classList.remove('visible');
+});
+
+// Opacity slider
+const histOpacitySlider = document.getElementById('hist-opacity');
+const histOpacityValue = document.getElementById('hist-opacity-value');
+histOpacitySlider.addEventListener('input', () => {
+  const val = parseInt(histOpacitySlider.value) / 100;
+  histOpacityValue.textContent = `${histOpacitySlider.value}%`;
+  setHistoricalOpacity(val);
+});
+
+// ═══════════════════════════════════════════════════════
+//  Helpers
+// ═══════════════════════════════════════════════════════
+
+function showLoading(show) {
+  document.getElementById('loading').classList.toggle('visible', show);
+}
+
+function showError(msg, duration = 4000) {
+  const toast = document.getElementById('error-toast');
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  setTimeout(() => toast.classList.remove('visible'), duration);
+}
+
+function showOnboarding() {
+  if (localStorage.getItem('ti_onboarded')) return;
+  const el = document.getElementById('onboarding');
+  el.classList.add('visible');
+  document.getElementById('onboarding-close').addEventListener('click', () => {
+    el.classList.remove('visible');
+    localStorage.setItem('ti_onboarded', '1');
+  });
+}
+
+async function loadConfigFromAPI() {
+  try {
+    const res = await fetch(`${API_BASE}/api/map/config`);
+    if (!res.ok) return;
+    const config = await res.json();
+    if (config.category_styles) {
+      CATEGORIES = {};
+      for (const [key, style] of Object.entries(config.category_styles)) {
+        CATEGORIES[key] = style;
+      }
+      // Rebuild presets based on loaded categories
+      PRESETS.all = Object.keys(CATEGORIES);
+      PRESETS.hidden = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'unusual');
+      PRESETS.classic = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'classic');
+      state.activeCategories = new Set(Object.keys(CATEGORIES));
+      rebuildCategoryChips();
+    }
+  } catch (e) {
+    // Silently fall back to hardcoded defaults
+    console.log('Using default config (API unavailable)');
+  }
+}
+
+function rebuildCategoryChips() {
+  const container = document.getElementById('category-chips');
+  container.innerHTML = '';
+  Object.entries(CATEGORIES).forEach(([key, def]) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip active';
+    chip.dataset.cat = key;
+    chip.setAttribute('role', 'checkbox');
+    chip.setAttribute('aria-checked', 'true');
+    chip.setAttribute('tabindex', '0');
+    chip.innerHTML = `<span class="chip-icon">${def.icon}</span>${def.label}`;
+    chip.addEventListener('click', () => toggleChip(chip, key));
+    chip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChip(chip, key); } });
+    container.appendChild(chip);
+  });
+}
+
+function toggleChip(chip, key) {
+  chip.classList.toggle('active');
+  const isActive = chip.classList.contains('active');
+  chip.setAttribute('aria-checked', String(isActive));
+  if (isActive) {
+    state.activeCategories.add(key);
+  } else {
+    state.activeCategories.delete(key);
+  }
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  state.currentPreset = null;
+  applyFilters();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Init
+// ═══════════════════════════════════════════════════════
+
+map.on('load', async () => {
+  // Load config from API (falls back to defaults)
+  await loadConfigFromAPI();
+
+  // Preload historical layers
+  loadHistoricalLayers();
+
+  // Show onboarding for first-time users
+  showOnboarding();
+
+  // Try geolocation, fallback to default
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        state.userLat = pos.coords.latitude;
+        state.userLng = pos.coords.longitude;
+        state.geolocated = true;
+        map.flyTo({ center: [state.userLng, state.userLat], zoom: 13 });
+        updateUserMarker();
+        fetchPlaces();
+      },
+      () => fetchPlaces(), // fallback to default location
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+  } else {
+    fetchPlaces();
+  }
+  document.getElementById('fog-stats').classList.toggle('visible', state.fogEnabled);
+});
+</script>
+</body>
+</html>

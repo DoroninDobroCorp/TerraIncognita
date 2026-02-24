@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Скрытые здания</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100%; }
+    .legend {
+      background: rgba(255, 255, 255, 0.9);
+      padding: 8px 12px;
+      line-height: 1.4;
+      font-size: 14px;
+      color: #222;
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.2);
+    }
+    .legend span {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      margin-right: 6px;
+      background: #ff5722;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    const map = L.map('map').setView([42.0, 19.3], 11);
+
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19
+    });
+    osm.addTo(map);
+
+    function style(feature) {
+      return {
+        color: '#ff5722',
+        weight: 1,
+        fillColor: '#ff8a50',
+        fillOpacity: 0.6
+      };
+    }
+
+    fetch('../data/isolated_unmapped_buildings.geojson')
+      .then((response) => response.json())
+      .then((geojson) => {
+        console.log(`Загружено ${geojson.features?.length || 0} объектов`);
+        const layer = L.geoJSON(geojson, {
+          style,
+          onEachFeature: (feature, layer) => {
+            const props = feature.properties || {};
+            const dist = props.dist_to_osm_m ? props.dist_to_osm_m.toFixed(0) + ' м' : 'н/д';
+            const area = props.area_m2 ? props.area_m2.toFixed(1) + ' м²' : 'н/д';
+            const rect = props.rectangularity ? props.rectangularity.toFixed(2) : 'н/д';
+            layer.bindPopup(`<b>Кандидат на добавление в OSM</b><br>Дистанция до ближайшего OSM здания: ${dist}<br>Площадь: ${area}<br>Прямоугольность: ${rect}`);
+          }
+        }).addTo(map);
+        map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+      })
+      .catch((err) => {
+        console.error('Не удалось загрузить GeoJSON', err);
+        alert('Не удалось загрузить GeoJSON. Проверьте, что сервер запущен и путь к файлу верный.');
+      });
+
+    const legend = L.control({ position: 'topright' });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create('div', 'legend');
+      div.innerHTML = '<div><span></span>Кандидаты зданий Microsoft без совпадений в OSM</div>';
+      return div;
+    };
+    legend.addTo(map);
+  </script>
+</body>
+</html>

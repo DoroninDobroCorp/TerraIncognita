@@ -1,0 +1,2122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Terra Incognita</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Terra Incognita — discover hidden and unusual places around you">
+  <!-- CSP disabled for development/testing -->
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"
+          integrity="sha256-G0W6/JRzbzxZYK5MP4SRlKnxYFr7F8kmnF0ZT1fnlxk="
+          crossorigin="anonymous"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet"
+        integrity="sha256-2O5Q3ujU9bBBT9Jnuc6Lu9m0bZVKMRW9xE164V9gqZQ="
+        crossorigin="anonymous" />
+  <style>
+/* ═══════════════════════════════════════════════════════
+   CSS Variables & Reset
+   ═══════════════════════════════════════════════════════ */
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-card: #1e2a45;
+  --bg-input: #253454;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0b0;
+  --text-muted: #6a6a7a;
+  --accent: #ff6b35;
+  --accent-hover: #ff8555;
+  --accent-glow: rgba(255, 107, 53, 0.3);
+  --success: #2ecc71;
+  --warning: #f39c12;
+  --danger: #e74c3c;
+  --info: #3498db;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 4px 20px rgba(0,0,0,0.5);
+  --sidebar-w: 64px;
+  --header-h: 0px;
+  --transition: 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:var(--bg-primary); color:var(--text-primary); overflow:hidden; }
+button { font-family: inherit; }
+input, textarea, select { font-family: inherit; }
+
+/* ═══════════════════════════════════════════════════════
+   Layout: Sidebar + Content
+   ═══════════════════════════════════════════════════════ */
+#app { display:flex; height:100%; }
+
+/* Sidebar */
+#sidebar {
+  width: var(--sidebar-w); min-width: var(--sidebar-w); height:100%;
+  background: var(--bg-secondary); display:flex; flex-direction:column;
+  align-items:center; padding:8px 0; z-index:100;
+  border-right: 1px solid rgba(255,255,255,0.05);
+}
+.nav-btn {
+  width:48px; height:48px; border:none; border-radius:var(--radius);
+  background:transparent; color:var(--text-secondary); font-size:22px;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition: all var(--transition); position:relative; margin:2px 0;
+}
+.nav-btn:hover { background:var(--bg-card); color:var(--text-primary); }
+.nav-btn.active { background:var(--accent); color:#fff; }
+.nav-btn .nav-tooltip {
+  display:none; position:absolute; left:56px; top:50%; transform:translateY(-50%);
+  background:var(--bg-card); color:var(--text-primary); padding:4px 10px;
+  border-radius:var(--radius-sm); font-size:12px; white-space:nowrap;
+  box-shadow:var(--shadow); z-index:200; pointer-events:none;
+}
+.nav-btn:hover .nav-tooltip { display:block; }
+.nav-spacer { flex:1; }
+.nav-divider { width:32px; height:1px; background:rgba(255,255,255,0.1); margin:6px 0; }
+
+/* Content area */
+#content { flex:1; position:relative; overflow:hidden; }
+.section { display:none; width:100%; height:100%; position:absolute; top:0; left:0; }
+.section.active { display:flex; }
+
+/* ═══════════════════════════════════════════════════════
+   Panels (non-map sections)
+   ═══════════════════════════════════════════════════════ */
+.panel {
+  width:100%; height:100%; display:flex; flex-direction:column;
+  background:var(--bg-primary); overflow:hidden;
+}
+.panel-header {
+  padding:16px 20px 12px; border-bottom:1px solid rgba(255,255,255,0.06);
+  display:flex; align-items:center; gap:12px; flex-shrink:0;
+}
+.panel-header h2 { font-size:18px; font-weight:700; }
+.panel-header .badge {
+  background:var(--accent); color:#fff; padding:2px 8px; border-radius:10px;
+  font-size:11px; font-weight:600;
+}
+.panel-body { flex:1; overflow-y:auto; padding:16px 20px; }
+.panel-footer {
+  padding:12px 20px; border-top:1px solid rgba(255,255,255,0.06); flex-shrink:0;
+}
+
+/* Help button in panel headers */
+.help-btn {
+  width:28px; height:28px; border:1.5px solid var(--text-secondary); border-radius:50%;
+  background:transparent; color:var(--text-secondary); font-size:14px; font-weight:700;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:all var(--transition); margin-left:auto;
+}
+.help-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* ═══════════════════════════════════════════════════════
+   Shared Components
+   ═══════════════════════════════════════════════════════ */
+.btn {
+  padding:8px 16px; border:none; border-radius:var(--radius-sm); font-size:13px;
+  font-weight:600; cursor:pointer; transition:all var(--transition);
+  display:inline-flex; align-items:center; gap:6px;
+}
+.btn-primary { background:var(--accent); color:#fff; }
+.btn-primary:hover { background:var(--accent-hover); }
+.btn-secondary { background:var(--bg-card); color:var(--text-primary); border:1px solid rgba(255,255,255,0.1); }
+.btn-secondary:hover { background:var(--bg-secondary); }
+.btn-sm { padding:5px 10px; font-size:12px; }
+.btn-danger { background:var(--danger); color:#fff; }
+.btn-success { background:var(--success); color:#fff; }
+
+.input {
+  width:100%; padding:10px 14px; border:1.5px solid rgba(255,255,255,0.1);
+  border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text-primary);
+  font-size:13px; outline:none; transition:border-color var(--transition);
+}
+.input:focus { border-color:var(--accent); }
+.input::placeholder { color:var(--text-muted); }
+textarea.input { resize:vertical; min-height:80px; }
+select.input { appearance:auto; }
+
+.card {
+  background:var(--bg-card); border-radius:var(--radius); padding:14px;
+  border:1px solid rgba(255,255,255,0.04); transition:border-color var(--transition);
+}
+.card:hover { border-color:rgba(255,255,255,0.1); }
+.card + .card { margin-top:10px; }
+.card-title { font-size:14px; font-weight:600; margin-bottom:4px; }
+.card-meta { font-size:12px; color:var(--text-secondary); }
+.card-actions { display:flex; gap:6px; margin-top:10px; }
+
+.empty-state {
+  text-align:center; padding:40px 20px; color:var(--text-secondary);
+}
+.empty-state .empty-icon { font-size:48px; margin-bottom:12px; }
+.empty-state .empty-text { font-size:14px; line-height:1.6; }
+
+.tabs { display:flex; gap:2px; background:var(--bg-secondary); border-radius:var(--radius-sm); padding:3px; margin-bottom:16px; }
+.tab {
+  flex:1; padding:7px 12px; border:none; border-radius:var(--radius-sm);
+  background:transparent; color:var(--text-secondary); font-size:12px;
+  font-weight:600; cursor:pointer; text-align:center; transition:all var(--transition);
+}
+.tab.active { background:var(--accent); color:#fff; }
+
+.tag {
+  display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px;
+  font-weight:600; background:var(--accent); color:#fff; margin:0 3px 3px 0;
+}
+.tag.green { background:var(--success); }
+.tag.blue { background:var(--info); }
+.tag.yellow { background:var(--warning); }
+.tag.red { background:var(--danger); }
+.tag.gray { background:var(--text-muted); }
+
+.progress-bar { height:6px; background:rgba(255,255,255,0.1); border-radius:3px; overflow:hidden; }
+.progress-fill { height:100%; border-radius:3px; transition:width 0.5s; background:var(--accent); }
+
+.star-rating { display:inline-flex; gap:2px; }
+.star { cursor:pointer; font-size:18px; color:var(--text-muted); transition:color 0.15s; }
+.star.filled { color:#f1c40f; }
+.star:hover { color:#f1c40f; }
+
+label.form-label { display:block; font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px; }
+.form-group { margin-bottom:14px; }
+.form-row { display:flex; gap:10px; }
+.form-row > * { flex:1; }
+
+.list-item {
+  display:flex; align-items:center; gap:12px; padding:10px 14px;
+  background:var(--bg-card); border-radius:var(--radius-sm);
+  border:1px solid rgba(255,255,255,0.04); cursor:pointer;
+  transition:all var(--transition);
+}
+.list-item:hover { border-color:rgba(255,255,255,0.1); background:var(--bg-secondary); }
+.list-item + .list-item { margin-top:6px; }
+.list-item .item-icon { font-size:24px; flex-shrink:0; }
+.list-item .item-body { flex:1; min-width:0; }
+.list-item .item-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.list-item .item-sub { font-size:11px; color:var(--text-secondary); }
+
+/* ═══════════════════════════════════════════════════════
+   Help Overlay
+   ═══════════════════════════════════════════════════════ */
+#help-overlay {
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.7); backdrop-filter:blur(4px);
+  justify-content:center; align-items:center;
+}
+#help-overlay.visible { display:flex; }
+.help-dialog {
+  background:var(--bg-card); border-radius:var(--radius); padding:24px;
+  max-width:520px; width:90%; max-height:80vh; overflow-y:auto;
+  box-shadow:0 8px 40px rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.08);
+}
+.help-dialog h3 { font-size:17px; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.help-dialog p, .help-dialog li { font-size:13px; line-height:1.7; color:var(--text-secondary); }
+.help-dialog ul { padding-left:18px; margin:8px 0; }
+.help-dialog .help-tip { background:var(--bg-secondary); padding:10px 14px; border-radius:var(--radius-sm); margin:10px 0; border-left:3px solid var(--accent); }
+.help-dialog .help-tip strong { color:var(--accent); }
+.help-close { position:absolute; top:16px; right:16px; }
+
+/* ═══════════════════════════════════════════════════════
+   Toast Notifications
+   ═══════════════════════════════════════════════════════ */
+#toast-container {
+  position:fixed; top:16px; right:16px; z-index:10000;
+  display:flex; flex-direction:column; gap:8px; pointer-events:none;
+}
+.toast {
+  padding:10px 18px; border-radius:var(--radius-sm); font-size:13px;
+  box-shadow:var(--shadow); pointer-events:auto; animation:toastIn 0.3s ease;
+  display:flex; align-items:center; gap:8px; max-width:360px;
+}
+.toast.success { background:var(--success); color:#fff; }
+.toast.error { background:var(--danger); color:#fff; }
+.toast.info { background:var(--info); color:#fff; }
+.toast.warning { background:var(--warning); color:#fff; }
+@keyframes toastIn { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
+
+/* ═══════════════════════════════════════════════════════
+   Map Section Overrides
+   ═══════════════════════════════════════════════════════ */
+#section-map { position:relative; }
+#map { width:100%; height:100%; }
+.map-controls { position:absolute; top:12px; right:12px; z-index:10; display:flex; flex-direction:column; gap:8px; }
+.ctrl-btn {
+  width:42px; height:42px; border:none; border-radius:var(--radius);
+  background:var(--bg-card); color:var(--text-primary); font-size:20px;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  box-shadow:var(--shadow); transition: background 0.2s, transform 0.1s;
+}
+.ctrl-btn:hover { background:var(--bg-secondary); }
+.ctrl-btn:active { transform:scale(0.93); }
+.ctrl-btn.active { background:var(--accent); color:#fff; }
+#map.pin-mode { cursor: crosshair !important; }
+#map.pin-mode canvas { cursor: crosshair !important; }
+
+#layer-menu {
+  position:absolute; top:12px; left:12px; z-index:10;
+  display:flex; gap:4px; background:var(--bg-card); border-radius:var(--radius);
+  padding:4px; box-shadow:var(--shadow);
+}
+.layer-btn {
+  padding:6px 12px; border:none; border-radius:7px; cursor:pointer;
+  background:transparent; color:var(--text-secondary); font-size:12px; font-weight:600;
+  transition:all 0.2s;
+}
+.layer-btn.active { background:var(--accent); color:#fff; }
+
+#search-bar {
+  position:absolute; top:56px; left:50%; transform:translateX(-50%); z-index:15;
+  width:min(400px, calc(100% - 120px));
+}
+#search-input {
+  width:100%; padding:10px 16px; border:none; border-radius:var(--radius);
+  background:var(--bg-card); color:var(--text-primary); font-size:14px;
+  box-shadow:var(--shadow); outline:none;
+}
+#search-input::placeholder { color:var(--text-secondary); }
+#search-input:focus { box-shadow:0 0 0 2px var(--accent), var(--shadow); }
+
+#filter-panel {
+  position:absolute; bottom:0; left:0; right:0; z-index:20;
+  background:var(--bg-card); border-radius:var(--radius) var(--radius) 0 0;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.5); padding:16px 16px 24px;
+  transform:translateY(calc(100% - 52px)); transition:transform 0.35s cubic-bezier(0.4,0,0.2,1);
+  max-height:65vh; overflow-y:auto;
+}
+#filter-panel.open { transform:translateY(0); }
+.filter-handle { width:40px; height:4px; background:var(--text-secondary); border-radius:2px; margin:0 auto 12px; cursor:pointer; opacity:0.5; }
+.filter-title { font-size:15px; font-weight:700; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; }
+.filter-section { margin-bottom:14px; }
+.filter-section-title { font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; font-weight:600; }
+.category-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { padding:5px 10px; border-radius:16px; font-size:12px; cursor:pointer; border:1.5px solid var(--text-secondary); color:var(--text-secondary); transition:all 0.2s; user-select:none; white-space:nowrap; }
+.chip.active { border-color:var(--accent); color:#fff; background:var(--accent); }
+.presets { display:flex; gap:6px; flex-wrap:wrap; }
+.preset-btn { padding:5px 10px; border-radius:16px; font-size:11px; cursor:pointer; border:1px solid var(--accent); color:var(--accent); background:transparent; transition:all 0.2s; font-weight:600; }
+.preset-btn:hover, .preset-btn.active { background:var(--accent); color:#fff; }
+.slider-row { display:flex; align-items:center; gap:10px; }
+.slider-row input[type=range] { flex:1; accent-color:var(--accent); }
+.slider-value { font-size:13px; font-weight:600; min-width:55px; text-align:right; color:var(--accent); }
+.toggle-row { display:flex; align-items:center; justify-content:space-between; padding:4px 0; }
+.toggle-label { font-size:13px; }
+.toggle { position:relative; width:40px; height:22px; background:#444; border-radius:11px; cursor:pointer; transition:background 0.2s; }
+.toggle.on { background:var(--accent); }
+.toggle::after { content:''; position:absolute; top:2px; left:2px; width:18px; height:18px; background:#fff; border-radius:50%; transition:transform 0.2s; }
+.toggle.on::after { transform:translateX(18px); }
+
+#place-card {
+  position:absolute; bottom:60px; left:12px; right:12px; z-index:25;
+  background:var(--bg-card); border-radius:var(--radius); box-shadow:var(--shadow);
+  padding:16px; display:none; max-height:45vh; overflow-y:auto;
+  border-left:4px solid var(--accent);
+}
+#place-card.visible { display:block; animation:slideUp 0.3s ease; }
+@keyframes slideUp { from { transform:translateY(30px); opacity:0; } to { transform:translateY(0); opacity:1; } }
+.card-close { position:absolute; top:8px; right:12px; background:none; border:none; color:var(--text-secondary); font-size:20px; cursor:pointer; }
+.card-category { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; background:var(--accent); color:#fff; margin-right:4px; margin-bottom:4px; }
+.card-name { font-size:18px; font-weight:700; margin:6px 0 4px; }
+.card-meta-info { font-size:12px; color:var(--text-secondary); margin-bottom:8px; }
+.card-desc { font-size:13px; line-height:1.5; color:var(--text-primary); }
+.confidence-bar { height:4px; background:#333; border-radius:2px; overflow:hidden; margin-top:4px; }
+.confidence-fill { height:100%; border-radius:2px; transition:width 0.5s; }
+
+#fog-stats {
+  position:absolute; top:60px; left:12px; z-index:10;
+  background:var(--bg-card); border-radius:var(--radius); box-shadow:var(--shadow);
+  padding:8px 14px; font-size:12px; display:none;
+}
+#fog-stats.visible { display:block; }
+.fog-progress { display:flex; align-items:center; gap:8px; }
+.fog-bar { width:80px; height:6px; background:#333; border-radius:3px; overflow:hidden; }
+.fog-bar-fill { height:100%; background:linear-gradient(90deg, var(--accent), #ffb347); border-radius:3px; transition:width 0.5s; }
+
+#historical-panel {
+  position:absolute; top:56px; right:12px; z-index:15;
+  background:var(--bg-card); border-radius:var(--radius); box-shadow:var(--shadow);
+  padding:12px 16px; width:260px; display:none;
+}
+#historical-panel.visible { display:block; }
+.hist-title { font-size:13px; font-weight:700; margin-bottom:10px; }
+.hist-layer-list { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
+.hist-layer-btn { padding:6px 10px; border:1px solid var(--text-secondary); border-radius:8px; background:transparent; color:var(--text-secondary); font-size:11px; cursor:pointer; text-align:left; transition:all 0.2s; }
+.hist-layer-btn:hover { border-color:var(--accent); color:var(--text-primary); }
+.hist-layer-btn.active { border-color:var(--accent); background:var(--accent); color:#fff; }
+.hist-close { position:absolute; top:6px; right:10px; background:none; border:none; color:var(--text-secondary); font-size:16px; cursor:pointer; }
+
+#loading-overlay {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  z-index:30; background:var(--bg-card); border-radius:var(--radius);
+  padding:16px 24px; box-shadow:var(--shadow); display:none;
+  font-size:14px; align-items:center; gap:10px;
+}
+#loading-overlay.visible { display:flex; }
+.spinner { width:20px; height:20px; border:3px solid var(--text-secondary); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.maplibregl-popup-content { background:var(--bg-card)!important; color:var(--text-primary)!important; border-radius:8px!important; padding:10px 14px!important; box-shadow:var(--shadow)!important; font-size:13px; max-width:240px; }
+.maplibregl-popup-tip { border-top-color:var(--bg-card)!important; }
+.maplibregl-popup-close-button { color:var(--text-secondary)!important; font-size:18px; }
+
+/* ═══════════════════════════════════════════════════════
+   Chat Section
+   ═══════════════════════════════════════════════════════ */
+#chat-messages {
+  flex:1; overflow-y:auto; padding:16px 20px; display:flex;
+  flex-direction:column; gap:12px;
+}
+.chat-msg {
+  max-width:85%; padding:10px 14px; border-radius:var(--radius);
+  font-size:13px; line-height:1.6; animation:msgIn 0.25s ease;
+}
+@keyframes msgIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+.chat-msg.user { background:var(--accent); color:#fff; align-self:flex-end; border-bottom-right-radius:2px; }
+.chat-msg.assistant { background:var(--bg-card); color:var(--text-primary); align-self:flex-start; border-bottom-left-radius:2px; }
+.chat-msg .msg-places { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+.chat-msg .msg-place {
+  background:rgba(255,255,255,0.08); padding:8px 10px; border-radius:var(--radius-sm);
+  cursor:pointer; transition:background 0.2s;
+}
+.chat-msg .msg-place:hover { background:rgba(255,255,255,0.15); }
+.chat-msg .msg-place-name { font-weight:600; font-size:12px; }
+.chat-msg .msg-place-desc { font-size:11px; opacity:0.8; margin-top:2px; }
+.chat-suggestions { display:flex; flex-wrap:wrap; gap:6px; padding:0 20px 8px; }
+.chat-suggestion {
+  padding:5px 12px; border-radius:16px; font-size:12px; border:1px solid var(--accent);
+  color:var(--accent); background:transparent; cursor:pointer; transition:all 0.2s;
+}
+.chat-suggestion:hover { background:var(--accent); color:#fff; }
+#chat-input-row {
+  display:flex; gap:8px; padding:12px 20px;
+  border-top:1px solid rgba(255,255,255,0.06);
+}
+#chat-input { flex:1; }
+#chat-send { width:42px; }
+
+/* ═══════════════════════════════════════════════════════
+   Gamification Section
+   ═══════════════════════════════════════════════════════ */
+.profile-card {
+  background:linear-gradient(135deg, var(--bg-card), var(--bg-secondary));
+  border-radius:var(--radius); padding:20px; margin-bottom:16px;
+  border:1px solid rgba(255,255,255,0.06); text-align:center;
+}
+.profile-level { font-size:48px; margin-bottom:4px; }
+.profile-title { font-size:16px; font-weight:700; }
+.profile-xp { font-size:13px; color:var(--text-secondary); margin:4px 0 12px; }
+.profile-stats { display:flex; justify-content:center; gap:24px; margin-top:12px; }
+.profile-stat { text-align:center; }
+.profile-stat-value { font-size:20px; font-weight:700; color:var(--accent); }
+.profile-stat-label { font-size:11px; color:var(--text-secondary); }
+
+.achievement-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px; }
+.achievement {
+  background:var(--bg-card); border-radius:var(--radius); padding:14px;
+  text-align:center; border:1px solid rgba(255,255,255,0.04);
+  transition:all var(--transition); position:relative; overflow:hidden;
+}
+.achievement.locked { opacity:0.4; }
+.achievement.locked::after { content:'🔒'; position:absolute; top:6px; right:6px; font-size:12px; }
+.achievement .ach-icon { font-size:32px; margin-bottom:6px; }
+.achievement .ach-name { font-size:12px; font-weight:600; }
+.achievement .ach-desc { font-size:10px; color:var(--text-secondary); margin-top:2px; }
+.achievement .ach-xp { font-size:10px; color:var(--accent); margin-top:4px; font-weight:600; }
+
+.leaderboard-row {
+  display:flex; align-items:center; gap:12px; padding:10px 14px;
+  background:var(--bg-card); border-radius:var(--radius-sm); margin-bottom:6px;
+}
+.leaderboard-rank { font-size:16px; font-weight:700; min-width:30px; text-align:center; }
+.leaderboard-rank.gold { color:#f1c40f; }
+.leaderboard-rank.silver { color:#bdc3c7; }
+.leaderboard-rank.bronze { color:#e67e22; }
+.leaderboard-name { flex:1; font-size:13px; font-weight:600; }
+.leaderboard-xp { font-size:12px; color:var(--accent); font-weight:600; }
+
+/* ═══════════════════════════════════════════════════════
+   Community Section
+   ═══════════════════════════════════════════════════════ */
+.review-card { background:var(--bg-card); border-radius:var(--radius); padding:14px; margin-bottom:10px; }
+.review-header { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.review-author { font-size:13px; font-weight:600; }
+.review-date { font-size:11px; color:var(--text-secondary); }
+.review-text { font-size:13px; line-height:1.6; }
+.review-votes { display:flex; gap:12px; margin-top:8px; font-size:12px; color:var(--text-secondary); }
+.vote-btn { cursor:pointer; transition:color 0.2s; border:none; background:none; color:var(--text-secondary); font-size:12px; }
+.vote-btn:hover { color:var(--accent); }
+
+/* ═══════════════════════════════════════════════════════
+   Offline Section
+   ═══════════════════════════════════════════════════════ */
+.storage-bar { display:flex; height:20px; border-radius:var(--radius-sm); overflow:hidden; background:rgba(255,255,255,0.05); margin:8px 0; }
+.storage-segment { transition:width 0.5s; }
+
+/* ═══════════════════════════════════════════════════════
+   Accessibility & Focus
+   ═══════════════════════════════════════════════════════ */
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.input:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow); }
+.nav-btn:focus-visible, .ctrl-btn:focus-visible, .btn:focus-visible, .tab:focus-visible, .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.toggle[role="switch"]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; }
+
+/* Skeleton loading animation */
+.skeleton { background: linear-gradient(90deg, var(--bg-input) 25%, rgba(255,255,255,0.08) 50%, var(--bg-input) 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:var(--radius-sm); }
+.skeleton-line { height:14px; margin-bottom:8px; }
+.skeleton-block { height:60px; margin-bottom:10px; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+/* ═══════════════════════════════════════════════════════
+   Mobile Responsive
+   ═══════════════════════════════════════════════════════ */
+@media (min-width:769px) and (max-width:1024px) {
+  .panel { width:340px; }
+  #search-bar { width:320px; }
+  .section-body { padding:14px; }
+  .grid-3 { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width:768px) {
+  #app { flex-direction:column-reverse; }
+  #sidebar {
+    width:100%; min-width:100%; height:56px; flex-direction:row;
+    padding:0 4px; border-right:none; border-top:1px solid rgba(255,255,255,0.05);
+    overflow-x:auto; justify-content:space-around;
+  }
+  .nav-btn { margin:0 1px; }
+  .nav-btn .nav-tooltip { display:none!important; }
+  .nav-divider { width:1px; height:24px; margin:0 4px; }
+  .nav-spacer { display:none; }
+  #content { height:calc(100% - 56px); }
+  #search-bar { width:calc(100% - 24px); top:52px; }
+  #place-card { left:8px; right:8px; bottom:56px; }
+  .ctrl-btn { width:38px; height:38px; font-size:18px; }
+}
+  </style>
+</head>
+<body>
+
+<div id="app">
+<!-- ═══════ Sidebar Navigation ═══════ -->
+<nav id="sidebar">
+  <button class="nav-btn active" data-section="map" title="Map">🗺️<span class="nav-tooltip">Map</span></button>
+  <button class="nav-btn" data-section="chat" title="AI Chat">🤖<span class="nav-tooltip">AI Chat</span></button>
+  <button class="nav-btn" data-section="journal" title="Journal">📓<span class="nav-tooltip">Journal</span></button>
+  <button class="nav-btn" data-section="routes" title="Routes">🛤️<span class="nav-tooltip">Routes</span></button>
+  <div class="nav-divider"></div>
+  <button class="nav-btn" data-section="gamification" title="Gamification">🏆<span class="nav-tooltip">Achievements</span></button>
+  <button class="nav-btn" data-section="community" title="Community">👥<span class="nav-tooltip">Community</span></button>
+  <button class="nav-btn" data-section="offline" title="Offline">📴<span class="nav-tooltip">Offline</span></button>
+  <div class="nav-spacer"></div>
+  <button class="nav-btn" id="nav-status" title="API Status">🟢<span class="nav-tooltip">Connected</span></button>
+</nav>
+
+<!-- ═══════ Content Area ═══════ -->
+<div id="content">
+
+<!-- ═══════ MAP SECTION ═══════ -->
+<div id="section-map" class="section active">
+  <div id="layer-menu">
+    <button class="layer-btn active" data-layer="dark">🌙 Dark</button>
+    <button class="layer-btn" data-layer="satellite">🛰️ Satellite</button>
+    <button class="layer-btn" data-layer="terrain">⛰️ Terrain</button>
+    <button class="layer-btn" data-layer="historical" id="btn-historical">🕰️ History</button>
+  </div>
+  <div class="map-controls">
+    <button class="ctrl-btn" id="btn-locate" title="My location" aria-label="Center on my location">📍</button>
+    <button class="ctrl-btn" id="btn-pin" title="Set location on map" aria-label="Set custom search point on map">📌</button>
+    <button class="ctrl-btn" id="btn-fog" title="Fog of War" aria-label="Toggle fog of war">🌫️</button>
+    <button class="ctrl-btn" id="btn-refresh" title="Refresh" aria-label="Refresh places">🔄</button>
+    <button class="ctrl-btn help-btn" onclick="showHelp('map')" title="Help">?</button>
+  </div>
+  <div id="search-bar">
+    <label for="search-input" class="sr-only">Search for places</label>
+    <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" />
+  </div>
+  <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill" style="width:0%"></div></div><span style="font-weight:700;color:var(--accent)" id="fog-pct">0%</span></div></div>
+  <div id="historical-panel">
+    <button class="hist-close" id="hist-close">✕</button>
+    <div class="hist-title">🕰️ Time Travel</div>
+    <div class="hist-layer-list" id="hist-layers"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text-secondary)">Opacity</span><input type="range" id="hist-opacity" min="0" max="100" step="5" value="50" aria-label="Historical layer opacity" style="flex:1;accent-color:var(--accent)"><span id="hist-opacity-value" style="font-size:12px;font-weight:700;color:var(--accent)">50%</span></div>
+  </div>
+  <div id="loading-overlay"><div class="spinner"></div><span>Discovering places...</span></div>
+  <div id="map"></div>
+  <div id="place-card">
+    <button class="card-close" id="card-close">✕</button>
+    <div id="card-categories"></div>
+    <div class="card-name" id="card-name"></div>
+    <div class="card-meta-info" id="card-meta"></div>
+    <div class="card-desc" id="card-desc"></div>
+    <div style="margin-top:8px"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:3px">Confidence</div><div class="confidence-bar"><div class="confidence-fill" id="card-conf-fill"></div></div></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn btn-primary" style="flex:1" id="card-navigate">🧭 Navigate</button>
+      <button class="btn btn-secondary" style="flex:1" id="card-save">⭐ Save</button>
+      <button class="btn btn-secondary" id="card-story" title="Get AI story">📖</button>
+      <button class="btn btn-secondary" id="card-checkin" title="Check in">📍</button>
+    </div>
+  </div>
+  <div id="filter-panel">
+    <div class="filter-handle" id="filter-handle"></div>
+    <div class="filter-title"><span>🎛️ Filters</span><span id="place-count" style="font-size:12px;color:var(--text-secondary)">0 places</span></div>
+    <div class="filter-section"><div class="filter-section-title">Presets</div><div class="presets">
+      <button class="preset-btn active" data-preset="all">🌍 All</button>
+      <button class="preset-btn" data-preset="hidden">🕵️ Hidden</button>
+      <button class="preset-btn" data-preset="urbex">🏚️ Urbex</button>
+      <button class="preset-btn" data-preset="nature">🌿 Nature</button>
+      <button class="preset-btn" data-preset="history">🏛️ History</button>
+      <button class="preset-btn" data-preset="classic">⭐ Classic</button>
+    </div></div>
+    <div class="filter-section"><div class="filter-section-title">Categories</div><div class="category-chips" id="category-chips"></div></div>
+    <div class="filter-section"><div class="filter-section-title">Radius</div><div class="slider-row"><input type="range" id="radius-slider" min="0.5" max="50" step="0.5" value="5" aria-label="Search radius"><span class="slider-value" id="radius-value">5.0 km</span></div></div>
+    <div class="filter-section"><div class="filter-section-title">Confidence</div><div class="slider-row"><input type="range" id="confidence-slider" min="0" max="100" step="5" value="0" aria-label="Confidence threshold"><span class="slider-value" id="confidence-value">All</span></div></div>
+    <div class="filter-section">
+      <div class="toggle-row"><span class="toggle-label">Hide visited places</span><div class="toggle" id="toggle-visited" role="switch" aria-checked="false" tabindex="0"></div></div>
+      <div class="toggle-row" style="margin-top:6px"><span class="toggle-label">Show fog of war</span><div class="toggle on" id="toggle-fog" role="switch" aria-checked="true" tabindex="0"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ CHAT SECTION ═══════ -->
+<div id="section-chat" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>🤖 AI Explorer Chat</h2>
+      <button class="help-btn" onclick="showHelp('chat')">?</button>
+    </div>
+    <div id="chat-messages" role="log" aria-live="polite" aria-label="Chat conversation">
+      <div class="chat-msg assistant">
+        👋 Привет! Я — AI-помощник Terra Incognita. Спроси меня о необычных местах, и я помогу их найти!<br><br>
+        Примеры:<br>
+        • "Заброшенные здания рядом с водой"<br>
+        • "Что-то мистическое в горах"<br>
+        • "Интересные руины в 10 км от меня"
+      </div>
+    </div>
+    <div class="chat-suggestions" id="chat-suggestions">
+      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🏚️ Заброшенные места рядом</button>
+      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🌿 Скрытые природные места</button>
+      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🏛️ Исторические руины</button>
+    </div>
+    <div id="chat-input-row">
+      <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" />
+      <button class="btn btn-primary" id="chat-send" onclick="sendChatFromInput()">➤</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ JOURNAL SECTION ═══════ -->
+<div id="section-journal" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>📓 Explorer Journal</h2>
+      <div class="tabs" style="margin:0 0 0 16px">
+        <button class="tab active" data-jtab="visits">Visits</button>
+        <button class="tab" data-jtab="trips">Trips</button>
+        <button class="tab" data-jtab="stats">Stats</button>
+      </div>
+      <button class="help-btn" onclick="showHelp('journal')">?</button>
+    </div>
+    <div class="panel-body" id="journal-body">
+      <!-- Visits tab -->
+      <div id="jtab-visits" class="jtab active">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <select class="input" id="visits-filter" style="width:auto"><option value="">All visits</option><option value="visited">Visited</option><option value="want_to_visit">Want to visit</option><option value="skip">Skipped</option></select>
+          <button class="btn btn-primary btn-sm" onclick="loadVisits()">🔄 Refresh</button>
+        </div>
+        <div id="visits-list"></div>
+      </div>
+      <!-- Trips tab -->
+      <div id="jtab-trips" class="jtab" style="display:none">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-primary btn-sm" onclick="showCreateTrip()">+ New Trip</button>
+          <button class="btn btn-secondary btn-sm" onclick="loadTrips()">🔄 Refresh</button>
+        </div>
+        <div id="create-trip-form" style="display:none;margin-bottom:14px" class="card">
+          <div class="form-group"><label class="form-label" for="trip-name">Name *</label><input class="input" id="trip-name" placeholder="My adventure" required maxlength="100"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="trip-region">Region</label><input class="input" id="trip-region" placeholder="Montenegro"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="trip-start">Start</label><input type="date" class="input" id="trip-start"></div>
+            <div class="form-group"><label class="form-label" for="trip-end">End</label><input type="date" class="input" id="trip-end"></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="createTrip()">Create</button><button class="btn btn-secondary btn-sm" onclick="hideCreateTrip()">Cancel</button></div>
+        </div>
+        <div id="trips-list"></div>
+      </div>
+      <!-- Stats tab -->
+      <div id="jtab-stats" class="jtab" style="display:none">
+        <div id="stats-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ ROUTES SECTION ═══════ -->
+<div id="section-routes" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>🛤️ Route Builder</h2>
+      <button class="help-btn" onclick="showHelp('routes')">?</button>
+    </div>
+    <div class="panel-body">
+      <div class="tabs" id="route-tabs">
+        <button class="tab active" data-rtab="build">Point-to-Point</button>
+        <button class="tab" data-rtab="explore">Circular Walk</button>
+        <button class="tab" data-rtab="saved">My Routes</button>
+      </div>
+
+      <!-- Build route -->
+      <div id="rtab-build" class="rtab">
+        <div class="form-group"><label class="form-label" for="route-from">From (lat, lng)</label><input class="input" id="route-from" placeholder="42.441, 18.771"></div>
+        <div class="form-group"><label class="form-label" for="route-to">To (lat, lng)</label><input class="input" id="route-to" placeholder="42.487, 18.687"></div>
+        <div class="form-group"><label class="form-label" for="route-time">Time Budget (hours)</label><input type="number" class="input" id="route-time" value="3" min="0.5" max="24" step="0.5"></div>
+        <div class="form-group"><label class="form-label">Mode</label>
+          <select class="input" id="route-mode"><option value="walking">🚶 Walking</option><option value="cycling">🚲 Cycling</option><option value="driving">🚗 Driving</option></select>
+        </div>
+        <button class="btn btn-primary" onclick="buildRoute()" style="width:100%">🗺️ Build Route</button>
+      </div>
+
+      <!-- Explore (circular) -->
+      <div id="rtab-explore" class="rtab" style="display:none">
+        <div class="form-group"><label class="form-label" for="explore-center">Start Point (lat, lng)</label><input class="input" id="explore-center" placeholder="42.441, 18.771 or use 📍"></div>
+        <div class="form-group"><label class="form-label" for="explore-time">Time Budget (hours)</label><input type="number" class="input" id="explore-time" value="2" min="0.5" max="12" step="0.5"></div>
+        <div class="form-group"><label class="form-label">Categories</label>
+          <div id="explore-cats" class="category-chips" style="margin-top:4px"></div>
+        </div>
+        <button class="btn btn-primary" onclick="exploreRoute()" style="width:100%">🔄 Generate Circular Walk</button>
+      </div>
+
+      <!-- Saved routes -->
+      <div id="rtab-saved" class="rtab" style="display:none">
+        <div id="saved-routes-list"></div>
+      </div>
+
+      <!-- Route result -->
+      <div id="route-result" style="display:none;margin-top:16px">
+        <div class="card">
+          <div class="card-title" id="route-title">Route</div>
+          <div class="card-meta" id="route-meta"></div>
+          <div id="route-waypoints" style="margin-top:10px"></div>
+          <div class="card-actions" style="margin-top:12px">
+            <button class="btn btn-primary btn-sm" onclick="exportRoute('gpx')">📥 GPX</button>
+            <button class="btn btn-primary btn-sm" onclick="exportRoute('kml')">📥 KML</button>
+            <button class="btn btn-secondary btn-sm" onclick="getRouteStory()">📖 Story</button>
+            <button class="btn btn-secondary btn-sm" onclick="saveRouteLocal()">💾 Save</button>
+          </div>
+        </div>
+        <div id="route-story" style="display:none;margin-top:10px" class="card">
+          <div class="card-title">📖 Route Story</div>
+          <div id="route-story-text" style="font-size:13px;line-height:1.7;margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ GAMIFICATION SECTION ═══════ -->
+<div id="section-gamification" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>🏆 Explorer Profile</h2>
+      <button class="help-btn" onclick="showHelp('gamification')">?</button>
+    </div>
+    <div class="panel-body">
+      <div id="profile-content">
+        <div class="profile-card" id="explorer-profile">
+          <div class="profile-level">🌍</div>
+          <div class="profile-title" id="profile-title">Explorer</div>
+          <div class="profile-xp" id="profile-xp">0 XP · Level 1</div>
+          <div class="progress-bar" style="max-width:200px;margin:0 auto"><div class="progress-fill" id="profile-xp-bar" style="width:0%"></div></div>
+          <div class="profile-stats">
+            <div class="profile-stat"><div class="profile-stat-value" id="ps-explored">0</div><div class="profile-stat-label">km² explored</div></div>
+            <div class="profile-stat"><div class="profile-stat-value" id="ps-achievements">0</div><div class="profile-stat-label">achievements</div></div>
+            <div class="profile-stat"><div class="profile-stat-value" id="ps-visits">0</div><div class="profile-stat-label">visits</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs" id="gam-tabs">
+        <button class="tab active" data-gtab="achievements">Achievements</button>
+        <button class="tab" data-gtab="leaderboard">Leaderboard</button>
+        <button class="tab" data-gtab="fog">Fog Stats</button>
+      </div>
+
+      <div id="gtab-achievements" class="gtab">
+        <div class="achievement-grid" id="achievements-grid"></div>
+      </div>
+      <div id="gtab-leaderboard" class="gtab" style="display:none">
+        <div id="leaderboard-list"></div>
+      </div>
+      <div id="gtab-fog" class="gtab" style="display:none">
+        <div id="fog-region-stats"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ COMMUNITY SECTION ═══════ -->
+<div id="section-community" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>👥 Community</h2>
+      <button class="help-btn" onclick="showHelp('community')">?</button>
+    </div>
+    <div class="panel-body">
+      <div class="tabs" id="comm-tabs">
+        <button class="tab active" data-ctab="places">Places</button>
+        <button class="tab" data-ctab="routes">Routes</button>
+        <button class="tab" data-ctab="people">People</button>
+      </div>
+
+      <div id="ctab-places" class="ctab">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-primary btn-sm" onclick="showSubmitPlace()">+ Submit Place</button>
+          <select class="input" id="comm-places-filter" style="width:auto" onchange="loadCommunityPlaces()"><option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option></select>
+        </div>
+        <div id="submit-place-form" style="display:none;margin-bottom:14px" class="card">
+          <div class="form-group"><label class="form-label" for="cp-name">Name *</label><input class="input" id="cp-name" placeholder="Place name" required maxlength="200"></div>
+          <div class="form-group"><label class="form-label">Description</label><textarea class="input" id="cp-desc" placeholder="What makes this place interesting?" maxlength="2000"></textarea></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="cp-lat">Lat *</label><input type="number" class="input" id="cp-lat" placeholder="42.441" step="any" min="-90" max="90" required></div>
+            <div class="form-group"><label class="form-label" for="cp-lng">Lng *</label><input type="number" class="input" id="cp-lng" placeholder="18.771" step="any" min="-180" max="180" required></div>
+          </div>
+          <div class="form-group"><label class="form-label" for="cp-cats">Categories</label><input class="input" id="cp-cats" placeholder="abandoned, ruins"></div>
+          <div class="form-group"><label class="form-label" for="cp-tags">Tags</label><input class="input" id="cp-tags" placeholder="wwii, bunker, hidden"></div>
+          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="submitCommunityPlace()">Submit</button><button class="btn btn-secondary btn-sm" onclick="hideSubmitPlace()">Cancel</button></div>
+        </div>
+        <div id="community-places-list"></div>
+      </div>
+
+      <div id="ctab-routes" class="ctab" style="display:none">
+        <div id="community-routes-list"></div>
+      </div>
+
+      <div id="ctab-people" class="ctab" style="display:none">
+        <div class="form-group"><label class="form-label" for="my-user-id">Your User ID</label><input class="input" id="my-user-id" placeholder="my-explorer-id"></div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-secondary btn-sm" onclick="loadFollowing()">Following</button>
+          <button class="btn btn-secondary btn-sm" onclick="loadFollowers()">Followers</button>
+        </div>
+        <div id="people-list"></div>
+        <div style="margin-top:14px">
+          <div class="card-title">My Karma</div>
+          <div id="karma-display" style="font-size:24px;font-weight:700;color:var(--accent);margin-top:4px">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ OFFLINE SECTION ═══════ -->
+<div id="section-offline" class="section">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>📴 Offline Mode</h2>
+      <span class="badge" id="offline-status-badge">Online</span>
+      <button class="help-btn" onclick="showHelp('offline')">?</button>
+    </div>
+    <div class="panel-body">
+      <div class="tabs" id="off-tabs">
+        <button class="tab active" data-otab="tiles">Tiles</button>
+        <button class="tab" data-otab="places">Cached Places</button>
+        <button class="tab" data-otab="sync">Sync Queue</button>
+      </div>
+
+      <div id="otab-tiles" class="otab">
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-title">📥 Download Region</div>
+          <div class="form-group" style="margin-top:8px"><label class="form-label" for="dl-region-name">Region Name</label><input class="input" id="dl-region-name" placeholder="Kotor Bay"></div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="dl-min-lat">Min Lat</label><input class="input" id="dl-min-lat" placeholder="42.40"></div>
+            <div class="form-group"><label class="form-label" for="dl-min-lng">Min Lng</label><input class="input" id="dl-min-lng" placeholder="18.70"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="dl-max-lat">Max Lat</label><input class="input" id="dl-max-lat" placeholder="42.50"></div>
+            <div class="form-group"><label class="form-label" for="dl-max-lng">Max Lng</label><input class="input" id="dl-max-lng" placeholder="18.80"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="dl-min-zoom">Min Zoom</label><input type="number" class="input" id="dl-min-zoom" value="10" min="1" max="18"></div>
+            <div class="form-group"><label class="form-label" for="dl-max-zoom">Max Zoom</label><input type="number" class="input" id="dl-max-zoom" value="15" min="1" max="18"></div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="downloadTiles()" style="margin-top:8px;width:100%">📥 Download</button>
+        </div>
+        <div id="tile-regions-list"></div>
+      </div>
+
+      <div id="otab-places" class="otab" style="display:none">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-primary btn-sm" onclick="cachePlaces()">Cache Current View</button>
+          <button class="btn btn-danger btn-sm" onclick="clearCachedPlaces()">Clear All</button>
+        </div>
+        <div id="cached-places-list"></div>
+      </div>
+
+      <div id="otab-sync" class="otab" style="display:none">
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <button class="btn btn-primary btn-sm" onclick="syncNow()">🔄 Sync Now</button>
+          <button class="btn btn-secondary btn-sm" onclick="clearSynced()">Clear Synced</button>
+        </div>
+        <div id="sync-queue-list"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">💾 Storage Status</div>
+        <div id="offline-storage-info" style="margin-top:8px;font-size:12px;color:var(--text-secondary)">Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /content -->
+</div><!-- /app -->
+
+<!-- ═══════ HELP OVERLAY ═══════ -->
+<div id="help-overlay">
+  <div class="help-dialog" id="help-dialog"></div>
+</div>
+
+<!-- ═══════ TOAST CONTAINER ═══════ -->
+<div id="toast-container"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  Terra Incognita — Full Application v1.1
+// ═══════════════════════════════════════════════════════
+const APP_VERSION = '1.1.0';
+const API = window.location.origin || 'http://localhost:1312';
+let conversationId = null;
+
+function _uuid() { return 'xxxx-xxxx-xxxx'.replace(/x/g, () => (Math.random()*16|0).toString(16)); }
+
+// ── User ID (persistent, auto-generated) ──
+function getUserId() {
+  let uid = localStorage.getItem('ti_user_id');
+  if (!uid) { uid = 'explorer-' + _uuid().slice(0,8); localStorage.setItem('ti_user_id', uid); }
+  return uid;
+}
+const USER_ID = getUserId();
+function getActiveUserId() { return (document.getElementById('my-user-id')?.value?.trim()) || USER_ID; }
+
+// ── localStorage migration ──
+(function migrateStorage() {
+  const ver = localStorage.getItem('ti_storage_version') || '0';
+  if (ver < '1.1') {
+    // Validate existing data
+    try { JSON.parse(localStorage.getItem('ti_visited') || '[]'); } catch { localStorage.removeItem('ti_visited'); }
+    try { JSON.parse(localStorage.getItem('ti_saved') || '[]'); } catch { localStorage.removeItem('ti_saved'); }
+    try { const r = JSON.parse(localStorage.getItem('ti_routes') || '[]'); if (r.length > 100) localStorage.setItem('ti_routes', JSON.stringify(r.slice(-100))); } catch { localStorage.removeItem('ti_routes'); }
+    localStorage.setItem('ti_storage_version', '1.1');
+  }
+})();
+
+// ── Utilities ──
+function debounce(fn, ms = 300) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
+
+// ── Simple analytics/event tracking ──
+const analytics = {
+  sessionId: _uuid().slice(0,12),
+  events: [],
+  track(event, data = {}) {
+    const entry = { event, data, ts: Date.now(), section: document.querySelector('.nav-btn.active')?.dataset?.section || 'unknown', sid: this.sessionId };
+    this.events.push(entry);
+    if (this.events.length > 500) this.events.shift();
+  },
+  getStats() {
+    const bySection = {}, byEvent = {};
+    this.events.forEach(e => { bySection[e.section] = (bySection[e.section]||0)+1; byEvent[e.event] = (byEvent[e.event]||0)+1; });
+    return { total: this.events.length, bySection, byEvent, sessionId: this.sessionId, sessionStart: this.events[0]?.ts, lastEvent: this.events[this.events.length-1]?.ts, durationMs: this.events.length > 1 ? (this.events[this.events.length-1].ts - this.events[0].ts) : 0 };
+  }
+};
+
+// ── Global error handler ──
+window.addEventListener('unhandledrejection', e => {
+  console.error('Unhandled promise rejection:', e.reason);
+  toast('Something went wrong. Please try again.', 'error');
+  analytics.track('error', { type: 'unhandled_rejection', message: String(e.reason) });
+});
+window.addEventListener('error', e => {
+  console.error('Global error:', e.message);
+  analytics.track('error', { type: 'js_error', message: e.message, file: e.filename, line: e.lineno });
+});
+
+// ── Navigation ──
+document.querySelectorAll('.nav-btn[data-section]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const sec = btn.dataset.section;
+    analytics.track('navigate', { section: sec });
+    document.querySelectorAll('.nav-btn[data-section]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.getElementById('section-' + sec).classList.add('active');
+    if (sec === 'map' && typeof map !== 'undefined' && map) map.resize();
+    if (sec === 'journal') loadVisits();
+    if (sec === 'gamification') loadProfile();
+    if (sec === 'community') loadCommunityPlaces();
+    if (sec === 'offline') loadOfflineStatus();
+  });
+});
+
+// ── Tab systems ──
+function setupTabs(parent, prefix) {
+  document.querySelectorAll(parent + ' .tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll(parent + ' .tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      const attr = t.dataset[prefix + 'tab'] || t.dataset.jtab || t.dataset.rtab || t.dataset.gtab || t.dataset.ctab || t.dataset.otab;
+      document.querySelectorAll('.' + prefix + 'tab').forEach(p => p.style.display = 'none');
+      const el = document.getElementById(prefix + 'tab-' + attr);
+      if (el) el.style.display = 'block';
+    });
+  });
+}
+setupTabs('#section-journal .panel-header', 'j');
+setupTabs('#route-tabs', 'r');
+setupTabs('#gam-tabs', 'g');
+setupTabs('#comm-tabs', 'c');
+setupTabs('#off-tabs', 'o');
+
+// ── Toast notifications ──
+function toast(msg, type = 'info', duration = 3500) {
+  const c = document.getElementById('toast-container');
+  // Limit max visible toasts to prevent layout overflow
+  while (c.children.length >= 5) c.firstChild.remove();
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, duration);
+}
+
+// ── Skeleton loading helper ──
+function showSkeleton(el, count = 3) {
+  el.innerHTML = Array.from({length: count}, () => '<div class="skeleton skeleton-block"></div>').join('');
+}
+
+// ── API helper with timeout + sanitization + retry + timing ──
+const API_TIMEOUT = 10000;
+const API_MAX_RETRIES = 2;
+function sanitizePath(p) { return p.replace(/[^a-zA-Z0-9\-_\/?.=&%:,@+]/g, ''); }
+async function api(path, opts = {}) {
+  const url = API + sanitizePath(path);
+  const retries = opts.retries ?? API_MAX_RETRIES;
+  const startTime = performance.now();
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeout || API_TIMEOUT);
+    try {
+      const res = await fetch(url, {
+        headers: { 'Content-Type': 'application/json', ...opts.headers },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}${text ? ': ' + text.substring(0, 200) : ''}`);
+      }
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.includes('json')) throw new Error('Non-JSON response');
+      const data = await res.json();
+      analytics.track('api_call', { path, ms: Math.round(performance.now() - startTime), status: res.status, attempt });
+      return data;
+    } catch (e) {
+      clearTimeout(timer);
+      const isRetryable = e.name === 'AbortError' || e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed');
+      if (attempt < retries && isRetryable && !opts.method?.match(/POST|PUT|DELETE/i)) {
+        await new Promise(r => setTimeout(r, Math.min(500 * (attempt + 1), 3000)));
+        continue;
+      }
+      analytics.track('api_error', { path, ms: Math.round(performance.now() - startTime), error: e.message?.substring(0, 100), attempt });
+      if (e.name === 'AbortError') { throw new Error('Request timeout — server may be busy'); }
+      throw e;
+    }
+  }
+}
+
+// ── Check API health (adaptive interval) ──
+let healthInterval = 30000;
+let healthOk = false;
+async function checkHealth() {
+  try {
+    const h = await api('/health', {retries: 0, timeout: 5000});
+    document.getElementById('nav-status').innerHTML = '🟢<span class="nav-tooltip">API OK · v' + escHtml(h.version || '?') + '</span>';
+    healthOk = true;
+    healthInterval = 30000;
+  } catch {
+    document.getElementById('nav-status').innerHTML = '🔴<span class="nav-tooltip">API Offline — check connection</span>';
+    healthOk = false;
+    healthInterval = Math.min(healthInterval * 1.5, 120000);
+  }
+  setTimeout(checkHealth, healthInterval);
+}
+checkHealth();
+
+// ── Onboarding (first visit) ──
+function showOnboarding() {
+  if (localStorage.getItem('ti_onboarded')) return;
+  if (window._userInteracted) return;
+  localStorage.setItem('ti_onboarded', '1');
+  analytics.track('onboarding_shown');
+  const overlay = document.getElementById('help-overlay');
+  const dialog = document.getElementById('help-dialog');
+  dialog.innerHTML = `
+    <h3>👋 Welcome to Terra Incognita!</h3>
+    <p>Your personal explorer's companion for discovering hidden and unusual places.</p>
+    <ul style="margin:12px 0;padding-left:20px">
+      <li><strong>🗺️ Map</strong> — explore hidden places near you with category filters</li>
+      <li><strong>🤖 AI Chat</strong> — ask the AI to find places matching your mood</li>
+      <li><strong>📓 Journal</strong> — track visits, write notes, group into trips</li>
+      <li><strong>🛤️ Routes</strong> — build optimized routes with GPX/KML export</li>
+      <li><strong>🏆 Gamification</strong> — earn XP, unlock achievements, climb the leaderboard</li>
+      <li><strong>👥 Community</strong> — submit places, write reviews, follow explorers</li>
+      <li><strong>📴 Offline</strong> — download maps for areas without internet</li>
+    </ul>
+    <p style="font-size:12px;color:var(--text-secondary)">Press <strong>?</strong> in any section for contextual help.</p>
+    <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="closeHelp();analytics.track('onboarding_closed')">Start Exploring! 🚀</button>
+  `;
+  overlay.classList.add('visible');
+}
+// Cancel onboarding if user interacts before timeout
+window._userInteracted = false;
+document.addEventListener('click', () => { window._userInteracted = true; }, { once: true });
+document.addEventListener('keydown', () => { window._userInteracted = true; }, { once: true });
+setTimeout(showOnboarding, 1500);
+// Populate user ID input with auto-generated ID
+const uidInput = document.getElementById('my-user-id');
+if (uidInput && !uidInput.value) uidInput.value = USER_ID;
+
+// ═══════════════════════════════════════════════════════
+//  HELP SYSTEM
+// ═══════════════════════════════════════════════════════
+const HELP = {
+  map: {
+    title: '🗺️ Map — How to Use',
+    body: `
+      <p>The map shows interesting and hidden places near you. Places are categorized (ruins, bunkers, abandoned, etc.) and scored by confidence.</p>
+      <ul>
+        <li><strong>📍 Locate</strong> — centers the map on your GPS position</li>
+        <li><strong>🌫️ Fog of War</strong> — unvisited areas appear as dark fog; explore to reveal them!</li>
+        <li><strong>🔄 Refresh</strong> — reload places for the current map view</li>
+        <li><strong>🔍 Search</strong> — type natural language queries like "abandoned buildings near water"</li>
+        <li><strong>🕰️ History</strong> — overlay historical maps from different eras to compare changes</li>
+      </ul>
+      <div class="help-tip"><strong>Filters:</strong> Tap the bottom panel to expand it. Use presets (Urban Explorer, Nature, All) or toggle individual categories. Adjust radius (0.5–50 km) and confidence sliders.</div>
+      <div class="help-tip"><strong>Place Cards:</strong> Click any marker to see details, ratings, and an AI-generated story. Use 📍 to check in and earn XP.</div>
+      <div class="help-tip"><strong>Keyboard:</strong> Tab to navigate controls, Enter/Space to activate. Use +/- to zoom the map.</div>
+    `
+  },
+  chat: {
+    title: '🤖 AI Chat — How to Use',
+    body: `
+      <p>Chat with an AI assistant to discover places using natural language. The AI understands your mood, preferences, and location context.</p>
+      <ul>
+        <li>Ask in <strong>any language</strong> — Russian, English, German, etc.</li>
+        <li>The AI remembers conversation context within your session</li>
+        <li>Found places appear as <strong>clickable cards</strong> — tap to see on map</li>
+        <li>Use <strong>suggested questions</strong> below the chat for quick discovery</li>
+      </ul>
+      <div class="help-tip"><strong>Try:</strong> "Покажи заброшенные места рядом с водой" / "Find mysterious ruins within 5km" / "I want something creepy and photogenic"</div>
+      <div class="help-tip"><strong>Tip:</strong> The more detail you give (mood, distance, terrain), the better the recommendations.</div>
+    `
+  },
+  journal: {
+    title: '📓 Journal — How to Use',
+    body: `
+      <p>Track your explorations with visits, trips, notes, and detailed statistics.</p>
+      <ul>
+        <li><strong>Visits</strong> — check in at places via the map (📍 button on place cards)</li>
+        <li><strong>Trips</strong> — group visits into trips (e.g., "Montenegro Weekend"). Create via the Trips tab.</li>
+        <li><strong>Notes</strong> — add text and rate visits on 4 dimensions: Atmosphere, Accessibility, Photogenic, Uniqueness (1-5 stars each)</li>
+        <li><strong>Stats</strong> — view total distance explored, hours, categories, and your personal heatmap</li>
+        <li><strong>Export</strong> — save trips as Markdown (for blogs) or JSON (for data analysis)</li>
+      </ul>
+      <div class="help-tip"><strong>Getting started:</strong> Go to the Map, click a place marker, then press 📍 Check In. Your visit will appear here!</div>
+    `
+  },
+  routes: {
+    title: '🛤️ Routes — How to Use',
+    body: `
+      <p>Build optimized routes between interesting places with export to GPS devices.</p>
+      <ul>
+        <li><strong>Explore Route</strong> — enter origin/destination as "lat, lng" (e.g., "42.441, 18.771"), set time budget and categories</li>
+        <li><strong>Circular Walk</strong> — generate a loop route from your location. Set duration (1-8 hours) and categories.</li>
+        <li><strong>GPX Export</strong> — download for Garmin, Strava, Komoot</li>
+        <li><strong>KML Export</strong> — download for Google Earth, Google Maps</li>
+        <li><strong>Route Story</strong> — AI generates a narrative connecting all places in your route</li>
+      </ul>
+      <div class="help-tip"><strong>Coordinates:</strong> Enter as "latitude, longitude" separated by comma. Use the Map's 📍 button to find your coordinates.</div>
+      <div class="help-tip"><strong>Tip:</strong> Select fewer categories for focused routes, more for variety.</div>
+    `
+  },
+  gamification: {
+    title: '🏆 Gamification — How to Use',
+    body: `
+      <p>Level up your explorer profile by visiting places and completing challenges!</p>
+      <ul>
+        <li><strong>XP</strong> — earned by checking in (+10 XP), writing notes (+5 XP), and unlocking achievements (+25-100 XP)</li>
+        <li><strong>Levels</strong> — each level unlocks a new explorer title (Novice → Scout → Pioneer → Legend)</li>
+        <li><strong>Achievements</strong> — 26 badges for milestones. Some are hidden — discover them by exploring!</li>
+        <li><strong>Leaderboard</strong> — compete with other explorers for top positions</li>
+        <li><strong>Fog Stats</strong> — see exploration percentage per region (city, country)</li>
+      </ul>
+      <div class="help-tip"><strong>Quick XP:</strong> Check in at 3 different categories in one day for a bonus achievement!</div>
+    `
+  },
+  community: {
+    title: '👥 Community — How to Use',
+    body: `
+      <p>Share discoveries, write reviews, and connect with fellow explorers.</p>
+      <ul>
+        <li><strong>Submit Places</strong> — add places you've found. Include name, description, coordinates, and category. Places go through moderation.</li>
+        <li><strong>Reviews</strong> — write reviews with 1-5 star ratings. Vote on others' reviews (👍/👎).</li>
+        <li><strong>Published Routes</strong> — browse routes shared by the community, with ratings</li>
+        <li><strong>Follow</strong> — follow other explorers to see their latest discoveries</li>
+        <li><strong>Karma</strong> — earn karma by submitting quality places, helpful reviews, and getting upvotes</li>
+      </ul>
+      <div class="help-tip"><strong>Getting started:</strong> Submit your first place to earn your "Contributor" achievement!</div>
+    `
+  },
+  offline: {
+    title: '📴 Offline Mode — How to Use',
+    body: `
+      <p>Download maps and place data for areas without internet — perfect for remote exploration.</p>
+      <ul>
+        <li><strong>Download Tiles</strong> — enter a bounding box (min/max lat/lng) and zoom levels to cache map tiles</li>
+        <li><strong>Cached Places</strong> — automatically cache visited place info including AI descriptions</li>
+        <li><strong>Sync Queue</strong> — check-ins and notes made offline are queued and synced when back online</li>
+        <li><strong>Storage</strong> — monitor disk usage for tiles and cached data</li>
+      </ul>
+      <div class="help-tip"><strong>Recommended:</strong> Download tiles at zoom levels 10-15 for a good balance of detail vs. storage (typically 50-200 MB per city).</div>
+      <div class="help-tip"><strong>Tip:</strong> Cache places before a trip so you have descriptions and ratings available offline.</div>
+    `
+  }
+};
+
+function showHelp(section) {
+  const h = HELP[section];
+  if (!h) return;
+  _helpPreviousFocus = document.activeElement;
+  const d = document.getElementById('help-dialog');
+  d.innerHTML = `<h3>${h.title}</h3>${h.body}<button class="btn btn-primary btn-sm" style="margin-top:16px;width:100%" onclick="closeHelp()">Got it!</button>`;
+  document.getElementById('help-overlay').classList.add('visible');
+  d.setAttribute('role','dialog'); d.setAttribute('aria-modal','true');
+  setTimeout(() => { const btn = d.querySelector('.btn'); if (btn) btn.focus(); }, 100);
+}
+let _helpPreviousFocus = null;
+function closeHelp() {
+  document.getElementById('help-overlay').classList.remove('visible');
+  if (_helpPreviousFocus) { _helpPreviousFocus.focus(); _helpPreviousFocus = null; }
+}
+document.getElementById('help-overlay').addEventListener('click', e => { if (e.target.id === 'help-overlay') closeHelp(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('help-overlay').classList.contains('visible')) closeHelp(); });
+
+// ═══════════════════════════════════════════════════════
+//  MAP (ported from explorer.html)
+// ═══════════════════════════════════════════════════════
+let CATEGORIES = {
+  abandoned:{icon:'🏚️',label:'Abandoned',color:'#e74c3c',group:'unusual'},
+  underground:{icon:'🕳️',label:'Underground',color:'#8e44ad',group:'unusual'},
+  industrial:{icon:'🏭',label:'Industrial',color:'#d35400',group:'unusual'},
+  ruins:{icon:'🏛️',label:'Ruins',color:'#c0392b',group:'unusual'},
+  military:{icon:'🎖️',label:'Military',color:'#2c3e50',group:'unusual'},
+  nature_hidden:{icon:'🌿',label:'Hidden Nature',color:'#27ae60',group:'unusual'},
+  viewpoint:{icon:'👁️',label:'Viewpoint',color:'#2980b9',group:'classic'},
+  street_art:{icon:'🎨',label:'Street Art',color:'#e91e63',group:'unusual'},
+  transport:{icon:'🚂',label:'Transport',color:'#f39c12',group:'unusual'},
+  water:{icon:'💧',label:'Water',color:'#3498db',group:'unusual'},
+  cave:{icon:'🦇',label:'Cave',color:'#34495e',group:'unusual'},
+  religious:{icon:'⛪',label:'Religious',color:'#9b59b6',group:'classic'},
+  landmark:{icon:'🗿',label:'Landmark',color:'#e67e22',group:'classic'},
+  museum:{icon:'🏛️',label:'Museum',color:'#1abc9c',group:'classic'},
+  architecture:{icon:'🏰',label:'Architecture',color:'#16a085',group:'classic'},
+  monument:{icon:'🗽',label:'Monument',color:'#f1c40f',group:'classic'},
+  park:{icon:'🌳',label:'Park',color:'#2ecc71',group:'classic'},
+};
+const PRESETS = {
+  all: Object.keys(CATEGORIES),
+  hidden: Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'unusual'),
+  urbex: ['abandoned','underground','industrial','ruins','military'],
+  nature: ['nature_hidden','viewpoint','water','cave','park'],
+  history: ['ruins','military','religious','landmark','museum','monument','architecture'],
+  classic: Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'classic'),
+};
+
+const FOG_REVEAL_RADIUS_DEG = 0.002;
+const FOG_CIRCLE_SEGMENTS = 24;
+
+let state = {
+  places: [], filteredPlaces: [],
+  activeCategories: new Set(Object.keys(CATEGORIES)),
+  radius: 5.0, minConfidence: 0, hideVisited: false, fogEnabled: true,
+  visitedPlaces: new Set(JSON.parse(localStorage.getItem('ti_visited') || '[]')),
+  savedPlaces: new Set(JSON.parse(localStorage.getItem('ti_saved') || '[]')),
+  userLat: 42.4410, userLng: 18.7712,
+  currentPreset: 'all', selectedPlace: null, currentRoute: null,
+};
+
+const STYLES = {
+  dark:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ osm:{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' }}, layers:[{id:'osm',type:'raster',source:'osm'}] },
+  satellite:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ sat:{ type:'raster', tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256 }}, layers:[{id:'sat',type:'raster',source:'sat'}] },
+  terrain:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ ter:{ type:'raster', tiles:['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'&copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }}, layers:[{id:'ter',type:'raster',source:'ter'}] },
+};
+
+let map;
+let mapAvailable = false;
+try {
+  map = new maplibregl.Map({ container:'map', style:STYLES.dark, center:[state.userLng,state.userLat], zoom:13, maxZoom:19, minZoom:3, dragRotate:false });
+  mapAvailable = true;
+  map.addControl(new maplibregl.NavigationControl({showCompass:true,showZoom:true}), 'bottom-right');
+} catch (e) {
+  console.warn('Map initialization failed (WebGL unavailable):', e.message);
+  document.getElementById('map').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);text-align:center;padding:20px"><div><div style="font-size:48px;margin-bottom:12px">🗺️</div><div>Map requires WebGL support.<br>Other features are still available.</div></div></div>';
+  map = new Proxy({}, { get: () => (...args) => map });
+}
+let userMarker = null;
+
+// Layer switcher
+document.querySelectorAll('.layer-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const layer = btn.dataset.layer;
+    if (layer === 'historical') return;
+    document.querySelectorAll('.layer-btn').forEach(b => { if (b.dataset.layer !== 'historical') b.classList.remove('active'); });
+    btn.classList.add('active');
+    map.setStyle(STYLES[layer]);
+    map.once('styledata', () => { renderPlaces(); if (state.fogEnabled) renderFog(); });
+  });
+});
+
+// Geolocation
+document.getElementById('btn-locate').addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    // Fallback: use map center
+    const c = map.getCenter();
+    state.userLat = c.lat; state.userLng = c.lng;
+    updateUserMarker(); fetchPlaces();
+    document.getElementById('explore-center').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
+    document.getElementById('route-from').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
+    toast('📍 Location set to map center (GPS not available)');
+    return;
+  }
+  toast('📍 Getting your location...', 'info');
+  navigator.geolocation.getCurrentPosition(pos => {
+    state.userLat = pos.coords.latitude; state.userLng = pos.coords.longitude;
+    map.flyTo({center:[state.userLng,state.userLat],zoom:14});
+    updateUserMarker(); fetchPlaces();
+    document.getElementById('explore-center').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+    document.getElementById('route-from').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+    toast('📍 Location updated!');
+  }, (err) => {
+    console.warn('Geolocation error:', err.code, err.message);
+    // Fallback: use map center
+    const c = map.getCenter();
+    state.userLat = c.lat; state.userLng = c.lng;
+    updateUserMarker(); fetchPlaces();
+    document.getElementById('explore-center').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
+    document.getElementById('route-from').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
+    toast('📍 GPS unavailable — location set to map center. You can also long-press the map!');
+  }, {enableHighAccuracy:true,timeout:10000});
+});
+
+function updateUserMarker() {
+  if (userMarker) userMarker.remove();
+  const el = document.createElement('div');
+  el.style.cssText = 'width:18px;height:18px;background:var(--accent);border:3px solid #fff;border-radius:50%;box-shadow:0 0 12px var(--accent-glow);';
+  userMarker = new maplibregl.Marker({element:el}).setLngLat([state.userLng,state.userLat]).addTo(map);
+}
+
+// Pin mode — click map to set location
+state.pinMode = false;
+document.getElementById('btn-pin').addEventListener('click', () => {
+  state.pinMode = !state.pinMode;
+  document.getElementById('btn-pin').classList.toggle('active', state.pinMode);
+  document.getElementById('map').classList.toggle('pin-mode', state.pinMode);
+  if (state.pinMode) toast('📌 Tap the map to set your location');
+});
+map.on('click', e => {
+  if (!state.pinMode) return;
+  state.userLat = e.lngLat.lat; state.userLng = e.lngLat.lng;
+  updateUserMarker(); fetchPlaces();
+  document.getElementById('explore-center').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+  document.getElementById('route-from').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+  toast(`📌 Location set: ${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`);
+  state.pinMode = false;
+  document.getElementById('btn-pin').classList.remove('active');
+  document.getElementById('map').classList.remove('pin-mode');
+});
+
+// Fog toggle
+document.getElementById('btn-fog').addEventListener('click', () => {
+  state.fogEnabled = !state.fogEnabled;
+  document.getElementById('btn-fog').classList.toggle('active',state.fogEnabled);
+  document.getElementById('toggle-fog').classList.toggle('on',state.fogEnabled);
+  document.getElementById('fog-stats').classList.toggle('visible',state.fogEnabled);
+  renderFog(); renderPlaces();
+});
+
+// Refresh
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  if (mapAvailable) {
+    const c = map.getCenter();
+    if (c && typeof c.lat === 'number') { state.userLat = c.lat; state.userLng = c.lng; }
+  }
+  fetchPlaces();
+});
+
+// Search
+document.getElementById('search-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); const q = e.target.value.trim(); if (q) fetchChat(q); }
+});
+
+async function fetchChat(q) {
+  showMapLoading(true);
+  analytics.track('search', { query: q.substring(0, 50) });
+  try {
+    const data = await api('/api/chat', {method:'POST', body:{message:q, lat:state.userLat, lng:state.userLng, radius_km:state.radius}});
+    if (data.places && data.places.length > 0) { state.places = data.places; applyFilters(); toast(`Found ${data.places.length} places`,'success'); }
+  } catch(e) { toast('Search failed','error'); }
+  showMapLoading(false);
+}
+
+// Fetch places (guarded against concurrent calls)
+let fetchBusy = false;
+async function fetchPlaces() {
+  if (fetchBusy) return;
+  fetchBusy = true;
+  showMapLoading(true);
+  try {
+    const data = await api('/api/discover', {method:'POST', body:{
+      lat:state.userLat, lng:state.userLng, radius_km:state.radius,
+      categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces]:[],
+      limit:200, sort_by:'confidence'
+    }});
+    state.places = data.places || []; applyFilters();
+  } catch(e) { loadDemoData(); toast('API unavailable — showing demo data','warning'); }
+  showMapLoading(false);
+  fetchBusy = false;
+}
+
+function loadDemoData() {
+  state.places = [
+    {id:'demo-1',source:'osm',name:'Заброшенный бункер',description:'Старый военный бункер времён WWII.',categories:['abandoned','military'],coordinates:{lat:42.4450,lng:18.7650},confidence:0.85,distance_m:350},
+    {id:'demo-2',source:'osm',name:'Подземный тоннель',description:'Скрытый каменный тоннель к морю.',categories:['underground'],coordinates:{lat:42.4380,lng:18.7730},confidence:0.7,distance_m:520},
+    {id:'demo-3',source:'atlas',name:'Заброшенный хлебозавод',description:'Промышленное здание с граффити.',categories:['abandoned','industrial'],coordinates:{lat:42.4470,lng:18.7800},confidence:0.6,distance_m:820},
+    {id:'demo-4',source:'wiki',name:'Крепость Святого Иоанна',description:'Средневековая крепость с видом на залив.',categories:['landmark','ruins'],coordinates:{lat:42.4290,lng:18.7710},confidence:0.95,distance_m:1200},
+    {id:'demo-5',source:'osm',name:'Скрытая бухта',description:'Пляж за скалами.',categories:['nature_hidden','water'],coordinates:{lat:42.4340,lng:18.7550},confidence:0.75,distance_m:1500},
+    {id:'demo-6',source:'osm',name:'Смотровая площадка',description:'Панорамный вид на бухту.',categories:['viewpoint'],coordinates:{lat:42.4500,lng:18.7580},confidence:0.9,distance_m:2300},
+  ];
+  applyFilters();
+}
+
+function applyFilters() {
+  state.filteredPlaces = state.places.filter(p => {
+    const cats = p.categories || [];
+    if (cats.length && !cats.some(c => state.activeCategories.has(c))) return false;
+    if ((p.confidence||0) < state.minConfidence/100) return false;
+    if (state.hideVisited && state.visitedPlaces.has(p.id)) return false;
+    return true;
+  });
+  document.getElementById('place-count').textContent = `${state.filteredPlaces.length} places`;
+  renderPlaces();
+  if (state.fogEnabled) updateFogStats();
+}
+
+function renderPlaces() {
+  ['place-clusters','cluster-count','unclustered-bg','unclustered-icon','place-silhouettes'].forEach(id => { if(map.getLayer(id)) map.removeLayer(id); });
+  if (map.getSource('places')) map.removeSource('places');
+
+  const features = state.filteredPlaces.map(p => {
+    const cat = (p.categories&&p.categories[0])||'landmark';
+    const def = CATEGORIES[cat]||CATEGORIES.landmark;
+    const inFog = state.fogEnabled && !state.visitedPlaces.has(p.id);
+    return {type:'Feature', properties:{id:p.id,name:p.name||'Unknown',icon:def.icon,color:def.color,category:cat,confidence:p.confidence||0.5,distance:p.distance_m||0,inFog,description:p.description||'',source:p.source||'osm'}, geometry:{type:'Point',coordinates:[p.coordinates.lng,p.coordinates.lat]}};
+  });
+
+  map.addSource('places',{type:'geojson',data:{type:'FeatureCollection',features},cluster:true,clusterMaxZoom:17,clusterRadius:50});
+  map.addLayer({id:'place-clusters',type:'circle',source:'places',filter:['has','point_count'],paint:{'circle-color':['step',['get','point_count'],'#ff6b35',10,'#e74c3c',30,'#8e44ad'],'circle-radius':['step',['get','point_count'],22,10,28,30,34],'circle-opacity':1,'circle-stroke-width':3,'circle-stroke-color':'rgba(255,255,255,0.7)'}});
+  map.addLayer({id:'cluster-count',type:'symbol',source:'places',filter:['has','point_count'],layout:{'text-field':'{point_count_abbreviated}','text-font':['Open Sans Regular','Arial Unicode MS Regular'],'text-size':15},paint:{'text-color':'#fff','text-halo-color':'rgba(0,0,0,0.6)','text-halo-width':1}});
+  map.addLayer({id:'unclustered-bg',type:'circle',source:'places',filter:['!',['has','point_count']],paint:{'circle-color':['get','color'],'circle-radius':['case',['get','inFog'],10,14],'circle-opacity':1,'circle-stroke-width':3,'circle-stroke-color':['case',['get','inFog'],'rgba(255,255,255,0.3)','rgba(255,255,255,0.8)']}});
+  map.addLayer({id:'unclustered-icon',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['!',['get','inFog']]],layout:{'text-field':['get','icon'],'text-size':22,'text-offset':[0,-1.5],'text-allow-overlap':true}});
+  map.addLayer({id:'place-silhouettes',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['get','inFog']],layout:{'text-field':'❓','text-size':18,'text-offset':[0,-1.5],'text-allow-overlap':true},paint:{'text-opacity':0.5}});
+}
+
+function renderFog() {
+  if(map.getLayer('fog-layer')) map.removeLayer('fog-layer');
+  if(map.getSource('fog')) map.removeSource('fog');
+  if(!state.fogEnabled) return;
+  const visited = [...state.visitedPlaces].map(id => { const p = state.places.find(x=>x.id===id); return p?[p.coordinates.lng,p.coordinates.lat]:null; }).filter(Boolean);
+  const world = [[-180,-85],[180,-85],[180,85],[-180,85],[-180,-85]];
+  const holes = visited.map(([lng,lat]) => { const pts=[]; for(let i=0;i<=FOG_CIRCLE_SEGMENTS;i++){const a=(i/FOG_CIRCLE_SEGMENTS)*Math.PI*2; pts.push([lng+FOG_REVEAL_RADIUS_DEG/Math.cos(lat*Math.PI/180)*Math.cos(a),lat+FOG_REVEAL_RADIUS_DEG*Math.sin(a)]);} return pts; });
+  map.addSource('fog',{type:'geojson',data:{type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[world,...holes]}}]}});
+  map.addLayer({id:'fog-layer',type:'fill',source:'fog',paint:{'fill-color':'#0a0a1e','fill-opacity':0.55}},'place-clusters');
+}
+function updateFogStats() { const t=state.places.length,v=state.visitedPlaces.size,p=t>0?Math.round(v/t*100):0; document.getElementById('fog-pct').textContent=p+'%'; document.getElementById('fog-fill').style.width=p+'%'; }
+
+// Map interactions — long press to set location
+let _longPressTimer = null;
+map.on('touchstart', e => {
+  if (e.originalEvent.touches.length > 1) return;
+  _longPressTimer = setTimeout(() => {
+    const {lng, lat} = e.lngLat;
+    state.userLat = lat; state.userLng = lng;
+    updateUserMarker(); fetchPlaces();
+    document.getElementById('explore-center').value = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    document.getElementById('route-from').value = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+    toast(`📍 Location set: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+  }, 600);
+});
+map.on('touchend', () => { clearTimeout(_longPressTimer); });
+map.on('touchmove', () => { clearTimeout(_longPressTimer); });
+map.on('contextmenu', e => {
+  e.preventDefault();
+  const {lng, lat} = e.lngLat;
+  state.userLat = lat; state.userLng = lng;
+  updateUserMarker(); fetchPlaces();
+  document.getElementById('explore-center').value = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  document.getElementById('route-from').value = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  toast(`📍 Location set: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+});
+
+map.on('click','place-clusters', e => { if(state.pinMode) return; const f=map.queryRenderedFeatures(e.point,{layers:['place-clusters']}); if(!f.length)return; map.getSource('places').getClusterExpansionZoom(f[0].properties.cluster_id,(err,z)=>{ if(!err)map.easeTo({center:f[0].geometry.coordinates,zoom:z+1}); }); });
+map.on('click','unclustered-bg', e => {
+  if(state.pinMode) return;
+  const p=e.features[0].properties, c=e.features[0].geometry.coordinates, def=CATEGORIES[p.category]||CATEGORIES.landmark;
+  new maplibregl.Popup({offset:15,maxWidth:'250px'}).setLngLat(c).setHTML(`<div style="font-weight:700">${p.inFog==='true'?'❓ Mystery Place':def.icon+' '+p.name}</div><div style="font-size:11px;color:var(--accent)">${def.label}</div>${p.distance>0?'<div style="font-size:11px;color:var(--text-secondary)">📏 '+(p.distance/1000).toFixed(1)+' km</div>':''}<div style="margin-top:6px;color:var(--accent);font-size:11px;cursor:pointer;text-decoration:underline" onclick="showPlaceCard('${p.id}')">Show details →</div>`).addTo(map);
+});
+map.on('mouseenter','unclustered-bg',()=>{map.getCanvas().style.cursor='pointer';});
+map.on('mouseleave','unclustered-bg',()=>{map.getCanvas().style.cursor='';});
+map.on('mouseenter','place-clusters',()=>{map.getCanvas().style.cursor='pointer';});
+map.on('mouseleave','place-clusters',()=>{map.getCanvas().style.cursor='';});
+
+// Place card
+function showPlaceCard(placeId) {
+  const place = state.places.find(p=>p.id===placeId); if(!place)return;
+  state.selectedPlace = place;
+  const cats = place.categories||[];
+  document.getElementById('card-categories').innerHTML = cats.map(c=>{const d=CATEGORIES[c]||CATEGORIES.landmark;return`<span class="card-category" style="background:${d.color}">${d.icon} ${d.label}</span>`;}).join('');
+  const inFog = state.fogEnabled && !state.visitedPlaces.has(place.id);
+  document.getElementById('card-name').textContent = inFog?'❓ Mystery Place':(place.name||'Unknown');
+  const src={osm:'OpenStreetMap',atlas:'Atlas Obscura',wiki:'Wikidata',community:'Community'};
+  document.getElementById('card-meta').textContent = `📡 ${src[place.source]||place.source}${place.distance_m?' · �� '+(place.distance_m/1000).toFixed(1)+' km':''}`;
+  document.getElementById('card-desc').textContent = inFog?'Visit this place to reveal its secrets...':place.description||'No description';
+  const conf=place.confidence||0.5, fill=document.getElementById('card-conf-fill');
+  fill.style.width=(conf*100)+'%'; fill.style.background=conf>0.7?'#2ecc71':conf>0.4?'#f39c12':'#e74c3c';
+  document.getElementById('card-save').textContent = state.savedPlaces.has(place.id)?'★ Saved':'⭐ Save';
+  document.getElementById('place-card').classList.add('visible');
+}
+document.getElementById('card-close').addEventListener('click',()=>{document.getElementById('place-card').classList.remove('visible');state.selectedPlace=null;});
+document.getElementById('card-navigate').addEventListener('click',()=>{if(!state.selectedPlace)return;const p=state.selectedPlace;state.visitedPlaces.add(p.id);localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces]));window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.coordinates.lat},${p.coordinates.lng}&travelmode=walking`,'_blank');renderFog();renderPlaces();});
+document.getElementById('card-save').addEventListener('click',()=>{if(!state.selectedPlace)return;const id=state.selectedPlace.id;if(state.savedPlaces.has(id))state.savedPlaces.delete(id);else state.savedPlaces.add(id);localStorage.setItem('ti_saved',JSON.stringify([...state.savedPlaces]));document.getElementById('card-save').textContent=state.savedPlaces.has(id)?'★ Saved':'⭐ Save';});
+
+// Story button
+document.getElementById('card-story').addEventListener('click', async ()=>{
+  if(!state.selectedPlace) return;
+  const p = state.selectedPlace;
+  toast('Generating story...','info');
+  try {
+    const data = await api('/api/story',{method:'POST',body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,categories:p.categories,language:'ru'}});
+    document.getElementById('card-desc').innerHTML = `<strong>📖 AI Story:</strong><br>${escHtml(data.story)}`;
+    toast('Story generated!','success');
+  } catch { toast('Story generation failed','error'); }
+});
+
+// Check-in button
+document.getElementById('card-checkin').addEventListener('click', async ()=>{
+  if(!state.selectedPlace) return;
+  const p = state.selectedPlace;
+  analytics.track('checkin', { place_id: p.id, category: p.categories?.[0] });
+  try {
+    await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
+    state.visitedPlaces.add(p.id);
+    localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces]));
+    renderFog(); renderPlaces(); toast('✅ Checked in at '+p.name,'success');
+  } catch { toast('Check-in failed — saved locally','warning'); state.visitedPlaces.add(p.id); localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces])); renderFog(); renderPlaces(); }
+});
+
+// Filter panel
+document.getElementById('filter-handle').addEventListener('click',()=>{document.getElementById('filter-panel').classList.toggle('open');});
+let touchStartY=0;
+document.getElementById('filter-panel').addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
+document.getElementById('filter-panel').addEventListener('touchend',e=>{const d=e.changedTouches[0].clientY-touchStartY;if(d>50)document.getElementById('filter-panel').classList.remove('open');else if(d<-50)document.getElementById('filter-panel').classList.add('open');},{passive:true});
+
+rebuildCategoryChips();
+document.querySelectorAll('.preset-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');state.activeCategories=new Set(PRESETS[btn.dataset.preset]);document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',state.activeCategories.has(c.dataset.cat)));applyFilters();});});
+
+document.getElementById('radius-slider').addEventListener('input', function(){state.radius=parseFloat(this.value);document.getElementById('radius-value').textContent=state.radius.toFixed(1)+' km';});
+document.getElementById('radius-slider').addEventListener('change', debounce(()=>fetchPlaces(), 400));
+document.getElementById('confidence-slider').addEventListener('input', debounce(function(){state.minConfidence=parseInt(this.value);document.getElementById('confidence-value').textContent=state.minConfidence===0?'All':'≥ '+state.minConfidence+'%';applyFilters();}, 150));
+function handleToggle(el, onChange) { el.addEventListener('click',function(){this.classList.toggle('on');this.setAttribute('aria-checked',this.classList.contains('on'));onChange(this.classList.contains('on'));}); el.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();this.click();}}); }
+handleToggle(document.getElementById('toggle-visited'), v=>{state.hideVisited=v;applyFilters();});
+handleToggle(document.getElementById('toggle-fog'), v=>{state.fogEnabled=v;document.getElementById('btn-fog').classList.toggle('active',v);document.getElementById('fog-stats').classList.toggle('visible',v);renderFog();renderPlaces();});
+
+function rebuildCategoryChips() {
+  const c=document.getElementById('category-chips'); c.innerHTML='';
+  Object.entries(CATEGORIES).forEach(([k,d])=>{const ch=document.createElement('div');ch.className='chip active';ch.dataset.cat=k;ch.setAttribute('role','checkbox');ch.setAttribute('aria-checked','true');ch.setAttribute('tabindex','0');ch.innerHTML=`<span style="margin-right:3px">${d.icon}</span>${d.label}`;ch.addEventListener('click',()=>toggleChip(ch,k));ch.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();toggleChip(ch,k);}});c.appendChild(ch);});
+}
+function toggleChip(ch,k){ch.classList.toggle('active');const on=ch.classList.contains('active');ch.setAttribute('aria-checked',String(on));if(on)state.activeCategories.add(k);else state.activeCategories.delete(k);document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));applyFilters();}
+
+// Historical overlay
+let historicalState = {layers:[],activeLayerId:null,opacity:0.5};
+const DEFAULT_HIST = [
+  {id:'ohm',name:'OpenHistoricalMap',period:'Multi-era',year_start:1000,year_end:2000,url:'https://www.openhistoricalmap.org/render/{z}/{x}/{y}.png',tile_size:256,min_zoom:1,max_zoom:18},
+  {id:'esri',name:'Esri Historic Topo',period:'Early 20th C.',year_start:1890,year_end:1940,url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',tile_size:256,min_zoom:1,max_zoom:16},
+];
+async function loadHistLayers() { try { const d=await api('/api/map/historical'); historicalState.layers=d.layers||DEFAULT_HIST; } catch { historicalState.layers=DEFAULT_HIST; } buildHistBtns(); }
+function buildHistBtns() { const c=document.getElementById('hist-layers');c.innerHTML='';historicalState.layers.forEach(l=>{const b=document.createElement('button');b.className='hist-layer-btn';b.dataset.layerId=l.id;b.innerHTML=`<div>${l.name}</div><div style="font-size:10px;opacity:0.7">${l.period}</div>`;b.addEventListener('click',()=>toggleHistLayer(l.id));c.appendChild(b);}); }
+function toggleHistLayer(id) { if(historicalState.activeLayerId===id){removeHistOverlay();historicalState.activeLayerId=null;}else{historicalState.activeLayerId=id;applyHistOverlay(id);} document.querySelectorAll('.hist-layer-btn').forEach(b=>b.classList.toggle('active',b.dataset.layerId===historicalState.activeLayerId)); }
+function applyHistOverlay(id) { removeHistOverlay();const l=historicalState.layers.find(x=>x.id===id);if(!l)return; map.addSource('hist-overlay',{type:'raster',tiles:[l.url],tileSize:l.tile_size||256,minzoom:l.min_zoom||1,maxzoom:l.max_zoom||18}); map.addLayer({id:'hist-overlay-layer',type:'raster',source:'hist-overlay',paint:{'raster-opacity':historicalState.opacity}},'place-clusters'); }
+function removeHistOverlay() { if(map.getLayer('hist-overlay-layer'))map.removeLayer('hist-overlay-layer');if(map.getSource('hist-overlay'))map.removeSource('hist-overlay'); }
+document.getElementById('btn-historical').addEventListener('click',e=>{e.stopPropagation();const p=document.getElementById('historical-panel');p.classList.toggle('visible');if(p.classList.contains('visible')&&!historicalState.layers.length)loadHistLayers();});
+document.getElementById('hist-close').addEventListener('click',()=>document.getElementById('historical-panel').classList.remove('visible'));
+document.getElementById('hist-opacity').addEventListener('input',function(){historicalState.opacity=parseInt(this.value)/100;document.getElementById('hist-opacity-value').textContent=this.value+'%';if(map.getLayer('hist-overlay-layer'))map.setPaintProperty('hist-overlay-layer','raster-opacity',historicalState.opacity);});
+
+function showMapLoading(s){document.getElementById('loading-overlay').classList.toggle('visible',s);}
+
+// ═══════════════════════════════════════════════════════
+//  AI CHAT
+// ═══════════════════════════════════════════════════════
+function sendChatFromInput() { const v=document.getElementById('chat-input').value.trim(); if(v)sendChat(v); }
+document.getElementById('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChatFromInput();}});
+
+let chatBusy = false;
+async function sendChat(msg) {
+  if (!msg || !msg.trim()) return;
+  if (msg.length > 1000) { toast('Message too long (max 1000 characters)', 'warning'); return; }
+  if (chatBusy) { toast('Please wait for the current response', 'info'); return; }
+  chatBusy = true;
+  analytics.track('chat_send', { length: msg.length });
+  const container = document.getElementById('chat-messages');
+  container.insertAdjacentHTML('beforeend', `<div class="chat-msg user">${escHtml(msg)}</div>`);
+  document.getElementById('chat-input').value = '';
+  document.getElementById('chat-suggestions').innerHTML = '';
+  container.insertAdjacentHTML('beforeend', `<div class="chat-msg assistant" id="chat-loading"><div class="spinner" style="width:16px;height:16px;border-width:2px"></div> Thinking...</div>`);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const data = await api('/api/chat', {method:'POST', body:{message:msg, lat:state.userLat, lng:state.userLng, radius_km:state.radius, conversation_id:conversationId, language:'ru'}});
+    conversationId = data.conversation_id;
+    const el = document.getElementById('chat-loading');
+    let html = escHtml(data.message || 'Here are some places I found:');
+    if (data.places && data.places.length) {
+      html += '<div class="msg-places">';
+      data.places.forEach(p => {
+        html += `<div class="msg-place" onclick="chatPlaceClick('${p.id}')"><div class="msg-place-name">${(CATEGORIES[p.categories?.[0]]||{icon:'📍'}).icon} ${escHtml(p.name)}</div><div class="msg-place-desc">${escHtml((p.description||'').substring(0,100))}${(p.description||'').length>100?'...':''}</div></div>`;
+        // Add to state
+        if (!state.places.find(x=>x.id===p.id)) state.places.push(p);
+      });
+      html += '</div>';
+    }
+    if (el) el.outerHTML = `<div class="chat-msg assistant">${html}</div>`;
+
+    if (data.suggested_questions && data.suggested_questions.length) {
+      document.getElementById('chat-suggestions').innerHTML = data.suggested_questions.map(q=>`<button class="chat-suggestion" onclick="sendChat(this.textContent)">${escHtml(q)}</button>`).join('');
+    }
+  } catch(e) {
+    const el = document.getElementById('chat-loading');
+    if (el) {
+      const div = document.createElement('div'); div.className='chat-msg assistant';
+      div.innerHTML = `❌ ${e.message === 'Request timeout' ? 'Request timed out. The server may be busy — try again.' : 'Could not get a response. Make sure the API is running.'}`;
+      const retryBtn = document.createElement('button'); retryBtn.className='btn btn-sm btn-secondary'; retryBtn.style.marginTop='8px'; retryBtn.textContent='🔄 Retry';
+      retryBtn.addEventListener('click', () => sendChat(msg));
+      div.appendChild(document.createElement('br')); div.appendChild(retryBtn);
+      el.replaceWith(div);
+    }
+  } finally { chatBusy = false; }
+  container.scrollTop = container.scrollHeight;
+}
+
+function chatPlaceClick(id) {
+  // Switch to map and show place
+  document.querySelectorAll('.nav-btn[data-section]').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.nav-btn[data-section="map"]').classList.add('active');
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById('section-map').classList.add('active');
+  map.resize();
+  const p = state.places.find(x=>x.id===id);
+  if(p){ map.flyTo({center:[p.coordinates.lng,p.coordinates.lat],zoom:15}); map.once('moveend',()=>showPlaceCard(id)); }
+}
+
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// ═══════════════════════════════════════════════════════
+//  JOURNAL
+// ═══════════════════════════════════════════════════════
+async function loadVisits() {
+  const list = document.getElementById('visits-list');
+  const filter = document.getElementById('visits-filter').value;
+  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const q = filter ? `?status=${filter}&limit=50` : '?limit=50';
+    const data = await api('/api/visits' + q);
+    if (!data.visits || !data.visits.length) { list.innerHTML = '<div class="empty-state"><div class="empty-icon">📓</div><div class="empty-text">No visits yet. Check in at places on the map to start tracking!</div></div>'; return; }
+    list.innerHTML = data.visits.map(v => `
+      <div class="list-item" onclick="showVisitDetail('${escHtml(v.id)}')">
+        <div class="item-icon">${v.status==='visited'?'✅':v.status==='want_to_visit'?'📌':'⏭️'}</div>
+        <div class="item-body">
+          <div class="item-title">${escHtml(v.place_name||v.place_id)}</div>
+          <div class="item-sub">${new Date(v.visited_at||v.created_at).toLocaleDateString()} · ${v.duration_minutes?parseInt(v.duration_minutes)+' min':'—'}</div>
+        </div>
+        <span class="tag ${v.status==='visited'?'green':v.status==='want_to_visit'?'blue':'gray'}">${escHtml(v.status)}</span>
+      </div>
+    `).join('');
+  } catch { list.innerHTML = '<div class="empty-state"><div class="empty-icon">📓</div><div class="empty-text">Could not load visits. Check that the API is running.</div><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadVisits()">🔄 Retry</button></div>'; }
+}
+
+async function showVisitDetail(visitId) {
+  try {
+    const [visit, notesData] = await Promise.all([api(`/api/visits/${visitId}`), api(`/api/visits/${visitId}/notes`)]);
+    const notes = notesData.notes || [];
+    const html = `
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:start">
+          <div class="card-title">${escHtml(visit.place_name||visit.place_id)}</div>
+          <button class="btn btn-danger btn-sm" onclick="deleteVisit('${visitId}')">🗑️</button>
+        </div>
+        <div class="card-meta">Status: ${visit.status} · ${visit.duration_minutes?visit.duration_minutes+' min':'—'}</div>
+        <div class="card-meta">${new Date(visit.visited_at||visit.created_at).toLocaleString()}</div>
+      </div>
+      <h3 style="font-size:14px;margin-bottom:10px">📝 Notes (${notes.length})</h3>
+      <div id="visit-notes">${notes.map(n=>`
+        <div class="card" style="margin-bottom:8px">
+          <div style="font-size:13px">${escHtml(n.text||'')}</div>
+          ${n.rating?`<div style="margin-top:4px;font-size:11px;color:var(--text-secondary)">🎭 Atmosphere: ${n.rating.atmosphere||'—'} · ♿ Access: ${n.rating.accessibility||'—'} · 📸 Photo: ${n.rating.photogenic||'—'} · ✨ Unique: ${n.rating.uniqueness||'—'}</div>`:''}
+          ${n.tags&&n.tags.length?`<div style="margin-top:4px">${n.tags.map(t=>`<span class="tag gray">${t}</span>`).join('')}</div>`:''}
+        </div>
+      `).join('')||'<div style="font-size:12px;color:var(--text-secondary)">No notes yet</div>'}</div>
+      <div style="margin-top:14px">
+        <div class="form-group"><label class="form-label">Add Note</label><textarea class="input" id="new-note-text" placeholder="Write about your experience..."></textarea></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Atmosphere (0-5)</label><input type="number" class="input" id="note-atmosphere" min="0" max="5" placeholder="0-5"></div>
+          <div class="form-group"><label class="form-label">Photogenic (0-5)</label><input type="number" class="input" id="note-photogenic" min="0" max="5" placeholder="0-5"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Accessibility (0-5)</label><input type="number" class="input" id="note-accessibility" min="0" max="5" placeholder="0-5"></div>
+          <div class="form-group"><label class="form-label">Uniqueness (0-5)</label><input type="number" class="input" id="note-uniqueness" min="0" max="5" placeholder="0-5"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Tags (comma-separated)</label><input class="input" id="note-tags" placeholder="beautiful, eerie"></div>
+        <button class="btn btn-primary btn-sm" onclick="addNote('${visitId}')" style="width:100%">Add Note</button>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="loadVisits()" style="margin-top:12px">← Back to list</button>
+    `;
+    document.getElementById('visits-list').innerHTML = html;
+  } catch(e) { toast('Error loading visit','error'); }
+}
+
+async function addNote(visitId) {
+  const text = document.getElementById('new-note-text').value;
+  if (!text.trim()) { toast('Write something first','warning'); return; }
+  const rating = {};
+  ['atmosphere','photogenic','accessibility','uniqueness'].forEach(k => { const v=parseInt(document.getElementById('note-'+k).value); if(v>=0&&v<=5) rating[k]=v; });
+  const tags = document.getElementById('note-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  try {
+    await api(`/api/visits/${visitId}/notes`,{method:'POST',body:{text,rating:Object.keys(rating).length?rating:undefined,tags:tags.length?tags:undefined}});
+    toast('Note added!','success'); showVisitDetail(visitId);
+  } catch { toast('Failed to add note','error'); }
+}
+
+async function deleteVisit(id) { if(!confirm('Delete this visit?'))return; try{await api(`/api/visits/${id}`,{method:'DELETE'});toast('Visit deleted','success');loadVisits();}catch{toast('Delete failed','error');} }
+
+// Trips
+async function loadTrips() {
+  const list = document.getElementById('trips-list');
+  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const data = await api('/api/trips?limit=50');
+    if (!data.trips||!data.trips.length) { list.innerHTML = '<div class="empty-state"><div class="empty-icon">✈️</div><div class="empty-text">No trips yet. Create one to group your visits!</div></div>'; return; }
+    list.innerHTML = data.trips.map(t=>`
+      <div class="list-item" onclick="showTripDetail('${escHtml(t.id)}')">
+        <div class="item-icon">✈️</div>
+        <div class="item-body">
+          <div class="item-title">${escHtml(t.name)}</div>
+          <div class="item-sub">${escHtml(t.region||'—')} · ${t.start_date?new Date(t.start_date).toLocaleDateString():''} – ${t.end_date?new Date(t.end_date).toLocaleDateString():''}</div>
+        </div>
+      </div>`).join('');
+  } catch { list.innerHTML = '<div class="empty-state"><div class="empty-icon">✈️</div><div class="empty-text">Could not load trips.</div><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadTrips()">🔄 Retry</button></div>'; }
+}
+function showCreateTrip(){document.getElementById('create-trip-form').style.display='block';}
+function hideCreateTrip(){document.getElementById('create-trip-form').style.display='none';}
+async function createTrip() {
+  const name=document.getElementById('trip-name').value.trim(), region=document.getElementById('trip-region').value.trim(), start=document.getElementById('trip-start').value, end=document.getElementById('trip-end').value;
+  if(!name){toast('Please enter a trip name','warning');return;}
+  if(name.length>100){toast('Trip name is too long (max 100 chars)','warning');return;}
+  if(start && end && new Date(start) > new Date(end)){toast('Start date must be before end date','warning');return;}
+  const btn=document.querySelector('#create-trip-form .btn-primary'); btn.disabled=true; btn.textContent='Creating...';
+  try{ await api('/api/trips',{method:'POST',body:{name,region:region||undefined,start_date:start||undefined,end_date:end||undefined}});toast('Trip created!','success');analytics.track('trip_created');hideCreateTrip();loadTrips();}catch(e){toast('Failed to create trip: '+(e.message||'check connection'),'error');}finally{btn.disabled=false;btn.textContent='Create';}
+}
+async function showTripDetail(id) {
+  try {
+    const [trip, summary] = await Promise.all([api(`/api/trips/${id}`), api(`/api/trips/${id}/summary`).catch(()=>null)]);
+    document.getElementById('trips-list').innerHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:start"><div class="card-title">${escHtml(trip.name)}</div><button class="btn btn-danger btn-sm" onclick="deleteTrip('${id}')">🗑️</button></div>
+        <div class="card-meta">${trip.region||'—'} · ${trip.start_date||'—'} → ${trip.end_date||'—'}</div>
+        ${summary?`<div style="margin-top:10px;font-size:12px"><strong>${summary.total_places||0}</strong> places · <strong>${(summary.total_distance_km||0).toFixed(1)}</strong> km · <strong>${(summary.total_hours||0).toFixed(1)}</strong> hours</div>`:''}
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-primary btn-sm" onclick="exportTrip('${id}','markdown')">📄 Markdown</button>
+        <button class="btn btn-primary btn-sm" onclick="exportTrip('${id}','json')">📋 JSON</button>
+        <button class="btn btn-secondary btn-sm" onclick="loadTrips()">← Back</button>
+      </div>`;
+  } catch { toast('Error loading trip','error'); }
+}
+async function deleteTrip(id){if(!confirm('Delete trip?'))return;try{await api(`/api/trips/${id}`,{method:'DELETE'});toast('Trip deleted','success');loadTrips();}catch{toast('Failed','error');}}
+async function exportTrip(id,fmt){try{const d=await api(`/api/trips/${id}/export`,{method:'POST',body:{format:fmt}});const blob=new Blob([d.content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=d.filename||`trip.${fmt}`;a.click();URL.revokeObjectURL(url);toast('Exported!','success');}catch{toast('Export failed','error');}}
+
+// Stats
+async function loadStats() {
+  const c=document.getElementById('stats-content');
+  c.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const [stats,heatmap] = await Promise.all([api('/api/stats'), api('/api/stats/heatmap').catch(()=>({points:[]}))]);
+    c.innerHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">📊 Exploration Statistics</div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:12px">
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent)">${stats.total_visits||0}</div><div style="font-size:11px;color:var(--text-secondary)">Total Visits</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent)">${(stats.total_distance_km||0).toFixed(1)}</div><div style="font-size:11px;color:var(--text-secondary)">km Traveled</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent)">${(stats.total_hours||0).toFixed(1)}</div><div style="font-size:11px;color:var(--text-secondary)">Hours Exploring</div></div>
+          <div><div style="font-size:20px;font-weight:700;color:var(--accent)">${stats.unique_categories||0}</div><div style="font-size:11px;color:var(--text-secondary)">Categories</div></div>
+        </div>
+      </div>
+      ${stats.streak?`<div class="card" style="margin-bottom:14px"><div class="card-title">🔥 Streak</div><div style="font-size:20px;font-weight:700;color:var(--accent);margin-top:4px">${stats.streak.current_streak||0} days</div><div style="font-size:11px;color:var(--text-secondary)">Longest: ${stats.streak.longest_streak||0} days</div></div>`:''}
+      ${stats.top_categories?`<div class="card"><div class="card-title">🏷️ Top Categories</div>${(stats.top_categories||[]).map(c=>`<div style="display:flex;justify-content:space-between;margin-top:6px"><span style="font-size:12px">${(CATEGORIES[c.category]||{icon:'📍'}).icon} ${c.category}</span><span style="font-size:12px;color:var(--accent);font-weight:600">${c.count}</span></div>`).join('')}</div>`:''}
+      <div class="card" style="margin-top:14px"><div class="card-title">🗺️ Activity Heatmap</div><div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${heatmap.points?.length||0} data points</div></div>
+    `;
+  } catch { c.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text">Could not load stats.</div><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadStats()">🔄 Retry</button></div>'; }
+}
+
+// Journal tab changes also trigger stats load
+document.querySelectorAll('[data-jtab="stats"]').forEach(t=>t.addEventListener('click',loadStats));
+
+// ═══════════════════════════════════════════════════════
+//  ROUTES
+// ═══════════════════════════════════════════════════════
+// Build explore category chips
+function buildExploreCats() {
+  const c=document.getElementById('explore-cats'); c.innerHTML='';
+  ['abandoned','ruins','nature_hidden','viewpoint','underground','military'].forEach(k=>{
+    const d=CATEGORIES[k]; if(!d)return;
+    const ch=document.createElement('div');ch.className='chip active';ch.dataset.cat=k;ch.innerHTML=`${d.icon} ${d.label}`;
+    ch.addEventListener('click',()=>ch.classList.toggle('active'));c.appendChild(ch);
+  });
+}
+buildExploreCats();
+
+function parseCoords(str) {
+  const parts = (str||'').split(',').map(s => parseFloat(s.trim()));
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+  if (parts[0] < -90 || parts[0] > 90 || parts[1] < -180 || parts[1] > 180) return null;
+  return { lat: parts[0], lng: parts[1] };
+}
+async function buildRoute() {
+  const from=parseCoords(document.getElementById('route-from').value);
+  const to=parseCoords(document.getElementById('route-to').value);
+  if(!from||!to){toast('Enter valid coordinates as "lat, lng" (e.g., 42.441, 18.771)','warning');return;}
+  const btn = document.querySelector('#rtab-build .btn-primary'); btn.disabled=true;
+  toast('Building route...','info');
+  analytics.track('route_build', { mode: document.getElementById('route-mode').value });
+  try {
+    const data = await api('/api/route',{method:'POST',body:{origin:from,destination:to,time_budget_hours:clamp(parseFloat(document.getElementById('route-time').value)||2,0.5,24),transport_mode:document.getElementById('route-mode').value}});
+    state.currentRoute = data.route || data;
+    showRouteResult(state.currentRoute);
+    toast('Route built!','success');
+  } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
+}
+
+async function exploreRoute() {
+  const center = parseCoords(document.getElementById('explore-center').value);
+  if(!center){toast('Enter valid center point as "lat, lng" (e.g., 42.441, 18.771)','warning');return;}
+  const cats = [...document.querySelectorAll('#explore-cats .chip.active')].map(c=>c.dataset.cat);
+  const btn = document.querySelector('#rtab-explore .btn-primary'); btn.disabled=true;
+  toast('Generating circular walk...','info');
+  analytics.track('route_explore');
+  try {
+    const data = await api('/api/route/explore',{method:'POST',body:{lat:center.lat,lng:center.lng,time_budget_hours:clamp(parseFloat(document.getElementById('explore-time').value)||2,0.5,8),categories:cats}});
+    state.currentRoute = data.route || data;
+    showRouteResult(state.currentRoute);
+    toast('Circular walk generated!','success');
+  } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
+}
+
+function showRouteResult(route) {
+  if (!route || !route.total_distance_m) { toast('Invalid route data','error'); return; }
+  document.getElementById('route-result').style.display='block';
+  document.getElementById('route-title').textContent = route.is_circular?'🔄 Circular Walk':'🛤️ Route';
+  document.getElementById('route-meta').textContent = `${((route.total_distance_m||0)/1000).toFixed(1)} km · ${Math.round((route.total_duration_s||0)/60)} min · ${route.places_count||route.waypoints?.length||0} places`;
+  const wps = route.waypoints||[];
+  document.getElementById('route-waypoints').innerHTML = wps.length ? wps.map((w,i)=>`
+    <div class="list-item" style="padding:6px 10px;margin-bottom:4px">
+      <div style="width:24px;height:24px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">${i+1}</div>
+      <div class="item-body"><div class="item-title" style="font-size:12px">${escHtml(w.place?.name||'Waypoint '+(i+1))}</div><div class="item-sub">${w.detour_distance_m?'Detour: '+(w.detour_distance_m/1000).toFixed(1)+' km':''}</div></div>
+    </div>`).join('') : '<div style="color:var(--text-secondary);font-size:12px">No waypoints in route</div>';
+}
+
+async function exportRoute(fmt) {
+  if(!state.currentRoute){toast('No route to export','warning');return;}
+  try {
+    const data = await api('/api/route/export',{method:'POST',body:{route:state.currentRoute,format:fmt,include_descriptions:true}});
+    const blob=new Blob([data.content],{type:'application/xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=data.filename||`route.${fmt}`;a.click();URL.revokeObjectURL(url);
+    toast(`Exported as ${fmt.toUpperCase()}!`,'success');
+  } catch { toast('Export failed','error'); }
+}
+
+async function getRouteStory() {
+  if(!state.currentRoute){return;}
+  toast('Generating route story...','info');
+  try {
+    const places = (state.currentRoute.waypoints||[]).filter(w=>w.place).map(w=>({place_id:w.place.id,place_name:w.place.name,lat:w.place.coordinates?.lat,lng:w.place.coordinates?.lng,categories:w.place.categories}));
+    const data = await api('/api/story/route',{method:'POST',body:{places,language:'ru'}});
+    document.getElementById('route-story').style.display='block';
+    document.getElementById('route-story-text').textContent = data.story;
+    toast('Story ready!','success');
+  } catch { toast('Story failed','error'); }
+}
+function saveRouteLocal(){if(!state.currentRoute)return;const saved=JSON.parse(localStorage.getItem('ti_routes')||'[]');saved.push({...state.currentRoute,saved_at:new Date().toISOString()});localStorage.setItem('ti_routes',JSON.stringify(saved));toast('Route saved locally!','success');}
+
+// ═══════════════════════════════════════════════════════
+//  GAMIFICATION
+// ═══════════════════════════════════════════════════════
+async function loadProfile() {
+  try {
+    const [profile, achievements] = await Promise.all([api('/api/explorer/profile'), api('/api/achievements')]);
+    document.getElementById('profile-title').textContent = profile.title || 'Explorer';
+    document.getElementById('profile-xp').textContent = `${profile.total_xp||0} XP · Level ${profile.level||1}`;
+    document.getElementById('profile-xp-bar').style.width = (profile.level_progress_percent||0)+'%';
+    document.getElementById('ps-explored').textContent = (profile.fog_explored_km2||0).toFixed(1);
+    document.getElementById('ps-achievements').textContent = profile.achievements_unlocked||0;
+    document.getElementById('ps-visits').textContent = state.visitedPlaces.size;
+
+    const grid = document.getElementById('achievements-grid');
+    grid.innerHTML = (achievements.achievements||[]).map(a=>`
+      <div class="achievement ${a.completed?'':'locked'}">
+        <div class="ach-icon">${a.definition?.icon||'🏅'}</div>
+        <div class="ach-name">${escHtml(a.definition?.name||'Achievement')}</div>
+        <div class="ach-desc">${escHtml(a.definition?.description||'')}</div>
+        <div class="progress-bar" style="margin:6px 0 4px"><div class="progress-fill" style="width:${a.progress_percent||0}%;background:${a.completed?'var(--success)':'var(--accent)'}"></div></div>
+        <div class="ach-xp">+${a.definition?.xp_reward||0} XP</div>
+      </div>`).join('') || '<div class="empty-state"><div class="empty-icon">🏅</div><div class="empty-text">No achievements loaded</div></div>';
+  } catch(e) { console.error(e); document.getElementById('achievements-grid').innerHTML='<div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-text">Could not load profile.</div><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadProfile()">🔄 Retry</button></div>'; }
+}
+
+// Leaderboard tab
+document.querySelectorAll('[data-gtab="leaderboard"]').forEach(t=>t.addEventListener('click', async ()=>{
+  const list=document.getElementById('leaderboard-list');
+  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const data = await api('/api/explorer/leaderboard');
+    list.innerHTML = (data.entries||[]).map((e,i)=>`
+      <div class="leaderboard-row">
+        <div class="leaderboard-rank ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">#${i+1}</div>
+        <div class="leaderboard-name">${escHtml(e.username||e.user_id)}</div>
+        <div class="leaderboard-xp">${parseInt(e.total_xp)||0} XP · L${parseInt(e.level)||0}</div>
+      </div>`).join('') || '<div class="empty-state">No explorers yet</div>';
+  } catch { list.innerHTML='<div class="empty-state">Could not load leaderboard<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadLeaderboard()">🔄 Retry</button></div>'; }
+}));
+
+// Fog stats tab
+document.querySelectorAll('[data-gtab="fog"]').forEach(t=>t.addEventListener('click', async ()=>{
+  const el=document.getElementById('fog-region-stats');
+  el.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const data = await api('/api/fog/status');
+    el.innerHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-title">🌫️ Total Explored</div>
+        <div style="font-size:24px;font-weight:700;color:var(--accent);margin-top:8px">${(data.total_explored_area_km2||0).toFixed(2)} km²</div>
+        <div style="font-size:12px;color:var(--text-secondary)">${data.total_explored_cells||0} cells</div>
+      </div>
+      ${(data.regions||[]).map(r=>`
+        <div class="card" style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between"><span>${escHtml(r.region_name)}</span><span style="color:var(--accent);font-weight:600">${(r.coverage_percent||0).toFixed(1)}%</span></div>
+          <div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${r.coverage_percent||0}%"></div></div>
+        </div>`).join('')}
+    `;
+  } catch { el.innerHTML='<div class="empty-state">Could not load fog stats<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadFogStats()">🔄 Retry</button></div>'; }
+}));
+
+// ═══════════════════════════════════════════════════════
+//  COMMUNITY
+// ═══════════════════════════════════════════════════════
+async function loadCommunityPlaces() {
+  const list=document.getElementById('community-places-list');
+  const filter=document.getElementById('comm-places-filter')?.value||'';
+  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const q = filter?`?status=${filter}&limit=30`:'?limit=30';
+    const data = await api('/api/community/places'+q);
+    if(!data.places||!data.places.length){list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-text">No community places yet. Submit the first one!</div></div>';return;}
+    list.innerHTML = data.places.map(p=>`
+      <div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:start">
+          <div class="card-title">${escHtml(p.name)}</div>
+          <span class="tag ${p.moderation_status==='approved'?'green':p.moderation_status==='rejected'?'red':'yellow'}">${escHtml(p.moderation_status)}</span>
+        </div>
+        <div style="font-size:12px;margin-top:4px">${escHtml((p.description||'').substring(0,150))}</div>
+        <div class="card-meta" style="margin-top:4px">${(p.categories||[]).map(c=>`<span class="tag blue">${escHtml(c)}</span>`).join('')}</div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text-secondary)">by ${escHtml(p.submitted_by||'anonymous')} · 👍 ${parseInt(p.confirmations)||0} 👎 ${parseInt(p.rejections)||0}</div>
+        <div class="card-actions" style="margin-top:8px">
+          <button class="btn btn-sm btn-secondary" onclick="loadPlaceReviews('${escHtml(p.id)}')">💬 Reviews</button>
+          <button class="btn btn-sm btn-secondary" onclick="showOnMap(${parseFloat(p.coordinates?.lat)||0},${parseFloat(p.coordinates?.lng)||0})">🗺️ Map</button>
+        </div>
+      </div>`).join('');
+  } catch { list.innerHTML='<div class="empty-state">Could not load community places<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadCommunityPlaces()">🔄 Retry</button></div>'; }
+}
+
+function showSubmitPlace(){document.getElementById('submit-place-form').style.display='block';}
+function hideSubmitPlace(){document.getElementById('submit-place-form').style.display='none';}
+async function submitCommunityPlace() {
+  const name=document.getElementById('cp-name').value.trim(), desc=document.getElementById('cp-desc').value.trim();
+  const lat=parseFloat(document.getElementById('cp-lat').value), lng=parseFloat(document.getElementById('cp-lng').value);
+  if(!name){toast('Please enter a place name','warning');return;}
+  if(name.length>200){toast('Name is too long (max 200 characters)','warning');return;}
+  if(desc.length>2000){toast('Description is too long (max 2000 characters)','warning');return;}
+  if(isNaN(lat)||isNaN(lng)||lat<-90||lat>90||lng<-180||lng>180){toast('Enter valid coordinates (lat: -90 to 90, lng: -180 to 180)','warning');return;}
+  const cats=document.getElementById('cp-cats').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const tags=document.getElementById('cp-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const btn=document.querySelector('#ctab-submit .btn-primary'); btn.disabled=true; btn.textContent='Submitting...';
+  analytics.track('community_place_submit');
+  try {
+    await api('/api/community/places',{method:'POST',body:{name,description:desc,categories:cats,lat,lng,tags,author_id:getActiveUserId()}});
+    toast('Place submitted for moderation!','success'); hideSubmitPlace(); loadCommunityPlaces();
+  } catch(e) { toast('Submission failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; btn.textContent='Submit Place'; }
+}
+
+async function loadPlaceReviews(placeId) {
+  try {
+    const data = await api(`/api/community/places/${placeId}/reviews?limit=20`);
+    const reviews = data.reviews||[];
+    document.getElementById('community-places-list').innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="loadCommunityPlaces()" style="margin-bottom:14px">← Back</button>
+      <h3 style="font-size:14px;margin-bottom:10px">💬 Reviews (${reviews.length})</h3>
+      ${reviews.map(r=>`
+        <div class="review-card">
+          <div class="review-header"><span class="review-author">${escHtml(r.author_id)}</span><span class="review-date">${r.visit_date||''}</span></div>
+          <div class="review-text">${escHtml(r.text||'')}</div>
+          <div class="review-votes"><button class="vote-btn" onclick="voteReview('${r.id}',true)">👍 ${r.upvotes||0}</button><button class="vote-btn" onclick="voteReview('${r.id}',false)">👎 ${r.downvotes||0}</button></div>
+        </div>`).join('')||'<div style="color:var(--text-secondary)">No reviews yet</div>'}
+      <div style="margin-top:14px">
+        <div class="form-group"><label class="form-label">Write a Review</label><textarea class="input" id="review-text" placeholder="Share your experience"></textarea></div>
+        <button class="btn btn-primary btn-sm" onclick="writeReview('${placeId}')" style="width:100%">Submit Review</button>
+      </div>`;
+  } catch { toast('Could not load reviews','error'); }
+}
+async function writeReview(placeId){const t=document.getElementById('review-text').value;if(!t.trim()){toast('Please write a review first','warning');return;}try{await api(`/api/community/places/${placeId}/reviews`,{method:'POST',body:{author_id:getActiveUserId(),text:t,review_type:'visit'}});toast('Review posted!','success');loadPlaceReviews(placeId);}catch{toast('Failed to post review','error');}}
+async function voteReview(reviewId,up){try{await api(`/api/community/reviews/${reviewId}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{}}
+
+// Community routes
+document.querySelectorAll('[data-ctab="routes"]').forEach(t=>t.addEventListener('click', async ()=>{
+  const list=document.getElementById('community-routes-list');
+  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  try {
+    const data=await api('/api/community/routes?limit=20');
+    list.innerHTML=(data.routes||[]).map(r=>`
+      <div class="card" style="margin-bottom:10px">
+        <div class="card-title">${escHtml(r.title)}</div>
+        <div style="font-size:12px;margin-top:4px">${escHtml(r.description||'')}</div>
+        <div class="card-meta" style="margin-top:4px">${(r.distance_km||0).toFixed(1)} km · ${(r.duration_hours||0).toFixed(1)} h · by ${r.author_id||'?'}</div>
+        ${r.tags?`<div style="margin-top:4px">${r.tags.map(t=>`<span class="tag gray">${t}</span>`).join('')}</div>`:''}
+      </div>`).join('')||'<div class="empty-state"><div class="empty-icon">🛤️</div><div class="empty-text">No community routes yet</div></div>';
+  } catch { list.innerHTML='<div class="empty-state">Could not load routes<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadCommunityRoutes()">🔄 Retry</button></div>'; }
+}));
+
+// Following/Followers
+async function loadFollowing() {
+  const uid=getActiveUserId();
+  const list=document.getElementById('people-list');
+  try { const d=await api(`/api/community/following/${uid}`); list.innerHTML=(d.follows||[]).map(f=>`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${escHtml(f.following_id)}</div></div><button class="btn btn-danger btn-sm" onclick="unfollow('${escHtml(f.follower_id)}','${escHtml(f.following_id)}')">Unfollow</button></div>`).join('')||'<div class="empty-state">Not following anyone yet</div>'; } catch { list.innerHTML='<div class="empty-state">Could not load following<br><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="loadFollowing()">🔄 Retry</button></div>'; }
+}
+async function loadFollowers() {
+  const uid=getActiveUserId();
+  const list=document.getElementById('people-list');
+  try { const d=await api(`/api/community/followers/${uid}`); list.innerHTML=(d.follows||[]).map(f=>`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${escHtml(f.follower_id)}</div></div></div>`).join('')||'<div class="empty-state">No followers yet</div>'; } catch { list.innerHTML='<div class="empty-state">Could not load followers<br><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="loadFollowers()">🔄 Retry</button></div>'; }
+}
+async function unfollow(a,b){try{await api(`/api/community/follow/${a}/${b}`,{method:'DELETE'});toast('Unfollowed','info');loadFollowing();}catch{toast('Unfollow failed','error');}}
+
+// Karma
+document.querySelectorAll('[data-ctab="people"]').forEach(t=>t.addEventListener('click', async ()=>{
+  try { const d=await api(`/api/community/karma/${getActiveUserId()}`); document.getElementById('karma-display').textContent=(d.karma||0)+' karma'; } catch { document.getElementById('karma-display').textContent='—'; }
+}));
+
+// ═══════════════════════════════════════════════════════
+//  OFFLINE
+// ═══════════════════════════════════════════════════════
+async function loadOfflineStatus() {
+  try {
+    const [status,connectivity] = await Promise.all([api('/api/offline/status').catch(()=>({regions_count:0,cached_places_count:0,pending_sync_count:0})), api('/api/offline/connectivity').catch(()=>({is_online:true}))]);
+    document.getElementById('offline-status-badge').textContent = connectivity.is_online?'Online':'Offline';
+    document.getElementById('offline-status-badge').style.background = connectivity.is_online?'var(--success)':'var(--danger)';
+    document.getElementById('offline-storage-info').innerHTML = `
+      <div>Regions: ${status.regions_count||0} · Cached places: ${status.cached_places_count||0}</div>
+      <div>Pending sync: ${status.pending_sync_count||0}</div>
+      <div>Disk: ${formatBytes(status.total_disk_usage_bytes||0)}</div>
+    `;
+    loadTileRegions();
+  } catch { document.getElementById('offline-storage-info').textContent='Could not load status'; }
+}
+
+async function loadTileRegions() {
+  const list=document.getElementById('tile-regions-list');
+  try {
+    const data=await api('/api/offline/tiles/regions');
+    list.innerHTML=(data.regions||[]).map(r=>`
+      <div class="card" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:start"><div class="card-title">${escHtml(r.name)}</div><button class="btn btn-danger btn-sm" onclick="deleteRegion('${r.region_id}')">🗑️</button></div>
+        <div class="card-meta">${r.tile_count||0} tiles · ${formatBytes(r.disk_usage_bytes||0)}</div>
+        ${r.status!=='completed'?`<div class="progress-bar" style="margin-top:6px"><div class="progress-fill" style="width:${r.progress_percent||0}%"></div></div>`:''}
+      </div>`).join('')||'<div style="color:var(--text-secondary)">No downloaded regions</div>';
+  } catch {}
+}
+
+async function downloadTiles() {
+  const name=document.getElementById('dl-region-name').value;
+  if(!name){toast('Enter region name','warning');return;}
+  const bbox={min_lat:parseFloat(document.getElementById('dl-min-lat').value),min_lng:parseFloat(document.getElementById('dl-min-lng').value),max_lat:parseFloat(document.getElementById('dl-max-lat').value),max_lng:parseFloat(document.getElementById('dl-max-lng').value)};
+  const min_zoom=parseInt(document.getElementById('dl-min-zoom').value), max_zoom=parseInt(document.getElementById('dl-max-zoom').value);
+  try {
+    const data = await api('/api/offline/tiles/download',{method:'POST',body:{name,bbox,tile_source:'osm',min_zoom,max_zoom}});
+    toast(`Download started: ~${data.estimated_tile_count} tiles (~${data.estimated_size_mb?.toFixed(1)} MB)`,'success');
+    loadTileRegions();
+  } catch { toast('Download failed','error'); }
+}
+async function deleteRegion(id){try{await api(`/api/offline/tiles/regions/${id}`,{method:'DELETE'});toast('Region deleted','success');loadTileRegions();}catch{toast('Failed','error');}}
+
+async function cachePlaces() {
+  const b=map.getBounds();
+  try {
+    const data = await api('/api/offline/places/cache',{method:'POST',body:{bbox:{min_lat:b.getSouth(),min_lng:b.getWest(),max_lat:b.getNorth(),max_lng:b.getEast()},include_descriptions:true}});
+    toast(`Cached ${data.cached_count} places!`,'success');
+  } catch { toast('Cache failed','error'); }
+}
+async function clearCachedPlaces(){try{await api('/api/offline/places',{method:'DELETE'});toast('Cache cleared','success');}catch{toast('Failed','error');}}
+
+async function syncNow(){try{const d=await api('/api/offline/sync',{method:'POST',body:{resolve_conflicts:'local_wins'}});toast(`Synced: ${d.synced_count} OK, ${d.failed_count} failed`,'success');}catch{toast('Sync failed','error');}}
+async function clearSynced(){try{await api('/api/offline/sync/queue/clear-synced',{method:'POST'});toast('Cleared synced items','success');}catch{toast('Failed','error');}}
+
+function formatBytes(b){if(!b||b<=0)return'0 B';const k=1024,s=['B','KB','MB','GB'];const i=Math.min(Math.floor(Math.log(b)/Math.log(k)),s.length-1);return(b/Math.pow(k,i)).toFixed(1)+' '+s[i];}
+
+function showOnMap(lat,lng){
+  if(!lat||!lng)return;
+  document.querySelectorAll('.nav-btn[data-section]').forEach(b=>b.classList.remove('active'));
+  document.querySelector('.nav-btn[data-section="map"]').classList.add('active');
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById('section-map').classList.add('active');
+  map.resize(); map.flyTo({center:[lng,lat],zoom:15});
+}
+
+// ═══════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════
+map.on('load', async () => {
+  try {
+    const config = await api('/api/map/config');
+    if (config.category_styles) { CATEGORIES={}; for(const[k,s]of Object.entries(config.category_styles)){CATEGORIES[k]=s;} PRESETS.all=Object.keys(CATEGORIES); PRESETS.hidden=Object.keys(CATEGORIES).filter(k=>CATEGORIES[k].group==='unusual'); PRESETS.classic=Object.keys(CATEGORIES).filter(k=>CATEGORIES[k].group==='classic'); state.activeCategories=new Set(Object.keys(CATEGORIES)); rebuildCategoryChips(); }
+  } catch {}
+  loadHistLayers();
+  if(navigator.geolocation){navigator.geolocation.getCurrentPosition(p=>{state.userLat=p.coords.latitude;state.userLng=p.coords.longitude;map.flyTo({center:[state.userLng,state.userLat],zoom:13});updateUserMarker();fetchPlaces();},()=>{toast('Location access denied — showing default area. You can still use the map!','info');fetchPlaces();},{enableHighAccuracy:true,timeout:5000});}else{toast('Geolocation not available — using default location','info');fetchPlaces();}
+  document.getElementById('fog-stats').classList.toggle('visible',state.fogEnabled);
+  analytics.track('app_loaded', { version: APP_VERSION });
+  console.log(`Terra Incognita v${APP_VERSION} loaded`);
+});
+</script>
+</body>
+</html>

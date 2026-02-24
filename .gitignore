@@ -1,0 +1,48 @@
+# Environment & secrets
+.env
+.env.local
+.env.production
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Cache & runtime data
+backend/cache/
+cache/
+server.log
+
+# Large data files (GIS/buildings)
+data/ms_buildings.parquet
+data/ms_montenegro_120233213.csv.gz
+data/osm_buildings.gpkg
+
+# Runtime/user data
+backend/data/journal/
+backend/data/gamification/
+backend/data/community/
+backend/data/offline/
+data/offline/
+
+# macOS
+.DS_Store
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+*.log
+
+# Screenshots & temp
+*.png

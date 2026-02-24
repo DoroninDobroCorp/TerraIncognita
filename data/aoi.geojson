@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Montenegro_South_of_Lake_Skadar"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [19.00, 42.20],
+            [19.60, 42.20],
+            [19.60, 41.80],
+            [19.00, 41.80],
+            [19.00, 42.20]
+          ]
+        ]
+      }
+    }
+  ]
+}
