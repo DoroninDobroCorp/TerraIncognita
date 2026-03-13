@@ -38,9 +38,9 @@ class MapConfig(BaseModel):
 _TILE_SOURCES = {
     "dark": TileSource(
         name="Terra Dark",
-        url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}@2x.png",
-        attribution="© Stadia Maps, © OpenMapTiles, © OpenStreetMap contributors",
-        tile_size=512,
+        url="https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png",
+        attribution="© OpenStreetMap contributors, © CARTO",
+        tile_size=256,
     ),
     "satellite": TileSource(
         name="Satellite",
@@ -49,9 +49,9 @@ _TILE_SOURCES = {
     ),
     "terrain": TileSource(
         name="Terrain",
-        url="https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}@2x.png",
-        attribution="© Stadia Maps, © Stamen Design",
-        tile_size=512,
+        url="https://tile.opentopomap.org/{z}/{x}/{y}.png",
+        attribution="© OpenTopoMap contributors, © OpenStreetMap",
+        tile_size=256,
     ),
 }
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -224,6 +225,11 @@ if _map_dir.exists():
     app.mount("/map", StaticFiles(directory=str(_map_dir), html=True), name="map")
 if _data_dir.exists():
     app.mount("/data", StaticFiles(directory=str(_data_dir)), name="data")
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/map/app.html")
 
 
 @app.get("/health")
