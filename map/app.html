@@ -233,6 +233,29 @@ label.form-label { display:block; font-size:12px; font-weight:600; color:var(--t
 .toast.warning { background:var(--warning); color:#fff; }
 @keyframes toastIn { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
 
+
+/* GPS tracking */
+.user-marker-tracking {
+  width:18px; height:18px; background:var(--accent); border:3px solid #fff;
+  border-radius:50%; box-shadow:0 0 12px var(--accent-glow);
+  position:relative;
+}
+.user-marker-tracking.active::after {
+  content:''; position:absolute; top:-6px; left:-6px; width:26px; height:26px;
+  border:2px solid var(--accent); border-radius:50%; opacity:0.7;
+  animation: gps-pulse 2s ease-out infinite;
+}
+@keyframes gps-pulse { 0%{transform:scale(1);opacity:0.7} 100%{transform:scale(2.5);opacity:0} }
+.nav-distance-badge {
+  position:absolute; bottom:4px; left:50%; transform:translateX(-50%); z-index:30;
+  background:var(--bg-card); color:var(--text-primary); padding:8px 18px; border-radius:20px;
+  font-size:13px; font-weight:600; box-shadow:var(--shadow); display:none;
+  pointer-events:auto; border:2px solid var(--accent);
+  max-width:calc(100% - 24px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.nav-distance-badge.visible { display:flex; align-items:center; gap:8px; }
+@media (max-width:768px) { .nav-distance-badge { bottom:62px; font-size:12px; padding:6px 14px; } }
+
 /* ═══════════════════════════════════════════════════════
    Map Section Overrides
    ═══════════════════════════════════════════════════════ */
@@ -485,7 +508,7 @@ label.form-label { display:block; font-size:12px; font-weight:600; color:var(--t
   .nav-divider { width:1px; height:24px; margin:0 4px; }
   .nav-spacer { display:none; }
   #content { height:calc(100% - 56px); }
-  #search-bar { width:calc(100% - 24px); top:52px; }
+  #search-bar { width:calc(100% - 76px); top:52px; left:12px; transform:none; }
   #place-card { left:8px; right:8px; bottom:56px; }
   .ctrl-btn { width:38px; height:38px; font-size:18px; }
 }
@@ -553,6 +576,8 @@ label.form-label { display:block; font-size:12px; font-weight:600; color:var(--t
       <button class="btn btn-secondary" id="card-checkin" title="Check in">📍</button>
     </div>
   </div>
+  
+  <div class="nav-distance-badge" id="nav-distance">🧭 <span id="nav-dist-text"></span><button style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;margin-left:4px" id="nav-stop">✕</button></div>
   <div id="filter-panel">
     <div class="filter-handle" id="filter-handle"></div>
     <div class="filter-title"><span>🎛️ Filters</span><span id="place-count" style="font-size:12px;color:var(--text-secondary)">0 places</span></div>
@@ -1273,6 +1298,10 @@ try {
   map = new Proxy({}, { get: () => (...args) => map });
 }
 let userMarker = null;
+let gpsWatchId = null;
+let gpsTracking = false;
+let navLine = null;
+let navTarget = null;
 
 // Layer switcher
 document.querySelectorAll('.layer-btn').forEach(btn => {
@@ -1282,14 +1311,18 @@ document.querySelectorAll('.layer-btn').forEach(btn => {
     document.querySelectorAll('.layer-btn').forEach(b => { if (b.dataset.layer !== 'historical') b.classList.remove('active'); });
     btn.classList.add('active');
     map.setStyle(STYLES[layer]);
-    map.once('styledata', () => { renderPlaces(); if (state.fogEnabled) renderFog(); });
+    map.once('styledata', () => { renderPlaces(); if (state.fogEnabled) renderFog(); if (navTarget) { const src = map.getSource('nav-line'); if (!src) updateNavLine(); } });
   });
 });
 
 // Geolocation
 document.getElementById('btn-locate').addEventListener('click', () => {
+  if (gpsTracking) {
+    stopGpsTracking();
+    toast('📍 GPS tracking off');
+    return;
+  }
   if (!navigator.geolocation) {
-    // Fallback: use map center
     const c = map.getCenter();
     state.userLat = c.lat; state.userLng = c.lng;
     updateUserMarker(); fetchPlaces();
@@ -1298,31 +1331,194 @@ document.getElementById('btn-locate').addEventListener('click', () => {
     toast('📍 Location set to map center (GPS not available)');
     return;
   }
-  toast('📍 Getting your location...', 'info');
+  // First: get current position quickly, then start tracking
+  toast('📍 Getting location...', 'info');
   navigator.geolocation.getCurrentPosition(pos => {
     state.userLat = pos.coords.latitude; state.userLng = pos.coords.longitude;
     map.flyTo({center:[state.userLng,state.userLat],zoom:14});
     updateUserMarker(); fetchPlaces();
     document.getElementById('explore-center').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
     document.getElementById('route-from').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
-    toast('📍 Location updated!');
+    startGpsTracking();
   }, (err) => {
     console.warn('Geolocation error:', err.code, err.message);
-    // Fallback: use map center
     const c = map.getCenter();
     state.userLat = c.lat; state.userLng = c.lng;
     updateUserMarker(); fetchPlaces();
     document.getElementById('explore-center').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
     document.getElementById('route-from').value = `${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}`;
-    toast('📍 GPS unavailable — location set to map center. You can also long-press the map!');
-  }, {enableHighAccuracy:true,timeout:10000});
+    if (err.code === 1) toast('📍 Location access denied — check browser permissions', 'error');
+    else toast('📍 GPS unavailable — tap 📌 to set location manually');
+  }, {enableHighAccuracy:true,timeout:15000});
 });
 
 function updateUserMarker() {
   if (userMarker) userMarker.remove();
   const el = document.createElement('div');
-  el.style.cssText = 'width:18px;height:18px;background:var(--accent);border:3px solid #fff;border-radius:50%;box-shadow:0 0 12px var(--accent-glow);';
+  el.className = 'user-marker-tracking' + (gpsTracking ? ' active' : '');
   userMarker = new maplibregl.Marker({element:el}).setLngLat([state.userLng,state.userLat]).addTo(map);
+  updateNavLine();
+}
+
+function startGpsTracking() {
+  if (gpsWatchId !== null) return;
+  if (!navigator.geolocation) { toast('GPS not available','error'); return; }
+  gpsTracking = true;
+  document.getElementById('btn-locate').classList.add('active');
+  toast('📍 GPS tracking on', 'success');
+  gpsWatchId = navigator.geolocation.watchPosition(pos => {
+    state.userLat = pos.coords.latitude;
+    state.userLng = pos.coords.longitude;
+    updateUserMarker();
+    document.getElementById('explore-center').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+    document.getElementById('route-from').value = `${state.userLat.toFixed(4)}, ${state.userLng.toFixed(4)}`;
+  }, err => {
+    console.warn('GPS error:', err.code, err.message);
+    if (err.code === 1) { toast('📍 Location access denied — check browser permissions', 'error'); stopGpsTracking(); }
+    else if (err.code === 3) { /* timeout — keep trying */ }
+    else { toast('📍 GPS error: ' + err.message, 'error'); }
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 });
+}
+
+function stopGpsTracking() {
+  if (gpsWatchId !== null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
+  gpsTracking = false;
+  document.getElementById('btn-locate').classList.remove('active');
+  updateUserMarker();
+}
+
+let navRouteCoords = null; // cached route geometry from OSRM
+let navRouteDist = null;   // route distance in meters
+let navRouteDur = null;    // route duration in seconds
+let navRouteLoading = false;
+let navLastRouteFrom = null; // to avoid re-fetching on every GPS tick
+
+async function fetchRoute(fromLng, fromLat, toLng, toLat) {
+  const url = `https://router.project-osrm.org/route/v1/foot/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true`;
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.code === 'Ok' && data.routes.length > 0) {
+      return data.routes[0];
+    }
+  } catch (e) { console.warn('OSRM routing error:', e); }
+  return null;
+}
+
+function shouldReroute(fromLng, fromLat) {
+  if (!navLastRouteFrom) return true;
+  const moved = haversineJS(navLastRouteFrom.lat, navLastRouteFrom.lng, fromLat, fromLng);
+  return moved > 50; // reroute if user moved >50m from last route start
+}
+
+async function startNavigation(place) {
+  navTarget = { lat: place.coordinates.lat, lng: place.coordinates.lng, name: place.name || 'Destination' };
+  navRouteCoords = null; navRouteDist = null; navRouteDur = null;
+  document.getElementById('nav-distance').classList.add('visible');
+  document.getElementById('nav-dist-text').textContent = 'Building route...';
+  if (!gpsTracking) startGpsTracking();
+
+  // Fetch real walking route
+  await buildNavRoute();
+
+  // Fit map to show entire route
+  if (navRouteCoords && navRouteCoords.length > 1) {
+    const bounds = navRouteCoords.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(navRouteCoords[0], navRouteCoords[0]));
+    map.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+  } else {
+    map.flyTo({ center: [state.userLng, state.userLat], zoom: Math.max(map.getZoom(), 14) });
+  }
+  toast('🧭 Route to ' + navTarget.name, 'success');
+}
+
+async function buildNavRoute() {
+  if (!navTarget || !state.userLat || navRouteLoading) return;
+  navRouteLoading = true;
+  const route = await fetchRoute(state.userLng, state.userLat, navTarget.lng, navTarget.lat);
+  navRouteLoading = false;
+  if (route) {
+    navRouteCoords = route.geometry.coordinates;
+    navRouteDist = route.distance;
+    navRouteDur = route.duration;
+    navLastRouteFrom = { lat: state.userLat, lng: state.userLng };
+    drawNavLine();
+    updateNavBadge();
+  } else {
+    // Fallback: straight line
+    navRouteCoords = [[state.userLng, state.userLat], [navTarget.lng, navTarget.lat]];
+    navRouteDist = haversineJS(state.userLat, state.userLng, navTarget.lat, navTarget.lng);
+    navRouteDur = navRouteDist / 1.2; // ~4.3 km/h walking
+    navLastRouteFrom = { lat: state.userLat, lng: state.userLng };
+    drawNavLine();
+    updateNavBadge();
+    toast('⚠️ Could not build route — showing straight line', 'warning');
+  }
+}
+
+function drawNavLine() {
+  if (!navRouteCoords) return;
+  const geojson = { type:'Feature', geometry:{ type:'LineString', coordinates: navRouteCoords } };
+  if (map.getSource('nav-line')) {
+    map.getSource('nav-line').setData(geojson);
+  } else {
+    try {
+      map.addSource('nav-line', { type:'geojson', data: geojson });
+      map.addLayer({ id:'nav-line-layer', type:'line', source:'nav-line', paint:{
+        'line-color':'#ff6b35', 'line-width': 4, 'line-opacity': 0.85
+      }});
+    } catch(e) { console.warn('Nav line error:', e); }
+  }
+}
+
+function updateNavBadge() {
+  if (!navTarget) return;
+  // Distance remaining: haversine to target (close enough for badge, avoids re-routing)
+  const remaining = haversineJS(state.userLat, state.userLng, navTarget.lat, navTarget.lng);
+  let distText, durText;
+  if (navRouteDist && navLastRouteFrom) {
+    // Scale route distance by proportion of haversine remaining vs original haversine
+    const origHav = haversineJS(navLastRouteFrom.lat, navLastRouteFrom.lng, navTarget.lat, navTarget.lng);
+    const ratio = origHav > 0 ? remaining / origHav : 1;
+    const estDist = navRouteDist * ratio;
+    const estDur = navRouteDur * ratio;
+    distText = estDist < 1000 ? Math.round(estDist) + ' m' : (estDist/1000).toFixed(1) + ' km';
+    const mins = Math.ceil(estDur / 60);
+    durText = mins < 60 ? mins + ' min' : Math.floor(mins/60) + 'h ' + (mins%60) + 'min';
+  } else {
+    distText = remaining < 1000 ? Math.round(remaining) + ' m' : (remaining/1000).toFixed(1) + ' km';
+    durText = Math.ceil(remaining / 1.2 / 60) + ' min';
+  }
+  document.getElementById('nav-dist-text').textContent = '🚶 ' + distText + ' · ' + durText + ' → ' + navTarget.name;
+
+  // Auto-arrive: if within 30m
+  if (remaining < 30) {
+    toast('🎉 You arrived at ' + navTarget.name + '!', 'success');
+    stopNavigation();
+  }
+}
+
+function stopNavigation() {
+  navTarget = null; navRouteCoords = null; navRouteDist = null; navRouteDur = null;
+  navLastRouteFrom = null;
+  document.getElementById('nav-distance').classList.remove('visible');
+  if (map.getSource('nav-line')) { map.removeLayer('nav-line-layer'); map.removeSource('nav-line'); }
+}
+
+function updateNavLine() {
+  if (!navTarget || !state.userLat) return;
+  // Reroute if user moved significantly from route start
+  if (shouldReroute(state.userLng, state.userLat)) {
+    buildNavRoute();
+  } else {
+    updateNavBadge();
+  }
+}
+
+function haversineJS(lat1, lng1, lat2, lng2) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
 // Pin mode — click map to set location
@@ -1505,7 +1701,8 @@ function showPlaceCard(placeId) {
   document.getElementById('place-card').classList.add('visible');
 }
 document.getElementById('card-close').addEventListener('click',()=>{document.getElementById('place-card').classList.remove('visible');state.selectedPlace=null;});
-document.getElementById('card-navigate').addEventListener('click',()=>{if(!state.selectedPlace)return;const p=state.selectedPlace;state.visitedPlaces.add(p.id);localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces]));window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.coordinates.lat},${p.coordinates.lng}&travelmode=walking`,'_blank');renderFog();renderPlaces();});
+document.getElementById('card-navigate').addEventListener('click',()=>{if(!state.selectedPlace)return;const p=state.selectedPlace;startNavigation(p);document.getElementById('place-card').classList.remove('visible');});
+document.getElementById('nav-stop').addEventListener('click',()=>{stopNavigation();});
 document.getElementById('card-save').addEventListener('click',()=>{if(!state.selectedPlace)return;const id=state.selectedPlace.id;if(state.savedPlaces.has(id))state.savedPlaces.delete(id);else state.savedPlaces.add(id);localStorage.setItem('ti_saved',JSON.stringify([...state.savedPlaces]));document.getElementById('card-save').textContent=state.savedPlaces.has(id)?'★ Saved':'⭐ Save';});
 
 // Story button
@@ -2112,7 +2309,7 @@ map.on('load', async () => {
     if (config.category_styles) { CATEGORIES={}; for(const[k,s]of Object.entries(config.category_styles)){CATEGORIES[k]=s;} PRESETS.all=Object.keys(CATEGORIES); PRESETS.hidden=Object.keys(CATEGORIES).filter(k=>CATEGORIES[k].group==='unusual'); PRESETS.classic=Object.keys(CATEGORIES).filter(k=>CATEGORIES[k].group==='classic'); state.activeCategories=new Set(Object.keys(CATEGORIES)); rebuildCategoryChips(); }
   } catch {}
   loadHistLayers();
-  if(navigator.geolocation){navigator.geolocation.getCurrentPosition(p=>{state.userLat=p.coords.latitude;state.userLng=p.coords.longitude;map.flyTo({center:[state.userLng,state.userLat],zoom:13});updateUserMarker();fetchPlaces();},()=>{toast('Location access denied — showing default area. You can still use the map!','info');fetchPlaces();},{enableHighAccuracy:true,timeout:5000});}else{toast('Geolocation not available — using default location','info');fetchPlaces();}
+  if(navigator.geolocation){navigator.geolocation.getCurrentPosition(p=>{state.userLat=p.coords.latitude;state.userLng=p.coords.longitude;map.flyTo({center:[state.userLng,state.userLat],zoom:13});updateUserMarker();fetchPlaces();startGpsTracking();},()=>{toast('📍 GPS unavailable — tap 📌 to set location or 📍 to retry','info');fetchPlaces();},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});}else{toast('Geolocation not supported in this browser','info');fetchPlaces();}
   document.getElementById('fog-stats').classList.toggle('visible',state.fogEnabled);
   analytics.track('app_loaded', { version: APP_VERSION });
   console.log(`Terra Incognita v${APP_VERSION} loaded`);
