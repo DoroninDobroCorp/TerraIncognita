@@ -21,6 +21,7 @@ from app.api.journal import router as journal_router
 from app.api.loop_route import router as loop_route_router
 from app.api.map_config import router as map_config_router
 from app.api.offline import router as offline_router
+from app.api.place_ask import router as place_ask_router
 from app.api.place_collections import router as place_collections_router
 from app.api.recommendations import router as recommendations_router
 from app.api.routes import router as routes_router
@@ -86,6 +87,7 @@ app.include_router(offline_router)
 app.include_router(community_router)
 app.include_router(daily_router)
 app.include_router(loop_route_router)
+app.include_router(place_ask_router)
 app.include_router(place_collections_router)
 app.include_router(streak_router)
 
