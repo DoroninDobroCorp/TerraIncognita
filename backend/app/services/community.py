@@ -10,10 +10,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+
+from pydantic import BaseModel
 
 from app.config import settings
 from app.models.community import (
@@ -30,6 +31,7 @@ from app.models.community import (
     RouteRating,
 )
 from app.models.place import Coordinates
+from app.utils.atomic_io import atomic_write_text, load_json_file, quarantine_corrupt
 from app.utils.sanitize import sanitize_user_input
 
 logger = logging.getLogger(__name__)
@@ -73,30 +75,39 @@ class CommunityService:
     def _ensure_loaded(self) -> None:
         if self._loaded:
             return
-        self._places = self._load_store("places.json")
-        self._reviews = self._load_store("reviews.json")
-        self._routes = self._load_store("routes.json")
-        self._karma = self._load_store("karma.json")
-        self._follows = self._load_store("follows.json")
         self._loaded = True
+        self._places = self._load_store("places.json", CommunityPlace)
+        self._reviews = self._load_store("reviews.json", Review)
+        self._routes = self._load_store("routes.json", PublishedRoute)
+        self._karma = self._load_store("karma.json", ContributorKarma)
+        self._follows = self._load_store("follows.json", ExplorerFollow)
 
-    def _load_store(self, filename: str) -> dict[str, dict]:
+    def _load_store(self, filename: str, model: type[BaseModel]) -> dict[str, dict]:
+        """Load one store file. Records failing validation are skipped (one bad record must
+        not 500 every listing) and the original file is backed up before it is rewritten."""
         path = self._data_dir / filename
-        if not path.exists():
+        raw = load_json_file(path)
+        if raw is None:
             return {}
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load %s: %s", path, exc)
+        if not isinstance(raw, dict):
+            quarantine_corrupt(path, "top-level JSON value is not an object")
             return {}
+        good: dict[str, dict] = {}
+        for key, value in raw.items():
+            try:
+                model.model_validate(value)
+            except Exception:
+                continue
+            good[key] = value
+        if len(good) != len(raw):
+            quarantine_corrupt(path, f"{len(raw) - len(good)} record(s) failed validation")
+        return good
 
     def _atomic_write(self, filename: str, data: dict) -> None:
-        path = self._data_dir / filename
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        os.replace(str(tmp), str(path))
+        atomic_write_text(
+            self._data_dir / filename,
+            json.dumps(data, ensure_ascii=False, indent=2, default=str),
+        )
 
     def _save_places(self) -> None:
         self._atomic_write("places.json", self._places)

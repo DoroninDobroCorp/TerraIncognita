@@ -40,6 +40,7 @@ from app.models.journal import (
     VisitStatus,
 )
 from app.models.place import Coordinates
+from app.utils.atomic_io import atomic_write_text, load_model_records
 from app.utils.geo import haversine_distance_m as _haversine_m
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ _visits: dict[str, Visit] = {}
 _notes: dict[str, PlaceNote] = {}
 _trips: dict[str, Trip] = {}
 _data_dir: Path | None = None
+_loaded = False
 _write_lock = asyncio.Lock()
 
 
@@ -62,10 +64,8 @@ def _get_data_dir() -> Path:
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    """Write data atomically using temp file + rename to prevent corruption."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(path)
+    """Write data atomically (unique temp file + fsync + rename) to prevent corruption."""
+    atomic_write_text(path, data)
 
 
 def _save_visits() -> None:
@@ -87,35 +87,15 @@ def _save_trips() -> None:
 
 
 def _load_store() -> None:
-    """Load persisted data on first access."""
+    """Load persisted data once (first access)."""
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
     data_dir = _get_data_dir()
-
-    visits_path = data_dir / "visits.json"
-    if visits_path.exists() and not _visits:
-        try:
-            raw = json.loads(visits_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _visits[k] = Visit.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load visits.json, starting fresh")
-
-    notes_path = data_dir / "notes.json"
-    if notes_path.exists() and not _notes:
-        try:
-            raw = json.loads(notes_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _notes[k] = PlaceNote.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load notes.json, starting fresh")
-
-    trips_path = data_dir / "trips.json"
-    if trips_path.exists() and not _trips:
-        try:
-            raw = json.loads(trips_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _trips[k] = Trip.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load trips.json, starting fresh")
+    _visits.update(load_model_records(data_dir / "visits.json", Visit))
+    _notes.update(load_model_records(data_dir / "notes.json", PlaceNote))
+    _trips.update(load_model_records(data_dir / "trips.json", Trip))
 
 
 def _ensure_loaded() -> None:
@@ -887,7 +867,8 @@ def _html_escape(text: str) -> str:
 
 def _reset_store() -> None:
     """Reset in-memory stores (for testing only)."""
-    global _data_dir
+    global _data_dir, _loaded
+    _loaded = False
     _visits.clear()
     _notes.clear()
     _trips.clear()

@@ -40,6 +40,12 @@ from app.models.gamification import (
     XpEventResponse,
 )
 from app.models.journal import PlaceNote, Visit, VisitStatus
+from app.utils.atomic_io import (
+    atomic_write_text,
+    load_json_file,
+    load_model_records,
+    quarantine_corrupt,
+)
 from app.utils.geo import haversine_distance_m as _haversine_m
 
 logger = logging.getLogger(__name__)
@@ -51,6 +57,7 @@ _achievements: dict[str, UserAchievement] = {}  # key: achievement_id
 _xp_events: list[XpEvent] = []
 _total_xp: int = 0
 _data_dir: Path | None = None
+_loaded = False
 _write_lock = asyncio.Lock()
 
 
@@ -63,9 +70,7 @@ def _get_data_dir() -> Path:
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, data)
 
 
 def _save_fog() -> None:
@@ -90,36 +95,33 @@ def _save_xp() -> None:
 
 
 def _load_store() -> None:
-    global _total_xp
+    """Load persisted data once (first access); unreadable data is backed up, never dropped."""
+    global _total_xp, _loaded
+    if _loaded:
+        return
+    _loaded = True
     data_dir = _get_data_dir()
 
-    fog_path = data_dir / "fog_cells.json"
-    if fog_path.exists() and not _fog_cells:
-        try:
-            raw = json.loads(fog_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _fog_cells[k] = FogCell.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load fog_cells.json, starting fresh")
-
-    ach_path = data_dir / "achievements.json"
-    if ach_path.exists() and not _achievements:
-        try:
-            raw = json.loads(ach_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _achievements[k] = UserAchievement.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load achievements.json, starting fresh")
+    _fog_cells.update(load_model_records(data_dir / "fog_cells.json", FogCell))
+    _achievements.update(load_model_records(data_dir / "achievements.json", UserAchievement))
 
     xp_path = data_dir / "xp_events.json"
-    if xp_path.exists() and not _xp_events:
+    raw = load_json_file(xp_path)
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        quarantine_corrupt(xp_path, "top-level JSON value is not an object")
+        return
+    bad = 0
+    for e in raw.get("events", []):
         try:
-            raw = json.loads(xp_path.read_text(encoding="utf-8"))
-            _total_xp = raw.get("total_xp", 0)
-            for e in raw.get("events", []):
-                _xp_events.append(XpEvent.model_validate(e))
+            _xp_events.append(XpEvent.model_validate(e))
         except Exception:
-            logger.warning("Failed to load xp_events.json, starting fresh")
+            bad += 1
+    total = raw.get("total_xp", 0)
+    _total_xp = total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else 0
+    if bad or total != _total_xp:
+        quarantine_corrupt(xp_path, f"{bad} invalid event(s) / total_xp={total!r}")
 
 
 def _ensure_loaded() -> None:
@@ -812,6 +814,7 @@ _RARE_CATEGORIES = {"abandoned", "underground", "cave", "military", "ruins"}
 async def _award_xp(xp: int, source: str, description: str, visit_id: str | None = None) -> None:
     """Internal: award XP and save."""
     global _total_xp
+    _ensure_loaded()  # never append to (and then rewrite) a store that was not read yet
     event = XpEvent(
         id=f"xp_{uuid.uuid4().hex[:12]}",
         source=source,
@@ -988,7 +991,8 @@ async def on_visit_created(
 
 def _reset_store() -> None:
     """Reset in-memory stores (for testing only)."""
-    global _data_dir, _total_xp
+    global _data_dir, _total_xp, _loaded
+    _loaded = False
     _fog_cells.clear()
     _achievements.clear()
     _xp_events.clear()
