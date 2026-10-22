@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.classifier import classify_place, classify_places
 
@@ -106,3 +108,85 @@ class TestClassifier:
         )
         result = classify_place(p)
         assert PlaceCategory.VIEWPOINT in result.categories
+
+
+# ── Word-based matching & multilingual stems ─────────────────────────────────
+
+
+@pytest.mark.parametrize(("text", "not_expected"), [
+    ("Parking Lot", PlaceCategory.PARK),
+    ("Adam's Corner", PlaceCategory.WATER),          # "dam"
+    ("Research Center", PlaceCategory.ARCHITECTURE),  # "arch"
+    ("Mountain Trail", PlaceCategory.TRANSPORT),      # "rail"
+    ("Metropolitan Tower Hotel", PlaceCategory.UNDERGROUND),  # "metro"
+    ("Plantation House", PlaceCategory.INDUSTRIAL),   # "plant"
+    ("Springfield Road", PlaceCategory.WATER),        # "spring"
+    ("Millennium Square", PlaceCategory.INDUSTRIAL),  # "mill"
+    ("Animal Shelter", PlaceCategory.MILITARY),       # "shelter" alone is not a bunker
+    ("Bus Shelter", PlaceCategory.MILITARY),
+    ("Gateway Plaza", PlaceCategory.ARCHITECTURE),    # "gate"
+    ("Mineral Water Spa", PlaceCategory.UNDERGROUND),  # "mine"
+])
+def test_keywords_match_whole_words_not_substrings(text, not_expected):
+    result = classify_place(_make_place(name=text))
+    assert not_expected not in result.categories
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("Заброшенный завод", {PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL}),
+    ("Старый бункер", {PlaceCategory.MILITARY}),
+    ("Пещера Эмине-Баир-Хосар", {PlaceCategory.CAVE, PlaceCategory.UNDERGROUND}),
+    ("Руины монастыря", {PlaceCategory.RUINS, PlaceCategory.RELIGIOUS}),
+    ("Підземний тунель", {PlaceCategory.UNDERGROUND}),
+    ("Покинута шахта", {PlaceCategory.ABANDONED, PlaceCategory.UNDERGROUND}),
+    ("Тврђава Мамула", {PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE}),
+    ("Napuštena tvrđava", {PlaceCategory.ABANDONED, PlaceCategory.LANDMARK}),
+    ("Verlassene Fabrik Ruine", {PlaceCategory.ABANDONED, PlaceCategory.RUINS}),
+    ("Forte Arza", set()),  # unknown word: default landmark, no false category
+])
+def test_multilingual_stems(text, expected):
+    result = classify_place(_make_place(name=text))
+    assert expected <= set(result.categories)
+
+
+def test_plural_and_inflected_forms_match():
+    assert PlaceCategory.CAVE in classify_place(_make_place(name="Caves of Kotor")).categories
+    assert PlaceCategory.RUINS in classify_place(_make_place(name="Ruined chapel")).categories
+    assert PlaceCategory.ABANDONED in classify_place(_make_place(name="Abandonment Villa")).categories
+
+
+def test_fort_is_a_landmark_and_military_but_not_fortunate():
+    assert {PlaceCategory.LANDMARK, PlaceCategory.MILITARY} <= set(
+        classify_place(_make_place(name="Fort Arza")).categories)
+    assert PlaceCategory.MILITARY not in classify_place(_make_place(name="Fortunato Bar")).categories
+
+
+def test_address_and_name_tags_do_not_pollute_classification():
+    p = _make_place(
+        name="Quiet Corner",
+        tags=["addr:street=Park Avenue", "source=bing tunnel survey", "military=bunker"],
+        metadata={"osm_tags": {"addr:street": "Cave Street", "name": "Station Cafe",
+                               "historic": "ruins"}},
+    )
+    cats = set(classify_place(p).categories)
+    assert PlaceCategory.MILITARY in cats and PlaceCategory.RUINS in cats
+    assert not cats & {PlaceCategory.PARK, PlaceCategory.CAVE, PlaceCategory.TRANSPORT,
+                       PlaceCategory.UNDERGROUND}
+
+
+def test_lifecycle_tags_are_classified():
+    p = _make_place(metadata={"osm_tags": {"abandoned:building": "factory"}})
+    cats = set(classify_place(p).categories)
+    assert {PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL} <= cats
+
+
+def test_places_with_explicit_category_confidence_are_left_alone():
+    p = _make_place(name="Abandoned Cave Mine", categories=[PlaceCategory.MONUMENT])
+    p.category_confidence = {PlaceCategory.MONUMENT.value: 0.85}
+    assert classify_place(p).categories == [PlaceCategory.MONUMENT]
+
+
+def test_unclassifiable_place_is_flagged_for_llm():
+    p = classify_place(_make_place(name="Zorblax"))
+    assert p.metadata["_needs_llm_classification"] is True
+    assert p.category_confidence == {"landmark": 0.3}
