@@ -46,9 +46,9 @@ async def get_place_story(req: StoryRequest) -> StoryResponse:
 
     try:
         result = await generate_place_story(place, language=req.language)
-    except Exception:
+    except Exception as exc:
         logger.exception("Story generation error for %s", req.place_id)
-        raise HTTPException(status_code=500, detail="Story generation failed")
+        raise HTTPException(status_code=500, detail="Story generation failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(
@@ -89,9 +89,9 @@ async def get_route_story(req: RouteStoryRequest) -> RouteStoryResponse:
 
     try:
         result = await generate_route_story(places, language=req.language)
-    except Exception:
+    except Exception as exc:
         logger.exception("Route story generation error")
-        raise HTTPException(status_code=500, detail="Route story generation failed")
+        raise HTTPException(status_code=500, detail="Route story generation failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(

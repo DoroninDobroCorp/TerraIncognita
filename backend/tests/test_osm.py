@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
 from app.models.place import PlaceCategory, PlaceSource
 from app.sources.osm import OSMSource
-
 
 # Sample Overpass response
 _OVERPASS_RESPONSE = {
@@ -85,8 +80,6 @@ class TestOSMParsing:
         assert PlaceCategory.RUINS in places[0].categories
 
     def test_category_classification_cathedral(self):
-        places = self.source._parse_elements([_OVERPASS_RESPONSE["elements"][2]])
-        cats = places[2].categories if len(places) > 2 else []
         # cathedral is a classic landmark
         places_all = self.source._parse_elements(_OVERPASS_RESPONSE["elements"])
         cathedral = [p for p in places_all if "Cathedral" in (p.name or "")]

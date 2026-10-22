@@ -35,10 +35,10 @@ async def recommend_places(req: RecommendationRequest) -> RecommendationResponse
     try:
         result = await get_recommendations(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("Recommendation engine error")
-        raise HTTPException(status_code=500, detail="Recommendation engine failed")
+        raise HTTPException(status_code=500, detail="Recommendation engine failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(

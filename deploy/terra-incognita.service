@@ -1,0 +1,24 @@
+# /etc/systemd/system/terra-incognita.service
+# Logs go to journald: `journalctl -u terra-incognita -f` (no server.log to grow forever).
+[Unit]
+Description=Terra Incognita API
+After=network.target
+
+[Service]
+User=terra
+WorkingDirectory=/srv/terra/backend
+EnvironmentFile=/srv/terra/backend/.env
+ExecStart=/srv/terra/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/terra/backend/data /srv/terra/backend/cache
+
+[Install]
+WantedBy=multi-user.target

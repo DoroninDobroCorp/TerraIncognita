@@ -30,10 +30,10 @@ async def describe_place(req: DescriptionRequest) -> DescriptionResponse:
     try:
         result = await generate_description(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("Description generation error for %s", req.place_id)
-        raise HTTPException(status_code=500, detail="Description generation failed")
+        raise HTTPException(status_code=500, detail="Description generation failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(

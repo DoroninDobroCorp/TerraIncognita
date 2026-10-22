@@ -67,8 +67,8 @@ async def get_region(region_id: str):
     """Get details of a specific offline region."""
     try:
         region = await offline_manager.get_region(region_id)
-    except ValueError:
-        raise HTTPException(400, "Invalid region ID")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid region ID") from exc
     if not region:
         raise HTTPException(404, "Region not found")
     return region
@@ -79,8 +79,8 @@ async def delete_region(region_id: str):
     """Delete a downloaded region and free storage."""
     try:
         deleted = await offline_manager.delete_region(region_id)
-    except ValueError:
-        raise HTTPException(400, "Invalid region ID")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid region ID") from exc
     if not deleted:
         raise HTTPException(404, "Region not found")
     return {"status": "deleted", "region_id": region_id}
@@ -153,8 +153,8 @@ async def get_cached_place(place_id: str):
     """Retrieve a cached place by ID."""
     try:
         cp = await offline_manager.get_cached_place(place_id)
-    except ValueError:
-        raise HTTPException(400, "Invalid place ID")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid place ID") from exc
     if not cp:
         raise HTTPException(404, "Place not found in offline cache")
     return cp
@@ -183,8 +183,8 @@ async def delete_cached_place(place_id: str):
     """Remove a place from offline cache."""
     try:
         deleted = await offline_manager.delete_cached_place(place_id)
-    except ValueError:
-        raise HTTPException(400, "Invalid place ID")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid place ID") from exc
     if not deleted:
         raise HTTPException(404, "Place not found in offline cache")
     return {"status": "deleted", "place_id": place_id}
@@ -221,8 +221,8 @@ async def delete_sync_item(item_id: str):
     """Remove a specific item from the sync queue."""
     try:
         deleted = await offline_manager.delete_queue_item(item_id)
-    except ValueError:
-        raise HTTPException(400, "Invalid item ID")
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid item ID") from exc
     if not deleted:
         raise HTTPException(404, "Sync queue item not found")
     return {"status": "deleted", "item_id": item_id}

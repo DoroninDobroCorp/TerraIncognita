@@ -30,9 +30,9 @@ async def discover_places(req: DiscoverRequest) -> DiscoverResponse:
     t0 = time.monotonic()
     try:
         result = await discover(req)
-    except Exception:
+    except Exception as exc:
         logger.exception("Discovery pipeline error")
-        raise HTTPException(status_code=500, detail="Discovery pipeline failed")
+        raise HTTPException(status_code=500, detail="Discovery pipeline failed") from exc
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info("POST /api/discover → %d places in %.0fms", result.total, elapsed_ms)
     return result

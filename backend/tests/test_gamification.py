@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
@@ -215,7 +215,7 @@ class TestAchievements:
     async def test_category_achievements(self, sample_visits, sample_notes):
         """Category-specific achievements should track correctly."""
         # Notes with "abandoned" tag should count
-        result = await gam_service.check_achievements(
+        await gam_service.check_achievements(
             visits=sample_visits,
             notes=sample_notes,
         )

@@ -16,7 +16,6 @@ import hashlib
 import json
 import logging
 import re
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -95,7 +94,7 @@ _CATEGORY_KEYWORDS: dict[str, PlaceCategory] = {
 }
 
 # Structured prompt that asks for JSON POI output
-_RESEARCH_PROMPT = """Research unusual, hidden, and extraordinary points of interest within {radius_km} km 
+_RESEARCH_PROMPT = """Research unusual, hidden, and extraordinary points of interest within {radius_km} km
 of the city center of {city_name} ({country}), coordinates: {lat}, {lng}.
 
 Focus on objects that typical tourist guides and OpenStreetMap miss:
@@ -110,13 +109,13 @@ For EACH point of interest, provide:
 - name (local name + English translation)
 - GPS coordinates (latitude, longitude) — CRITICAL, must be accurate
 - brief description (2-3 sentences)
-- category (one of: underwater, abandoned, ruins, military, industrial, cave, culinary, 
+- category (one of: underwater, abandoned, ruins, military, industrial, cave, culinary,
   architecture, monument, street_art, nature_hidden, viewpoint, water, religious, landmark, museum)
 - source_url (web link where you found this information)
 - access_info (how to get there, entry fee, restrictions)
 - safety_notes (any warnings)
 
-IMPORTANT: 
+IMPORTANT:
 - Verify GPS coordinates are actually within {radius_km} km of ({lat}, {lng})
 - Include coordinates for ALL items, even restaurants and food spots
 - Prefer lesser-known places over famous tourist attractions
@@ -147,19 +146,19 @@ class DeepResearchSource(BaseSource):
 
     async def get_status(self, lat: float, lng: float, radius_km: float) -> tuple[str, str | None]:
         """Returns (status, message) tuple.
-        
+
         Status: "idle" | "pending" | "cached"
         """
         if not settings.deep_research_enabled:
             return ("idle", None)
-        
+
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
         cached = await _dr_cache.get(cache_key)
-        
+
         if cached is not None:
             count = len(cached)
             return ("cached", f"{count} additional places found via Deep Research")
-        
+
         # Check if research is in progress (we don't track this explicitly,
         # but we can assume it's pending on first request)
         return ("pending", "Deep Research in progress... Check back in 2-5 minutes for additional hidden gems!")

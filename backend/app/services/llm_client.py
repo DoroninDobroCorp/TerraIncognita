@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -29,6 +32,63 @@ _CIRCUIT_RESET_SECONDS = 60
 # Token usage tracking
 _total_input_tokens: int = 0
 _total_output_tokens: int = 0
+
+# Daily budget (persisted so a restart does not reset the counter)
+_daily_usage_path = Path(settings.cache_dir) / "llm_usage.json"
+_daily: dict[str, Any] = {"date": "", "input": 0, "output": 0}
+
+
+class LLMBudgetError(RuntimeError):
+    """The configured daily token cap (TERRA_LLM_DAILY_TOKEN_CAP) has been reached."""
+
+
+def _today() -> str:
+    return datetime.now(UTC).date().isoformat()
+
+
+def _daily_state() -> dict[str, Any]:
+    """Today's counters, loading from disk on first use and rolling over at UTC midnight."""
+    global _daily
+    if not _daily["date"]:
+        try:
+            _daily = json.loads(_daily_usage_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _daily = {"date": "", "input": 0, "output": 0}
+    if _daily.get("date") != _today():
+        _daily = {"date": _today(), "input": 0, "output": 0}
+    return _daily
+
+
+def daily_tokens_used() -> int:
+    d = _daily_state()
+    return int(d["input"]) + int(d["output"])
+
+
+def budget_exhausted() -> bool:
+    cap = settings.llm_daily_token_cap
+    return cap > 0 and daily_tokens_used() >= cap
+
+
+def seconds_until_budget_reset() -> int:
+    now = datetime.now(UTC)
+    midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(int((midnight - now).total_seconds()), 1)
+
+
+def _record_usage(input_tokens: int, output_tokens: int) -> None:
+    global _total_input_tokens, _total_output_tokens
+    _total_input_tokens += input_tokens
+    _total_output_tokens += output_tokens
+    d = _daily_state()
+    d["input"] = int(d["input"]) + input_tokens
+    d["output"] = int(d["output"]) + output_tokens
+    try:
+        _daily_usage_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _daily_usage_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d), encoding="utf-8")
+        tmp.replace(_daily_usage_path)
+    except OSError:
+        logger.warning("Could not persist LLM usage counters", exc_info=True)
 
 
 def _get_provider() -> str:
@@ -97,9 +157,12 @@ async def chat_completion(
     max_tokens: int | None = None,
 ) -> str:
     """Send messages to LLM (Anthropic or OpenAI) and return the text response."""
-    global _total_input_tokens, _total_output_tokens
-
     _check_circuit_breaker()
+    if budget_exhausted():
+        raise LLMBudgetError(
+            f"Daily LLM token cap reached ({settings.llm_daily_token_cap}); "
+            f"resets in {seconds_until_budget_reset()}s"
+        )
     provider = _get_provider()
 
     if provider == "openai":
@@ -122,8 +185,7 @@ async def chat_completion(
 
         # Track token usage
         if hasattr(response, "usage") and response.usage:
-            _total_input_tokens += response.usage.input_tokens
-            _total_output_tokens += response.usage.output_tokens
+            _record_usage(response.usage.input_tokens, response.usage.output_tokens)
             logger.info(
                 "LLM tokens: in=%d out=%d (total: in=%d out=%d)",
                 response.usage.input_tokens, response.usage.output_tokens,
@@ -148,7 +210,6 @@ async def _openai_completion(
     max_tokens: int | None = None,
 ) -> str:
     """OpenAI fallback completion."""
-    global _total_input_tokens, _total_output_tokens
     client = _get_openai_client()
 
     oai_messages = []
@@ -166,8 +227,7 @@ async def _openai_completion(
         _record_success()
 
         if response.usage:
-            _total_input_tokens += response.usage.prompt_tokens
-            _total_output_tokens += response.usage.completion_tokens
+            _record_usage(response.usage.prompt_tokens, response.usage.completion_tokens)
             logger.info(
                 "OpenAI tokens: in=%d out=%d (total: in=%d out=%d)",
                 response.usage.prompt_tokens, response.usage.completion_tokens,
@@ -207,6 +267,9 @@ def get_llm_usage() -> dict[str, Any]:
         "circuit_breaker_open": _circuit_open_until > 0 and time.monotonic() < _circuit_open_until,
         "consecutive_failures": _consecutive_failures,
         "api_key_configured": bool(settings.anthropic_api_key),
+        "daily_tokens_used": daily_tokens_used(),
+        "daily_token_cap": settings.llm_daily_token_cap or None,
+        "budget_exhausted": budget_exhausted(),
     }
 
 

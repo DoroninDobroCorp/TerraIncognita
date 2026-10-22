@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.models.place import Place, PlaceCategory
-
 
 # ── Story 2.1 + 2.5: Natural Language Discovery ─────────────────
 

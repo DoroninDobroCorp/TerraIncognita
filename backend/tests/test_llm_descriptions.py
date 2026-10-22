@@ -15,7 +15,6 @@ from app.services.llm_descriptions import (
     generate_description,
 )
 
-
 # ── Parse Description Response ───────────────────────────────
 
 
@@ -162,7 +161,7 @@ Visit during daylight. Bring a flashlight."""
             new_callable=AsyncMock,
             return_value="DESCRIPTION:\nОписание.\n\nPRACTICAL:\nСовет.",
         ) as mock_llm:
-            result = await generate_description(desc_request)
+            await generate_description(desc_request)
             call_args = mock_llm.call_args
             messages = call_args.kwargs.get("messages") or call_args[1].get("messages")
             prompt_text = messages[0]["content"]

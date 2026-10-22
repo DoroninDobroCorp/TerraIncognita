@@ -15,7 +15,6 @@ from app.services.llm_discovery import (
     process_chat,
 )
 
-
 # ── Fallback Intent Tests ──────────────────────────────────────
 
 
@@ -220,7 +219,7 @@ class TestProcessChat:
             "app.services.llm_discovery.discover",
             new_callable=AsyncMock,
         ) as mock_discover:
-            from app.models.place import Coordinates, DiscoverResponse, Place, PlaceSource
+            from app.models.place import DiscoverResponse
             mock_discover.return_value = DiscoverResponse(
                 places=[], total=0, has_more=False,
             )

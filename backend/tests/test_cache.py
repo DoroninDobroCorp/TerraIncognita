@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import tempfile
 import time
-from pathlib import Path
 
 import pytest
 
@@ -64,3 +61,21 @@ async def test_corrupted_cache_file(temp_cache):
     result = await temp_cache.get("bad")
     assert result is None
     assert not path.exists()  # should be cleaned up
+
+
+@pytest.mark.asyncio
+async def test_ttl_zero_never_expires(tmp_path, monkeypatch):
+    import time as _time
+
+    cache = DiskCache(cache_dir=str(tmp_path), ttl=0)
+    await cache.set("k", {"v": 1})
+    real = _time.time()
+    monkeypatch.setattr("app.services.cache.time.time", lambda: real + 10 * 365 * 86400)
+    assert await cache.get("k") == {"v": 1}
+
+
+@pytest.mark.asyncio
+async def test_set_leaves_no_tmp_files(tmp_path):
+    cache = DiskCache(cache_dir=str(tmp_path), ttl=60)
+    await cache.set("k", "v")
+    assert [p.suffix for p in tmp_path.iterdir()] == [".json"]

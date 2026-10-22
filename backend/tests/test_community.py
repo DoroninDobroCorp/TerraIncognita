@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from app.models.community import (
-    CommunityPlace,
     ConfirmPlaceRequest,
     ConsentRequest,
-    ContributorKarma,
-    ExplorerFollow,
     ModerationStatus,
-    PublishedRoute,
-    Review,
     ReviewType,
 )
 from app.services.community import (
@@ -215,7 +207,7 @@ class TestVoting:
 
     @pytest.mark.asyncio
     async def test_reviews_sorted_by_score(self, community_service):
-        r1 = await community_service.create_review(
+        await community_service.create_review(
             place_id="place1", author_id="a1", text="OK",
         )
         r2 = await community_service.create_review(
@@ -415,6 +407,7 @@ class TestCommunityAPI:
         monkeypatch.setattr("app.services.community._community_service", None)
         monkeypatch.setattr("app.config.settings.community_data_dir", str(tmp_path))
         from fastapi.testclient import TestClient
+
         from app.main import app
         return TestClient(app)
 
@@ -701,6 +694,7 @@ class TestAPIIteration2:
         monkeypatch.setattr("app.services.community._community_service", None)
         monkeypatch.setattr("app.config.settings.community_data_dir", str(tmp_path))
         from fastapi.testclient import TestClient
+
         from app.main import app
         return TestClient(app)
 

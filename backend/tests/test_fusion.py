@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
-from app.services.fusion import fuse_places, _compute_confidence
+from app.services.fusion import _compute_confidence, fuse_places
 
 
 def _make_place(
@@ -74,14 +74,14 @@ class TestFusion:
     def test_confidence_multi_source(self):
         p = _make_place("a", name="X", description="Y", photos=["url"])
         conf = _compute_confidence(p, source_count=3)
-        # source: 0.3*(3/3) = 0.3, photos: 0.3*1 = 0.3, desc: 0.2*1 = 0.2, fresh: 0.2*0.8 = 0.16
-        assert conf == pytest.approx(0.96, abs=0.01)
+        # source 0.20*1 + photos 0.15 + desc 0.15 + fresh 0.10*0.8 + tags 0 + cat 0.25*0.3 (default)
+        assert conf == pytest.approx(0.655, abs=0.01)
 
     def test_confidence_single_source_no_data(self):
         p = _make_place("a")
         conf = _compute_confidence(p, source_count=1)
-        # source: 0.3*(1/3) = 0.1, photos: 0, desc: 0, fresh: 0.16
-        assert conf == pytest.approx(0.26, abs=0.01)
+        # source 0.20/3 + fresh 0.10*0.8 + cat 0.25*0.3 (default)
+        assert conf == pytest.approx(0.222, abs=0.01)
 
     def test_single_place_not_duplicated(self):
         p1 = _make_place("only_one")

@@ -29,10 +29,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
     try:
         result = await process_chat(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("Chat pipeline error")
-        raise HTTPException(status_code=500, detail="Chat pipeline failed")
+        raise HTTPException(status_code=500, detail="Chat pipeline failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(

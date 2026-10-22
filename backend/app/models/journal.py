@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.models.place import Coordinates, PlaceCategory
-
+from app.models.place import Coordinates
 
 # ── Story 5.1: Visit Tracking ───────────────────────────────────
 

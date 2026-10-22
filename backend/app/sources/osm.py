@@ -6,10 +6,7 @@ normalises them into the unified Place model.
 
 from __future__ import annotations
 
-import hashlib
 import logging
-
-import httpx
 
 from app.config import settings
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource

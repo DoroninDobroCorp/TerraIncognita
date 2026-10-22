@@ -7,7 +7,6 @@ import pytest
 from app.models.place import PlaceCategory, PlaceSource
 from app.sources.wikidata import WikidataSource
 
-
 _SPARQL_RESPONSE = {
     "results": {
         "bindings": [

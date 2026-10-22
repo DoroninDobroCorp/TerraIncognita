@@ -425,7 +425,6 @@ def _generate_qr_data_uri(url: str) -> str:
     The data URI encodes a small SVG that can be rendered in browsers
     or saved as an image.
     """
-    import base64
     import urllib.parse
 
     # Create a simple SVG-based QR placeholder that embeds the URL

@@ -14,8 +14,8 @@ from app.models.community import (
     KarmaResponse,
     ModerationStatus,
     PlaceSummary,
-    PublishRouteRequest,
     PublishedRouteListResponse,
+    PublishRouteRequest,
     RateRouteRequest,
     ReportOutdatedRequest,
     ReviewListResponse,
@@ -57,7 +57,7 @@ async def confirm_place(place_id: str, req: ConfirmPlaceRequest):
     try:
         return await svc.confirm_place(place_id, req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/places", response_model=CommunityPlaceListResponse)
@@ -90,7 +90,7 @@ async def suggest_osm(place_id: str):
     try:
         return await svc.suggest_osm(place_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.patch("/places/{place_id}")
@@ -102,7 +102,7 @@ async def update_place(place_id: str, req: UpdatePlaceRequest, author_id: str = 
     try:
         return await svc.update_place(place_id, author_id, **req.model_dump(exclude_none=True))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/places/{place_id}")
@@ -115,7 +115,7 @@ async def delete_place(place_id: str, author_id: str = ""):
         await svc.delete_place(place_id, author_id)
         return {"status": "deleted"}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/places/{place_id}/summary", response_model=PlaceSummary)
@@ -173,7 +173,7 @@ async def vote_review(review_id: str, req: VoteRequest):
     try:
         return await svc.vote_review(review_id, req.user_id, req.upvote)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.patch("/reviews/{review_id}")
@@ -185,7 +185,7 @@ async def update_review(review_id: str, req: UpdateReviewRequest, author_id: str
     try:
         return await svc.update_review(review_id, author_id, **req.model_dump(exclude_none=True))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/reviews/{review_id}")
@@ -198,7 +198,7 @@ async def delete_review(review_id: str, author_id: str = ""):
         await svc.delete_review(review_id, author_id)
         return {"status": "deleted"}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/reviews/{review_id}/report-outdated")
@@ -208,7 +208,7 @@ async def report_outdated(review_id: str, req: ReportOutdatedRequest):
     try:
         return await svc.report_outdated(review_id, req.user_id, req.reason)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── Story 8.3: Social Routes ────────────────────────────────────
@@ -263,7 +263,7 @@ async def rate_route(route_id: str, req: RateRouteRequest):
     try:
         return await svc.rate_route(route_id, req.user_id, req.score, req.comment)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # ── Follow System ────────────────────────────────────────────────
@@ -276,7 +276,7 @@ async def follow_explorer(req: FollowRequest):
     try:
         return await svc.follow(req.follower_id, req.following_id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/follow/consent")
@@ -286,7 +286,7 @@ async def grant_consent(req: ConsentRequest):
     try:
         return await svc.grant_consent(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/follow/{follower_id}/{following_id}")

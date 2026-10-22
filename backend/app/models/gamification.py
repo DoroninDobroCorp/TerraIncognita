@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ── Story 6.1: Fog of War Mechanics ─────────────────────────────
 

@@ -39,9 +39,9 @@ async def create_route(req: RouteRequest) -> RouteResponse:
     t0 = time.monotonic()
     try:
         result = await build_route(req)
-    except Exception:
+    except Exception as exc:
         logger.exception("Route building error")
-        raise HTTPException(status_code=500, detail="Route building failed")
+        raise HTTPException(status_code=500, detail="Route building failed") from exc
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(
         "POST /api/route → %d waypoints in %.0fms",
@@ -61,9 +61,9 @@ async def create_explore_route(req: ExploreRouteRequest) -> RouteResponse:
     t0 = time.monotonic()
     try:
         result = await build_explore_route(req)
-    except Exception:
+    except Exception as exc:
         logger.exception("Explore route building error")
-        raise HTTPException(status_code=500, detail="Explore route building failed")
+        raise HTTPException(status_code=500, detail="Explore route building failed") from exc
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(
         "POST /api/route/explore → %d waypoints in %.0fms",
@@ -88,9 +88,9 @@ async def export_route(req: RouteExportRequest) -> RouteExportResponse:
             raise HTTPException(status_code=400, detail=f"Unsupported format: {req.format}")
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         logger.exception("Route export error")
-        raise HTTPException(status_code=500, detail="Route export failed")
+        raise HTTPException(status_code=500, detail="Route export failed") from exc
 
     timestamp = req.route.created_at.strftime("%Y%m%d_%H%M%S")
     filename = f"terra_incognita_route_{timestamp}.{req.format}"
@@ -113,8 +113,8 @@ async def reorder_route(req: RouteReorderRequest) -> RouteResponse:
     try:
         result = reorder_waypoints(req.route, req.waypoint_order)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
         logger.exception("Route reorder error")
-        raise HTTPException(status_code=500, detail="Route reorder failed")
+        raise HTTPException(status_code=500, detail="Route reorder failed") from exc
     return result

@@ -126,7 +126,6 @@ async def classify_place_llm(place: Place) -> Place:
     """LLM-based classification fallback for places the rule engine couldn't classify."""
     from app.services.llm_client import chat_completion
 
-    text = _searchable_text(place)
     tags_str = ", ".join(place.tags[:15]) if place.tags else "none"
     meta_str = ""
     if "osm_tags" in place.metadata:

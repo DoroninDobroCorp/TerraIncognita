@@ -15,10 +15,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import uuid
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.config import settings
@@ -41,6 +40,7 @@ from app.models.gamification import (
     XpEventResponse,
 )
 from app.models.journal import PlaceNote, Visit, VisitStatus
+from app.utils.geo import haversine_distance_m as _haversine_m
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +145,6 @@ def _cell_coords(key: str) -> tuple[float, float]:
     return float(parts[0]), float(parts[1])
 
 
-def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lng2 - lng1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def _cells_in_radius(lat: float, lng: float, radius_m: float) -> list[str]:
@@ -233,7 +226,7 @@ async def get_fog_region(
 
     # Count explored cells in region
     explored = 0
-    for key, cell in _fog_cells.items():
+    for cell in _fog_cells.values():
         dist = _haversine_m(lat, lng, cell.lat, cell.lng)
         if dist <= radius_m:
             explored += 1
@@ -661,7 +654,6 @@ async def check_achievements(
                     unlocked_at=now,
                 ))
             elif not completed and not existing:
-                progress = (current / ach_def.condition_value * 100) if ach_def.condition_value > 0 else 0
                 _achievements[ach_def.id] = UserAchievement(
                     achievement_id=ach_def.id,
                     progress=min(current / ach_def.condition_value, 0.99) if ach_def.condition_value > 0 else 0,

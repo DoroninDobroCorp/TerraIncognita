@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.classifier import classify_place, classify_places
 

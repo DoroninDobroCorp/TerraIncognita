@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
+from app.middleware import limiter
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """The limiter is process-global; without a reset, tests starve each other."""
+    limiter.reset()
+    yield
 
 
 @pytest.fixture

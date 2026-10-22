@@ -9,11 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.journal import (
-    ExplorationStats,
     PlaceRating,
-    Trip,
-    Visit,
-    VisitStatus,
 )
 from app.services.journal import _reset_store
 

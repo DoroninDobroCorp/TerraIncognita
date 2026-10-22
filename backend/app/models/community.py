@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from app.models.place import Coordinates, PlaceCategory
 
-
 # ── Story 8.1: User-Submitted Places ────────────────────────────
 
 

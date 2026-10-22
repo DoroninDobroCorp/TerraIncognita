@@ -85,7 +85,8 @@ async def get_recommendations(req: RecommendationRequest) -> RecommendationRespo
     )
 
     result = await discover(discover_req)
-    candidates = result.places
+    disliked = set(req.preferences.disliked_place_ids)
+    candidates = [p for p in result.places if p.id not in disliked]
 
     if not candidates:
         return RecommendationResponse(
@@ -142,6 +143,10 @@ def _rule_based_ranking(
     prefs = req.preferences
     fav_set = set(prefs.favorite_categories) if prefs.favorite_categories else None
     liked_set = set(prefs.liked_place_ids)
+    disliked_set = set(prefs.disliked_place_ids)
+    candidates = [p for p in candidates if p.id not in disliked_set]
+    # Categories of places the user already liked: similar finds get a nudge
+    liked_categories = {c for p in candidates if p.id in liked_set for c in p.categories}
 
     scored: list[RecommendedPlace] = []
     category_counts: dict[str, int] = {}
@@ -156,6 +161,13 @@ def _rule_based_ranking(
             if overlap:
                 score += 0.2 * len(overlap)
                 reasons.append(f"matches your interest in {', '.join(c.value for c in overlap)}")
+
+        # Boost categories the user liked before (but not the liked places themselves)
+        if liked_categories and place.id not in liked_set:
+            liked_overlap = set(place.categories) & liked_categories
+            if liked_overlap:
+                score += 0.1
+                reasons.append("similar to places you liked")
 
         # Boost unusual places (core value prop)
         if place.is_unusual:

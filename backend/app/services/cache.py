@@ -18,8 +18,9 @@ class DiskCache:
     """Simple file-system cache. Each entry is a JSON file with metadata."""
 
     def __init__(self, cache_dir: str | None = None, ttl: int | None = None) -> None:
+        """``ttl`` in seconds; ``None`` = default from settings, ``0`` = never expires."""
         self._dir = Path(cache_dir or settings.cache_dir)
-        self._ttl = ttl or settings.cache_ttl_seconds
+        self._ttl = settings.cache_ttl_seconds if ttl is None else ttl
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
@@ -32,7 +33,7 @@ class DiskCache:
             return None
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            if time.time() - raw.get("ts", 0) > self._ttl:
+            if self._ttl and time.time() - raw.get("ts", 0) > self._ttl:
                 path.unlink(missing_ok=True)
                 return None
             return raw["data"]
@@ -43,7 +44,9 @@ class DiskCache:
     async def set(self, key: str, data: Any) -> None:
         path = self._path(key)
         payload = {"ts": time.time(), "key": key, "data": data}
-        path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+        tmp.replace(path)  # atomic: readers never see a half-written entry
 
     async def invalidate(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

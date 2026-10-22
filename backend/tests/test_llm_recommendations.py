@@ -153,6 +153,36 @@ class TestRuleBasedRanking:
         assert ranked == []
 
 
+class TestLikedAndDisliked:
+    def test_disliked_places_are_never_recommended(self):
+        candidates = [
+            _make_place("p1", "Fort", [PlaceCategory.MILITARY]),
+            _make_place("p2", "Cave", [PlaceCategory.CAVE]),
+        ]
+        req = RecommendationRequest(
+            lat=42.65, lng=18.09, radius_km=5.0,
+            preferences=UserPreferences(disliked_place_ids=["p1"]),
+        )
+        ranked = _rule_based_ranking(candidates, req)
+        assert [r.place.id for r in ranked] == ["p2"]
+
+    def test_liked_categories_boost_similar_places(self):
+        candidates = [
+            _make_place("liked", "Old Mill", [PlaceCategory.RUINS], confidence=0.5),
+            _make_place("similar", "Old Wall", [PlaceCategory.RUINS], confidence=0.5),
+            _make_place("other", "Cafe", [PlaceCategory.RESTAURANT_NOTABLE], confidence=0.5),
+        ]
+        req = RecommendationRequest(
+            lat=42.65, lng=18.09, radius_km=5.0,
+            preferences=UserPreferences(liked_place_ids=["liked"]),
+        )
+        by_id = {r.place.id: r for r in _rule_based_ranking(candidates, req)}
+        assert by_id["similar"].relevance_score > by_id["other"].relevance_score
+        assert "similar to places you liked" in by_id["similar"].reason
+        # The liked place itself gets no "similar" boost
+        assert "similar to places you liked" not in by_id["liked"].reason
+
+
 # ── Full Recommendation Pipeline ─────────────────────────────
 
 

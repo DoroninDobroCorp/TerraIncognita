@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.models.place import PlaceCategory, PlaceSource
 from app.sources.atlas_obscura import AtlasObscuraSource
-
 
 _API_RESPONSE = {
     "places": [

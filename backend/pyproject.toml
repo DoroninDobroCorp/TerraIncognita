@@ -1,7 +1,8 @@
 [project]
 name = "terra-incognita-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "Discovery Engine for Terra Incognita — AI-powered exploration companion"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110.0",
@@ -14,11 +15,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# OpenAI is an alternative LLM provider (TERRA_LLM_PROVIDER=openai)
+openai = ["openai>=1.30.0"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-httpx>=0.30.0",
     "ruff>=0.3.0",
+    "openai>=1.30.0",
 ]
 
 [tool.pytest.ini_options]
@@ -30,7 +34,15 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = ["E", "F", "I", "N", "W", "UP", "B"]
+ignore = [
+    "E501",    # long lines are mostly data tables (category styles, prompts)
+    "UP042",   # `str, Enum` is kept: members must compare/serialise as plain strings
+    "B008",    # FastAPI Depends()/Query() defaults are idiomatic
+]
 
-[tool.setuptools]
-packages = ["app"]
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "E741"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

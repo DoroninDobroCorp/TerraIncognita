@@ -28,14 +28,23 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     llm_provider: str = "anthropic"  # 'anthropic' or 'openai'
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "claude-sonnet-5-5"  # cheaper option: claude-haiku-5-5
     openai_model: str = "gpt-4.1-mini"
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.7
     llm_description_temperature: float = 0.8
-    llm_cache_ttl_seconds: int = 604800  # 7 days for generated descriptions
+    llm_cache_ttl_seconds: int = 604800  # 7 days for generated descriptions; 0 = keep forever
+    llm_daily_token_cap: int = 0  # input+output tokens per UTC day across all LLM calls; 0 = off
     llm_max_conversation_turns: int = 20
     llm_timeout: int = 30
+
+    # HTTP / security
+    cors_origins: str = "*"  # comma-separated origins; "*" allows any (credentials are then off)
+    trusted_proxy_hops: int = 0  # reverse proxies in front (nginx = 1): trust X-Forwarded-For
+    rate_limit_enabled: bool = True
+    block_scanner_paths: bool = True  # short-circuit /.env, /wp-admin, ... with a bare 404
+    security_headers_enabled: bool = True
+    csp: str = "default"  # "default" = built-in policy, "" = disabled, anything else = verbatim
 
     # API
     default_radius_km: float = 5.0
