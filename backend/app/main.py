@@ -18,6 +18,7 @@ from app.api.descriptions import router as descriptions_router
 from app.api.discover import router as discover_router
 from app.api.gamification import router as gamification_router
 from app.api.journal import router as journal_router
+from app.api.loop_route import router as loop_route_router
 from app.api.map_config import router as map_config_router
 from app.api.offline import router as offline_router
 from app.api.place_collections import router as place_collections_router
@@ -84,6 +85,7 @@ app.include_router(storytelling_router)
 app.include_router(offline_router)
 app.include_router(community_router)
 app.include_router(daily_router)
+app.include_router(loop_route_router)
 app.include_router(place_collections_router)
 app.include_router(streak_router)
 

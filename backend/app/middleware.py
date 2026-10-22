@@ -52,7 +52,7 @@ RATE_RULES: tuple[RateRule, ...] = (
     ),
     RateRule(
         "discovery", limit=60, methods=_POST,
-        exact=frozenset({"/api/discover", "/api/route", "/api/route/explore"}),
+        exact=frozenset({"/api/discover", "/api/route", "/api/route/explore", "/api/route/loop"}),
     ),
     RateRule("journal", limit=120, prefixes=("/api/visits", "/api/trips")),
     RateRule(
