@@ -15,6 +15,7 @@ from app.api.chat import router as chat_router
 from app.api.community import router as community_router
 from app.api.descriptions import router as descriptions_router
 from app.api.discover import router as discover_router
+from app.api.enrich import router as enrich_router
 from app.api.gamification import router as gamification_router
 from app.api.journal import router as journal_router
 from app.api.map_config import router as map_config_router
@@ -70,6 +71,7 @@ app.add_middleware(
 app.add_middleware(ScannerBlockMiddleware)
 
 app.include_router(discover_router)
+app.include_router(enrich_router)
 app.include_router(routes_router)
 app.include_router(journal_router)
 app.include_router(gamification_router)

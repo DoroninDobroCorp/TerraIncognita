@@ -6,7 +6,7 @@ import enum
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PlaceCategory(str, enum.Enum):
@@ -146,6 +146,12 @@ class EnrichRequest(BaseModel):
     lng: float = Field(..., ge=-180, le=180)
     wikidata_id: str | None = Field(None, pattern=r"^Q[1-9]\d{0,11}$")
     lang: str = Field("en", pattern=r"^[a-z]{2,3}$")
+
+    @field_validator("name")
+    @classmethod
+    def _blank_name_is_none(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
 
 
 class EnrichedPhoto(BaseModel):
