@@ -166,3 +166,15 @@ def clean_field(text: object, max_len: int) -> str:
     text = _ANGLE_BRACKETS.sub(" ", text)
     text = _WHITESPACE.sub(" ", text).strip()
     return text[:max_len].strip()
+
+
+def trim_to_sentence(text: str, limit: int) -> str:
+    """Cap ``text`` at ``limit`` characters, preferring to end on a sentence boundary."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(mark) for mark in (".", "!", "?", "…", "。"))
+    if end >= limit // 2:
+        return cut[: end + 1]
+    return cut.rstrip() + "…"
