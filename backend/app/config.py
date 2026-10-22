@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     route_cycling_speed_kmh: float = 15.0
     route_driving_speed_kmh: float = 40.0
 
+    # Daily place, loop routes, ask-the-place
+    daily_top_k: int = 5  # the day's pick is chosen among the K best-ranked candidates
+    daily_story_max_tokens: int = 400
+    loop_safety_margin: float = 0.10  # fraction of a loop's time budget kept in reserve
+    place_ask_max_tokens: int = 500
+    place_ask_cache_ttl_seconds: int = 604800  # 7 days
+
     # Deep Research (enrichment layer)
     parallel_api_key: str = ""
     parallel_api_url: str = "https://api.parallel.ai/v1/tasks/runs"
