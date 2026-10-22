@@ -63,3 +63,26 @@ def sanitize_for_log(text: str, max_length: int = 200) -> str:
     if len(text) > max_length:
         text = text[:max_length] + "..."
     return text
+
+
+_URL_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
+_URL_BAD_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def sanitize_url(url: object, max_length: int = 2000) -> str | None:
+    """Return ``url`` (stripped) if it is safe to store and later emit as ``href``/``src``.
+
+    Allowed: ``http:``/``https:`` URLs and scheme-less values (relative paths, bare file
+    names). Everything with another scheme (``javascript:``, ``data:``, ``vbscript:``,
+    ``file:`` ...) is refused, as is anything containing control characters, which browsers
+    strip inside URLs (``java\\tscript:``). Returns ``None`` when the value is not acceptable.
+    """
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    if not url or len(url) > max_length or _URL_BAD_CHARS_RE.search(url):
+        return None
+    scheme = _URL_SCHEME_RE.match(url)
+    if scheme and scheme.group(0).lower() not in ("http:", "https:"):
+        return None
+    return url

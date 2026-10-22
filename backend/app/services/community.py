@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +34,7 @@ from app.models.community import (
 )
 from app.models.place import Coordinates
 from app.utils.atomic_io import atomic_write_text, load_json_file, quarantine_corrupt
-from app.utils.sanitize import sanitize_user_input
+from app.utils.sanitize import sanitize_url, sanitize_user_input
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +48,86 @@ KARMA_REVIEW_WRITTEN = 3
 KARMA_HELPFUL_VOTE = 1
 KARMA_ROUTE_PUBLISHED = 5
 
-# Per-user submission limits (per day)
+# Per-user submission limits (per UTC day). Deleting content does not refund the quota.
 MAX_PLACES_PER_USER_PER_DAY = 10
 MAX_REVIEWS_PER_USER_PER_PLACE = 1
+MAX_REVIEWS_PER_USER_PER_DAY = 50
+MAX_ROUTES_PER_USER_PER_DAY = 10
+
+# Global capacity (each save rewrites the whole store, so the files must stay small)
+MAX_PLACES_TOTAL = 20_000
+MAX_REVIEWS_TOTAL = 50_000
+MAX_ROUTES_TOTAL = 10_000
+MAX_FOLLOWS_TOTAL = 50_000
 
 # Duplicate detection: places within this distance (degrees ~100m) are duplicates
 DUPLICATE_DISTANCE_DEG = 0.001
+
+# visit_date is a short free-text recency label ("January 2026"); the UI prints it as-is
+_VISIT_DATE_RE = re.compile(r"^[\w .,/\-]{0,50}$")
+
+_PLACE_EDITABLE = ("name", "description", "categories", "photos", "tags")
+_REVIEW_EDITABLE = ("text", "photos", "visit_date")
+
+_KARMA_COUNTERS = {
+    "place_submitted": "places_submitted",
+    "place_confirmed": "places_confirmed",
+    "review_written": "reviews_written",
+    "helpful_vote": "helpful_votes_received",
+    "route_published": "routes_published",
+}
+
+
+class CommunityError(ValueError):
+    """Base class: a request the service refuses (subclasses carry the HTTP meaning)."""
+
+
+class NotFoundError(CommunityError):
+    """The referenced object does not exist (404)."""
+
+
+class ForbiddenError(CommunityError):
+    """Not allowed for this user, e.g. editing someone else's content (403)."""
+
+
+class ConflictError(CommunityError):
+    """Conflicts with the current state: duplicate, already moderated (409)."""
+
+
+class QuotaError(CommunityError):
+    """A per-user daily quota is used up (429)."""
+
+
+class CapacityError(CommunityError):
+    """The global capacity of the store is reached (507)."""
+
+
+def _same_user(a: str, b: str) -> bool:
+    """User ids are client-chosen; do not let ' Alice' and 'alice' pass for different people."""
+    return a.strip().casefold() == b.strip().casefold()
+
+
+def _norm_name(name: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", name).casefold().split())
+
+
+def _clean_photos(photos: list[str]) -> list[str]:
+    clean: list[str] = []
+    for url in photos:
+        safe = sanitize_url(url)
+        if safe is None:
+            raise ValueError("photo URLs must be http(s) links or relative paths")
+        clean.append(safe)
+    return clean
+
+
+def _clean_visit_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = sanitize_user_input(value)
+    if not _VISIT_DATE_RE.match(value):
+        raise ValueError("visit_date may only contain letters, digits, spaces and . , / -")
+    return value
 
 
 class CommunityService:
@@ -66,6 +142,9 @@ class CommunityService:
         self._routes: dict[str, dict] = {}
         self._karma: dict[str, dict] = {}
         self._follows: dict[str, dict] = {}
+        # Daily submission counters per user ({"date": ..., "place": n, "review": n, "route": n}).
+        # Kept separately from the content so that deleting content does not refund the quota.
+        self._quotas: dict[str, dict] = {}
 
         self._loaded = False
         self._write_lock = asyncio.Lock()
@@ -81,6 +160,13 @@ class CommunityService:
         self._routes = self._load_store("routes.json", PublishedRoute)
         self._karma = self._load_store("karma.json", ContributorKarma)
         self._follows = self._load_store("follows.json", ExplorerFollow)
+        quotas = load_json_file(self._data_dir / "quotas.json")
+        today = self._today()
+        if isinstance(quotas, dict):
+            self._quotas = {
+                uid: q for uid, q in quotas.items()
+                if isinstance(q, dict) and q.get("date") == today
+            }
 
     def _load_store(self, filename: str, model: type[BaseModel]) -> dict[str, dict]:
         """Load one store file. Records failing validation are skipped (one bad record must
@@ -124,6 +210,31 @@ class CommunityService:
     def _save_follows(self) -> None:
         self._atomic_write("follows.json", self._follows)
 
+    def _save_quotas(self) -> None:
+        today = self._today()
+        self._quotas = {u: q for u, q in self._quotas.items() if q.get("date") == today}
+        self._atomic_write("quotas.json", self._quotas)
+
+    # ── Quotas ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now(UTC).date().isoformat()
+
+    def _quota_used(self, user_id: str, kind: str) -> int:
+        q = self._quotas.get(user_id)
+        if not q or q.get("date") != self._today():
+            return 0
+        return int(q.get(kind, 0))
+
+    def _quota_bump(self, user_id: str, kind: str) -> None:
+        today = self._today()
+        q = self._quotas.get(user_id)
+        if not q or q.get("date") != today:
+            q = {"date": today}
+            self._quotas[user_id] = q
+        q[kind] = int(q.get(kind, 0)) + 1
+
     # ── Karma helpers ────────────────────────────────────────────
 
     def _get_or_create_karma(self, user_id: str) -> ContributorKarma:
@@ -133,24 +244,23 @@ class CommunityService:
             self._karma[user_id] = karma.model_dump(mode="json")
         return ContributorKarma(**self._karma[user_id])
 
-    def _award_karma(self, user_id: str, amount: int, reason: str) -> ContributorKarma:
+    def _adjust_karma(self, user_id: str, amount: int, reason: str, sign: int) -> ContributorKarma:
         karma = self._get_or_create_karma(user_id)
-        karma.karma += amount
+        karma.karma = max(0, karma.karma + sign * amount)
         karma.updated_at = datetime.now(UTC)
-
-        if reason == "place_submitted":
-            karma.places_submitted += 1
-        elif reason == "place_confirmed":
-            karma.places_confirmed += 1
-        elif reason == "review_written":
-            karma.reviews_written += 1
-        elif reason == "helpful_vote":
-            karma.helpful_votes_received += 1
-        elif reason == "route_published":
-            karma.routes_published += 1
-
+        counter = _KARMA_COUNTERS.get(reason)
+        if counter:
+            setattr(karma, counter, max(0, getattr(karma, counter) + sign))
         self._karma[user_id] = karma.model_dump(mode="json")
         return karma
+
+    def _award_karma(self, user_id: str, amount: int, reason: str) -> ContributorKarma:
+        return self._adjust_karma(user_id, amount, reason, +1)
+
+    def _revoke_karma(self, user_id: str, amount: int, reason: str) -> None:
+        """Take back karma that was granted for content that no longer exists."""
+        if user_id in self._karma:
+            self._adjust_karma(user_id, amount, reason, -1)
 
     # ── Story 8.1: User-Submitted Places ─────────────────────────
 
@@ -173,27 +283,39 @@ class CommunityService:
             name = sanitize_user_input(name)
             description = sanitize_user_input(description)
             tags = [sanitize_user_input(t) for t in tags]
+            photos = _clean_photos(photos)
 
-            # Per-user daily submission limit
-            today = datetime.now(UTC).date().isoformat()
-            user_places_today = sum(
-                1 for d in self._places.values()
-                if d.get("submitted_by") == author_id
-                and d.get("created_at", "")[:10] == today
+            if len(self._places) >= MAX_PLACES_TOTAL:
+                raise CapacityError("Community capacity reached: no more places can be submitted")
+
+            # Per-user daily submission limit. The ledger survives deletion of the place, so
+            # submit + delete cycles cannot be used to dodge it (or to farm karma).
+            today = self._today()
+            user_places_today = max(
+                self._quota_used(author_id, "place"),
+                sum(
+                    1 for d in self._places.values()
+                    if d.get("submitted_by") == author_id
+                    and d.get("created_at", "")[:10] == today
+                ),
             )
             if user_places_today >= MAX_PLACES_PER_USER_PER_DAY:
-                raise ValueError(f"Daily submission limit ({MAX_PLACES_PER_USER_PER_DAY}) reached")
+                raise QuotaError(f"Daily submission limit ({MAX_PLACES_PER_USER_PER_DAY}) reached")
 
-            # Duplicate detection: check for nearby places with similar names
+            # Duplicate detection: check for nearby places with the same (normalised) name
+            wanted = _norm_name(name)
             for existing in self._places.values():
                 coords = existing.get("coordinates", {})
                 elat = coords.get("lat", 0)
                 elng = coords.get("lng", 0)
                 if (abs(elat - lat) < DUPLICATE_DISTANCE_DEG
                         and abs(elng - lng) < DUPLICATE_DISTANCE_DEG):
-                    ename = existing.get("name", "").lower()
-                    if ename and ename == name.lower():
-                        raise ValueError(f"Duplicate place: a place named '{existing.get('name')}' already exists at these coordinates")
+                    ename = _norm_name(existing.get("name", ""))
+                    if ename and ename == wanted:
+                        raise ConflictError(
+                            f"Duplicate place: a place named '{existing.get('name')}' "
+                            "already exists at these coordinates"
+                        )
 
             place_id = f"community_{uuid.uuid4().hex[:12]}"
             place = CommunityPlace(
@@ -208,8 +330,10 @@ class CommunityService:
             )
             self._places[place_id] = place.model_dump(mode="json")
             self._award_karma(author_id, KARMA_PLACE_SUBMITTED, "place_submitted")
+            self._quota_bump(author_id, "place")
             self._save_places()
             self._save_karma()
+            self._save_quotas()
             logger.info("Place submitted: %s by %s", place_id, author_id)
             return place
 
@@ -218,12 +342,15 @@ class CommunityService:
         async with self._write_lock:
             self._ensure_loaded()
             if place_id not in self._places:
-                raise ValueError(f"Place {place_id} not found")
+                raise NotFoundError(f"Place {place_id} not found")
 
             place = CommunityPlace(**self._places[place_id])
 
-            if place.submitted_by == req.user_id:
-                raise ValueError("Cannot confirm your own submission")
+            if _same_user(place.submitted_by, req.user_id):
+                raise ForbiddenError("Cannot confirm your own submission")
+            if place.moderation_status != ModerationStatus.PENDING:
+                # The outcome is final: later votes must not flip it or pay the submitter again.
+                raise ConflictError(f"Place has already been moderated ({place.moderation_status.value})")
 
             if req.confirm:
                 if req.user_id not in place.confirmations:
@@ -234,7 +361,7 @@ class CommunityService:
 
                 if len(place.confirmations) >= MODERATION_CONFIRMATIONS_REQUIRED:
                     place.moderation_status = ModerationStatus.CONFIRMED
-                    # Award karma to submitter for confirmed place
+                    # Award karma to submitter for confirmed place (exactly once: PENDING -> CONFIRMED)
                     self._award_karma(place.submitted_by, KARMA_PLACE_CONFIRMED, "place_confirmed")
                     self._save_karma()
             else:
@@ -278,15 +405,18 @@ class CommunityService:
 
         places.sort(key=lambda p: p.created_at, reverse=True)
         total = len(places)
+        offset, limit = max(0, offset), max(0, limit)
         return places[offset: offset + limit], total
 
     async def suggest_osm(self, place_id: str) -> CommunityPlace:
-        """Mark a place as suggested for OSM integration."""
+        """Mark a confirmed place as suggested for OSM integration."""
         async with self._write_lock:
             self._ensure_loaded()
             if place_id not in self._places:
-                raise ValueError(f"Place {place_id} not found")
+                raise NotFoundError(f"Place {place_id} not found")
             place = CommunityPlace(**self._places[place_id])
+            if place.moderation_status != ModerationStatus.CONFIRMED:
+                raise ConflictError("Only a confirmed place can be suggested for OpenStreetMap")
             place.osm_suggested = True
             place.updated_at = datetime.now(UTC)
             self._places[place_id] = place.model_dump(mode="json")
@@ -294,47 +424,69 @@ class CommunityService:
             return place
 
     async def get_karma(self, user_id: str) -> ContributorKarma:
-        """Get karma for a user."""
+        """Get karma for a user (a read never creates a record)."""
         self._ensure_loaded()
-        return self._get_or_create_karma(user_id)
+        data = self._karma.get(user_id)
+        return ContributorKarma(**data) if data else ContributorKarma(user_id=user_id)
 
     async def update_place(self, place_id: str, author_id: str, **updates) -> CommunityPlace:
         """Update a submitted place (only by the original author, while pending)."""
         async with self._write_lock:
             self._ensure_loaded()
             if place_id not in self._places:
-                raise ValueError(f"Place {place_id} not found")
+                raise NotFoundError(f"Place {place_id} not found")
             place = CommunityPlace(**self._places[place_id])
             if place.submitted_by != author_id:
-                raise ValueError("Only the author can update this place")
+                raise ForbiddenError("Only the author can update this place")
             if place.moderation_status != ModerationStatus.PENDING:
-                raise ValueError("Cannot update a place that has been moderated")
-            for key, val in updates.items():
-                if val is not None and hasattr(place, key):
-                    if key in ("name", "description"):
-                        val = sanitize_user_input(val)
-                    setattr(place, key, val)
-            place.updated_at = datetime.now(UTC)
-            self._places[place_id] = place.model_dump(mode="json")
+                raise ConflictError("Cannot update a place that has been moderated")
+
+            clean: dict = {}
+            for key in _PLACE_EDITABLE:  # allow-list: never moderation state or ownership
+                val = updates.get(key)
+                if val is None:
+                    continue
+                if key in ("name", "description"):
+                    val = sanitize_user_input(val)
+                elif key == "tags":
+                    val = [sanitize_user_input(t) for t in val]
+                elif key == "photos":
+                    val = _clean_photos(val)
+                clean[key] = val
+            updated = CommunityPlace.model_validate({**place.model_dump(), **clean})
+            # Votes were cast on the old content: a bait-and-switch edit must not inherit them.
+            if any(
+                key in clean and getattr(updated, key) != getattr(place, key)
+                for key in ("name", "description", "categories")
+            ):
+                updated.confirmations = []
+                updated.rejections = []
+            updated.updated_at = datetime.now(UTC)
+            self._places[place_id] = updated.model_dump(mode="json")
             self._save_places()
             logger.info("Place updated: %s by %s", place_id, author_id)
-            return place
+            return updated
 
     async def delete_place(self, place_id: str, author_id: str) -> None:
         """Delete a submitted place (only by the original author)."""
         async with self._write_lock:
             self._ensure_loaded()
             if place_id not in self._places:
-                raise ValueError(f"Place {place_id} not found")
+                raise NotFoundError(f"Place {place_id} not found")
             place = CommunityPlace(**self._places[place_id])
             if place.submitted_by != author_id:
-                raise ValueError("Only the author can delete this place")
+                raise ForbiddenError("Only the author can delete this place")
             del self._places[place_id]
             # Also delete associated reviews
             to_delete = [rid for rid, r in self._reviews.items() if r.get("place_id") == place_id]
             for rid in to_delete:
                 del self._reviews[rid]
+            # The karma this place earned goes with it
+            self._revoke_karma(author_id, KARMA_PLACE_SUBMITTED, "place_submitted")
+            if place.moderation_status == ModerationStatus.CONFIRMED:
+                self._revoke_karma(author_id, KARMA_PLACE_CONFIRMED, "place_confirmed")
             self._save_places()
+            self._save_karma()
             if to_delete:
                 self._save_reviews()
             logger.info("Place deleted: %s by %s", place_id, author_id)
@@ -379,61 +531,76 @@ class CommunityService:
 
             # Sanitize text inputs
             text = sanitize_user_input(text)
-            if visit_date:
-                visit_date = sanitize_user_input(visit_date)
+            visit_date = _clean_visit_date(visit_date)
+            photos = _clean_photos(photos or [])
 
-            # Limit one review per user per place (tips are unlimited)
-            if review_type == ReviewType.REVIEW:
-                existing = [
-                    r for r in self._reviews.values()
-                    if r.get("place_id") == place_id
-                    and r.get("author_id") == author_id
-                    and r.get("review_type") == ReviewType.REVIEW.value
-                ]
-                if len(existing) >= MAX_REVIEWS_PER_USER_PER_PLACE:
-                    raise ValueError("You already have a review for this place. Update it instead.")
+            if len(self._reviews) >= MAX_REVIEWS_TOTAL:
+                raise CapacityError("Community capacity reached: no more reviews can be added")
+            if self._quota_used(author_id, "review") >= MAX_REVIEWS_PER_USER_PER_DAY:
+                raise QuotaError(f"Daily review limit ({MAX_REVIEWS_PER_USER_PER_DAY}) reached")
+
+            same_kind = [
+                r for r in self._reviews.values()
+                if r.get("place_id") == place_id
+                and r.get("author_id") == author_id
+                and r.get("review_type") == review_type.value
+            ]
+            # Limit one review per user per place (tips are allowed, but pay no extra karma)
+            if review_type == ReviewType.REVIEW and len(same_kind) >= MAX_REVIEWS_PER_USER_PER_PLACE:
+                raise ConflictError("You already have a review for this place. Update it instead.")
 
             review_id = f"review_{uuid.uuid4().hex[:12]}"
+            pays_karma = not same_kind
             review = Review(
                 id=review_id,
                 place_id=place_id,
                 author_id=author_id,
                 review_type=review_type,
                 text=text,
-                photos=photos or [],
+                photos=photos,
                 visit_date=visit_date,
+                karma_awarded=pays_karma,
             )
             self._reviews[review_id] = review.model_dump(mode="json")
-            self._award_karma(author_id, KARMA_REVIEW_WRITTEN, "review_written")
+            if pays_karma:
+                self._award_karma(author_id, KARMA_REVIEW_WRITTEN, "review_written")
+            self._quota_bump(author_id, "review")
             self._save_reviews()
             self._save_karma()
+            self._save_quotas()
             logger.info("Review created: %s for place %s by %s", review_id, place_id, author_id)
             return review
 
     async def vote_review(self, review_id: str, user_id: str, upvote: bool) -> Review:
-        """Upvote or downvote a review."""
+        """Upvote or downvote a review (one vote per user; repeating it changes nothing)."""
         async with self._write_lock:
             self._ensure_loaded()
             if review_id not in self._reviews:
-                raise ValueError(f"Review {review_id} not found")
+                raise NotFoundError(f"Review {review_id} not found")
 
             review = Review(**self._reviews[review_id])
 
-            if review.author_id == user_id:
-                raise ValueError("Cannot vote on your own review")
+            if _same_user(review.author_id, user_id):
+                raise ForbiddenError("Cannot vote on your own review")
 
-            # Remove previous vote
-            if user_id in review.upvotes:
+            already_up = user_id in review.upvotes
+            already_down = user_id in review.downvotes
+            if (upvote and already_up) or (not upvote and already_down):
+                return review  # same vote again: idempotent, no karma
+
+            # Remove previous (opposite) vote; taking back an upvote takes back its karma
+            if already_up:
                 review.upvotes.remove(user_id)
-            if user_id in review.downvotes:
+                self._revoke_karma(review.author_id, KARMA_HELPFUL_VOTE, "helpful_vote")
+            if already_down:
                 review.downvotes.remove(user_id)
 
             if upvote:
                 review.upvotes.append(user_id)
                 self._award_karma(review.author_id, KARMA_HELPFUL_VOTE, "helpful_vote")
-                self._save_karma()
             else:
                 review.downvotes.append(user_id)
+            self._save_karma()
 
             review.updated_at = datetime.now(UTC)
             self._reviews[review_id] = review.model_dump(mode="json")
@@ -464,6 +631,7 @@ class CommunityService:
             reviews.sort(key=lambda r: r.created_at, reverse=True)
 
         total = len(reviews)
+        offset, limit = max(0, offset), max(0, limit)
         return reviews[offset: offset + limit], total
 
     async def get_review(self, review_id: str) -> Review | None:
@@ -477,15 +645,21 @@ class CommunityService:
         async with self._write_lock:
             self._ensure_loaded()
             if review_id not in self._reviews:
-                raise ValueError(f"Review {review_id} not found")
+                raise NotFoundError(f"Review {review_id} not found")
             review = Review(**self._reviews[review_id])
             if review.author_id != author_id:
-                raise ValueError("Only the author can update this review")
-            for key, val in updates.items():
-                if val is not None and hasattr(review, key):
-                    if key in ("text",):
-                        val = sanitize_user_input(val)
-                    setattr(review, key, val)
+                raise ForbiddenError("Only the author can update this review")
+            for key in _REVIEW_EDITABLE:  # allow-list: never votes, author or karma flags
+                val = updates.get(key)
+                if val is None:
+                    continue
+                if key == "text":
+                    val = sanitize_user_input(val)
+                elif key == "photos":
+                    val = _clean_photos(val)
+                elif key == "visit_date":
+                    val = _clean_visit_date(val)
+                setattr(review, key, val)
             review.updated_at = datetime.now(UTC)
             self._reviews[review_id] = review.model_dump(mode="json")
             self._save_reviews()
@@ -497,11 +671,14 @@ class CommunityService:
         async with self._write_lock:
             self._ensure_loaded()
             if review_id not in self._reviews:
-                raise ValueError(f"Review {review_id} not found")
+                raise NotFoundError(f"Review {review_id} not found")
             review = Review(**self._reviews[review_id])
             if review.author_id != author_id:
-                raise ValueError("Only the author can delete this review")
+                raise ForbiddenError("Only the author can delete this review")
             del self._reviews[review_id]
+            if review.karma_awarded:
+                self._revoke_karma(author_id, KARMA_REVIEW_WRITTEN, "review_written")
+                self._save_karma()
             self._save_reviews()
             logger.info("Review deleted: %s by %s", review_id, author_id)
 
@@ -510,15 +687,19 @@ class CommunityService:
         async with self._write_lock:
             self._ensure_loaded()
             if review_id not in self._reviews:
-                raise ValueError(f"Review {review_id} not found")
+                raise NotFoundError(f"Review {review_id} not found")
             review = Review(**self._reviews[review_id])
-            # Add downvote as a signal for outdated content
+            # A report is a downvote; it replaces (and takes the karma back from) an upvote
+            if user_id in review.upvotes:
+                review.upvotes.remove(user_id)
+                self._revoke_karma(review.author_id, KARMA_HELPFUL_VOTE, "helpful_vote")
+                self._save_karma()
             if user_id not in review.downvotes:
                 review.downvotes.append(user_id)
             review.updated_at = datetime.now(UTC)
             self._reviews[review_id] = review.model_dump(mode="json")
             self._save_reviews()
-            logger.info("Review %s reported as outdated by %s: %s", review_id, user_id, reason)
+            logger.info("Review %s reported as outdated by %s: %r", review_id, user_id, reason[:200])
             return review
 
     # ── Story 8.3: Social Routes ─────────────────────────────────
@@ -537,6 +718,10 @@ class CommunityService:
         """Publish a route for the community."""
         async with self._write_lock:
             self._ensure_loaded()
+            if len(self._routes) >= MAX_ROUTES_TOTAL:
+                raise CapacityError("Community capacity reached: no more routes can be published")
+            if self._quota_used(author_id, "route") >= MAX_ROUTES_PER_USER_PER_DAY:
+                raise QuotaError(f"Daily route limit ({MAX_ROUTES_PER_USER_PER_DAY}) reached")
             route_id = f"route_{uuid.uuid4().hex[:12]}"
             route = PublishedRoute(
                 id=route_id,
@@ -551,8 +736,10 @@ class CommunityService:
             )
             self._routes[route_id] = route.model_dump(mode="json")
             self._award_karma(author_id, KARMA_ROUTE_PUBLISHED, "route_published")
+            self._quota_bump(author_id, "route")
             self._save_routes()
             self._save_karma()
+            self._save_quotas()
             logger.info("Route published: %s by %s", route_id, author_id)
             return route
 
@@ -561,16 +748,18 @@ class CommunityService:
         async with self._write_lock:
             self._ensure_loaded()
             if route_id not in self._routes:
-                raise ValueError(f"Route {route_id} not found")
+                raise NotFoundError(f"Route {route_id} not found")
 
             route = PublishedRoute(**self._routes[route_id])
 
-            if route.author_id == user_id:
-                raise ValueError("Cannot rate your own route")
+            if _same_user(route.author_id, user_id):
+                raise ForbiddenError("Cannot rate your own route")
 
             # Replace existing rating from this user
             route.ratings = [r for r in route.ratings if r.user_id != user_id]
-            route.ratings.append(RouteRating(user_id=user_id, score=score, comment=comment))
+            route.ratings.append(
+                RouteRating(user_id=user_id, score=score, comment=sanitize_user_input(comment))
+            )
 
             route.updated_at = datetime.now(UTC)
             self._routes[route_id] = route.model_dump(mode="json")
@@ -601,6 +790,7 @@ class CommunityService:
             routes.sort(key=lambda r: r.created_at, reverse=True)
 
         total = len(routes)
+        offset, limit = max(0, offset), max(0, limit)
         return routes[offset: offset + limit], total
 
     async def get_route(self, route_id: str) -> PublishedRoute | None:
@@ -615,10 +805,16 @@ class CommunityService:
         """Request to follow an explorer (requires consent)."""
         async with self._write_lock:
             self._ensure_loaded()
-            if follower_id == following_id:
+            if _same_user(follower_id, following_id):
                 raise ValueError("Cannot follow yourself")
 
             follow_key = f"{follower_id}:{following_id}"
+            existing = self._follows.get(follow_key)
+            if existing:
+                # Idempotent: re-requesting must not wipe a consent that was already granted.
+                return ExplorerFollow(**existing)
+            if len(self._follows) >= MAX_FOLLOWS_TOTAL:
+                raise CapacityError("Community capacity reached: no more follows can be added")
             follow = ExplorerFollow(
                 follower_id=follower_id,
                 following_id=following_id,
@@ -634,7 +830,7 @@ class CommunityService:
             self._ensure_loaded()
             follow_key = f"{req.follower_id}:{req.user_id}"
             if follow_key not in self._follows:
-                raise ValueError("Follow relationship not found")
+                raise NotFoundError("Follow relationship not found")
 
             follow = ExplorerFollow(**self._follows[follow_key])
             follow.consent_given = req.consent

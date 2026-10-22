@@ -129,6 +129,12 @@ class TestOSMIntegration:
             name="Test", description="", categories=[], lat=0, lng=0,
             photos=[], tags=[], author_id="user1",
         )
+        # Only confirmed places can be suggested (the endpoint is documented as such);
+        # this test used to suggest a still-pending place.
+        for i in range(3):
+            await community_service.confirm_place(
+                place.id, ConfirmPlaceRequest(user_id=f"mod{i}", confirm=True)
+            )
         updated = await community_service.suggest_osm(place.id)
         assert updated.osm_suggested is True
 
