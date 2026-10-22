@@ -19,10 +19,11 @@ from app.models.chat import (
 )
 from app.models.place import Coordinates, Place, PlaceSource
 from app.services.llm_storytelling import generate_place_story, generate_route_story
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["storytelling"])
+router = APIRouter(prefix="/api", tags=["storytelling"], route_class=SafeValidationRoute)
 
 
 @router.post("/story", response_model=StoryResponse)

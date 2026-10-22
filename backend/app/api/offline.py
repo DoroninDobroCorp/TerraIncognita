@@ -22,10 +22,11 @@ from app.models.offline import (
 from app.models.place import Coordinates, DiscoverRequest
 from app.services.discovery import discover
 from app.services.offline_manager import StorageLimitError, offline_manager
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["offline"])
+router = APIRouter(tags=["offline"], route_class=SafeValidationRoute)
 
 
 # ------------------------------------------------------------------

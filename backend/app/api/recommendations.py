@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.chat import RecommendationRequest, RecommendationResponse
 from app.services.llm_recommendations import get_recommendations
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["recommendations"])
+router = APIRouter(prefix="/api", tags=["recommendations"], route_class=SafeValidationRoute)
 
 
 @router.post("/recommend", response_model=RecommendationResponse)

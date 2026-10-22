@@ -16,8 +16,9 @@ from app.models.gamification import (
     XpHistoryResponse,
 )
 from app.services import gamification as gam_service
+from app.utils.safe_route import SafeValidationRoute
 
-router = APIRouter(prefix="/api", tags=["gamification"])
+router = APIRouter(prefix="/api", tags=["gamification"], route_class=SafeValidationRoute)
 
 
 # ── Story 6.1: Fog of War ───────────────────────────────────────

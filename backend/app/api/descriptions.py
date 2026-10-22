@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.chat import DescriptionRequest, DescriptionResponse
 from app.services.llm_descriptions import generate_description
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["descriptions"])
+router = APIRouter(prefix="/api", tags=["descriptions"], route_class=SafeValidationRoute)
 
 
 @router.post("/describe", response_model=DescriptionResponse)

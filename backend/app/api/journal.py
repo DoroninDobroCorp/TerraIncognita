@@ -29,8 +29,9 @@ from app.models.journal import (
 )
 from app.services import journal as journal_service
 from app.services.journal import JournalLimitError, TripNotFoundError
+from app.utils.safe_route import SafeValidationRoute
 
-router = APIRouter(prefix="/api", tags=["journal"])
+router = APIRouter(prefix="/api", tags=["journal"], route_class=SafeValidationRoute)
 
 Limit = Query(50, ge=1, le=200)
 Offset = Query(0, ge=0)
