@@ -19,6 +19,7 @@ from app.api.gamification import router as gamification_router
 from app.api.journal import router as journal_router
 from app.api.map_config import router as map_config_router
 from app.api.offline import router as offline_router
+from app.api.place_collections import router as place_collections_router
 from app.api.recommendations import router as recommendations_router
 from app.api.routes import router as routes_router
 from app.api.storytelling import router as storytelling_router
@@ -81,6 +82,7 @@ app.include_router(recommendations_router)
 app.include_router(storytelling_router)
 app.include_router(offline_router)
 app.include_router(community_router)
+app.include_router(place_collections_router)
 app.include_router(streak_router)
 
 # Serve map static files (explorer.html, etc.)
