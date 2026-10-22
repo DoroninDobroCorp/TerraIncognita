@@ -6,11 +6,27 @@ with practical info (how to get there, best time, what to bring).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Any
 
 from app.models.chat import DescriptionRequest, DescriptionResponse
+from app.services import llm_client
 from app.services.llm_client import cached_completion
+from app.utils.sanitize import (
+    UNTRUSTED_DATA_NOTICE,
+    fence_untrusted,
+    format_tag_metadata,
+    sanitize_label,
+    sanitize_user_input,
+)
+
+_METADATA_KEYS = (
+    "historic", "building", "tourism", "natural", "man_made",
+    "military", "abandoned", "description", "wikipedia",
+)
+MAX_SECTION_CHARS = 4_000  # the LLM answer is shown to users: bound it
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +47,12 @@ Your writing style:
 
 IMPORTANT: Add an "AI-generated" awareness — these descriptions are based on \
 available data and may not reflect current conditions.
-"""
+""" + UNTRUSTED_DATA_NOTICE
 
 DESCRIPTION_PROMPT = """\
-Generate an engaging description for this place:
+Generate an engaging description for the place in the data block below:
 
-Name: {name}
-Categories: {categories}
-Location: {lat:.4f}, {lng:.4f}
-Tags: {tags}
-Available metadata: {metadata}
+{place_data}
 
 Write in {language}. Structure your response as:
 
@@ -52,30 +64,52 @@ PRACTICAL:
 """
 
 
+def _cache_key(req: DescriptionRequest, fields: dict[str, str]) -> str:
+    """Cache key over everything that shapes the prompt.
+
+    It used to be ``desc:<place_id>:<language>`` only, while name, tags and metadata come
+    from the *client*: whoever asked first for an id (with whatever text) decided the
+    description every later user got for 7 days (cache poisoning / stored prompt injection).
+    """
+    payload = json.dumps(
+        [fields, round(req.lat, 4), round(req.lng, 4)], sort_keys=True, ensure_ascii=False
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"desc:{req.place_id}:{req.language}:{digest}"
+
+
+async def _is_cached(cache_key: str) -> bool:
+    try:
+        return await llm_client._description_cache.get(cache_key) is not None
+    except Exception:
+        return False
+
+
 async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
     """Generate an atmospheric AI description for a place."""
-    cache_key = f"desc:{req.place_id}:{req.language}"
     lang_name = {"ru": "Russian", "en": "English"}.get(req.language, req.language)
     if req.language == "auto":
         lang_name = "Russian"  # Default to Russian for the primary user
 
-    categories_str = ", ".join(c.value for c in req.place_categories) or "unknown"
-    tags_str = ", ".join(req.place_tags[:20]) or "none"
-
-    # Filter metadata to useful fields
-    useful_meta = _extract_useful_metadata(req.place_metadata)
-
-    prompt = DESCRIPTION_PROMPT.format(
-        name=req.place_name or "Unnamed place",
-        categories=categories_str,
-        lat=req.lat,
-        lng=req.lng,
-        tags=tags_str,
-        metadata=useful_meta,
-        language=lang_name,
-    )
+    # Everything below is client supplied: single-line, bounded, fenced as data.
+    fields = {
+        "name": sanitize_label(req.place_name or "Unnamed place", 300),
+        "categories": ", ".join(c.value for c in req.place_categories) or "unknown",
+        "tags": ", ".join(sanitize_label(t, 100) for t in req.place_tags[:20]) or "none",
+        "metadata": _extract_useful_metadata(req.place_metadata),
+    }
+    place_data = fence_untrusted("place_data", (
+        f"Name: {fields['name']}\n"
+        f"Categories: {fields['categories']}\n"
+        f"Location: {req.lat:.4f}, {req.lng:.4f}\n"
+        f"Tags: {fields['tags']}\n"
+        f"Available metadata: {fields['metadata']}"
+    ))
+    prompt = DESCRIPTION_PROMPT.format(place_data=place_data, language=lang_name)
+    cache_key = _cache_key(req, fields)
 
     try:
+        was_cached = await _is_cached(cache_key)
         raw = await cached_completion(
             cache_key=cache_key,
             messages=[{"role": "user", "content": prompt}],
@@ -85,14 +119,13 @@ async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
         )
 
         description, practical = _parse_description_response(raw)
-        is_cached = False  # cached_completion handles this internally
 
         return DescriptionResponse(
             place_id=req.place_id,
             description=description,
             practical_info=practical,
             ai_generated=True,
-            cached=is_cached,
+            cached=was_cached,
             language=req.language,
         )
     except Exception:
@@ -101,47 +134,40 @@ async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
 
 
 def _parse_description_response(raw: str) -> tuple[str, str | None]:
-    """Split LLM response into description and practical info."""
-    raw = raw.strip()
+    """Split LLM response into description and practical info.
 
-    # Try to find structured sections
+    The answer is untrusted text: control characters are dropped, each part is bounded, and
+    the sections are located independently of their order (a PRACTICAL block before the
+    DESCRIPTION block used to produce an empty description).
+    """
+    raw = sanitize_user_input(raw or "", max_length=None)
+
     desc_marker = "DESCRIPTION:"
     prac_marker = "PRACTICAL:"
+    desc_at = raw.find(desc_marker)
+    prac_at = raw.find(prac_marker)
 
-    if desc_marker in raw and prac_marker in raw:
-        desc_start = raw.index(desc_marker) + len(desc_marker)
-        prac_start = raw.index(prac_marker)
-        description = raw[desc_start:prac_start].strip()
-        practical = raw[prac_start + len(prac_marker):].strip()
-        return description, practical
+    if desc_at != -1 and prac_at != -1:
+        if desc_at < prac_at:
+            description = raw[desc_at + len(desc_marker):prac_at]
+            practical = raw[prac_at + len(prac_marker):]
+        else:
+            practical = raw[prac_at + len(prac_marker):desc_at]
+            description = raw[desc_at + len(desc_marker):]
+        return description.strip()[:MAX_SECTION_CHARS], practical.strip()[:MAX_SECTION_CHARS]
 
     # Fallback: treat everything as description
-    return raw, None
+    return raw[:MAX_SECTION_CHARS], None
 
 
 def _extract_useful_metadata(metadata: dict[str, Any]) -> str:
-    """Extract human-readable metadata for the LLM prompt."""
-    useful_parts = []
-
-    if "osm_tags" in metadata:
-        tags = metadata["osm_tags"]
-        for key in ["historic", "building", "tourism", "natural", "man_made",
-                     "military", "abandoned", "description", "wikipedia"]:
-            if key in tags:
-                useful_parts.append(f"{key}: {tags[key]}")
-
-    if "wikipedia_url" in metadata:
-        useful_parts.append(f"Wikipedia: {metadata['wikipedia_url']}")
-
-    if "atlas_categories" in metadata:
-        useful_parts.append(f"Atlas Obscura categories: {metadata['atlas_categories']}")
-
-    return "; ".join(useful_parts) if useful_parts else "minimal data available"
+    """Extract human-readable metadata for the LLM prompt (any input shape is tolerated)."""
+    return format_tag_metadata(metadata, _METADATA_KEYS, include_atlas=True) or "minimal data available"
 
 
 def _fallback_description(req: DescriptionRequest) -> DescriptionResponse:
     """Fallback when LLM is unavailable."""
-    name = req.place_name or "This place"
+    name = sanitize_label(req.place_name or "This place", 300)
     cats = ", ".join(c.value for c in req.place_categories) if req.place_categories else "interesting"
 
     return DescriptionResponse(

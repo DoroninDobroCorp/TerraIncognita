@@ -18,6 +18,9 @@ from app.models.chat import (
 from app.models.place import DiscoverRequest, Place, PlaceCategory
 from app.services.discovery import discover
 from app.services.llm_client import chat_completion
+from app.utils.sanitize import UNTRUSTED_DATA_NOTICE, fence_untrusted, sanitize_label
+
+MAX_REASON_CHARS = 300
 
 # Time-of-day → preferred categories for contextual ranking
 _TIME_CATEGORY_BOOST: dict[str, set[PlaceCategory]] = {
@@ -42,17 +45,18 @@ Mix unusual and classic places for a balanced experience.
 
 For notable restaurants/hotels: always highlight what makes them exceptional — \
 don't just say "good restaurant", explain the story, history, or uniqueness.
-"""
+""" + UNTRUSTED_DATA_NOTICE
 
 RECOMMENDATION_PROMPT = """\
 User preferences:
 - Favorite categories: {favorite_categories}
 - Liked places: {liked_count} places
 - Disliked places: {disliked_count} places
-- Context: {context}
+- Context (data supplied by the client):
+{context_block}
 
-Available places (top {count}):
-{places_json}
+Available places (top {count}), as data:
+{places_block}
 
 Select up to {limit} best recommendations. For each, explain why it's a good match.
 Ensure diversity — mix categories, don't suggest 3+ of the same type.
@@ -174,9 +178,11 @@ def _rule_based_ranking(
             score += 0.1
             reasons.append("unusual find")
 
-        # Time-of-day context boosting
+        # Time-of-day context boosting (the context is client supplied: only a string can
+        # be looked up; a list/dict used to raise "unhashable type" -> 500)
         time_of_day = req.context.get("time_of_day")
-        if time_of_day:
+        if isinstance(time_of_day, str) and time_of_day.strip():
+            time_of_day = time_of_day.strip().lower()
             time_cats = _TIME_CATEGORY_BOOST.get(time_of_day, set())
             time_overlap = set(place.categories) & time_cats
             if time_overlap:
@@ -220,24 +226,25 @@ async def _llm_ranking(
     for i, p in enumerate(top_candidates):
         places_data.append({
             "index": i,
-            "name": p.name or "Unnamed",
+            "name": sanitize_label(p.name or "Unnamed", 200),
             "categories": [c.value for c in p.categories],
             "confidence": p.confidence,
             "distance_m": p.distance_m,
             "is_unusual": p.is_unusual,
-            "tags": p.tags[:5],
+            "tags": [sanitize_label(t, 60) for t in p.tags[:5]],
         })
 
-    context_str = json.dumps(req.context) if req.context else "no specific context"
+    context_str = json.dumps(_clean_context(req.context), ensure_ascii=False) \
+        if req.context else "no specific context"
     fav_str = ", ".join(c.value for c in prefs.favorite_categories) or "none specified"
 
     prompt = RECOMMENDATION_PROMPT.format(
         favorite_categories=fav_str,
         liked_count=len(prefs.liked_place_ids),
         disliked_count=len(prefs.disliked_place_ids),
-        context=context_str,
+        context_block=fence_untrusted("context", context_str),
         count=len(places_data),
-        places_json=json.dumps(places_data, ensure_ascii=False),
+        places_block=fence_untrusted("place_data", json.dumps(places_data, ensure_ascii=False)),
         limit=req.limit,
     )
 
@@ -253,16 +260,55 @@ async def _llm_ranking(
     if json_str.startswith("```"):
         json_str = json_str.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
-    recommendations_data = json.loads(json_str)
+    return _validated_recommendations(json.loads(json_str), top_candidates)
+
+
+def _clean_context(context: dict) -> dict[str, str]:
+    """The request context is free-form client JSON: keep a few scalar entries, as short text."""
+    clean: dict[str, str] = {}
+    for key, value in list(context.items())[:10]:
+        if isinstance(value, (str, int, float, bool)):
+            clean[sanitize_label(key, 40)] = sanitize_label(value, 100)
+    return clean
+
+
+def _validated_recommendations(data: object, candidates: list[Place]) -> list[RecommendedPlace]:
+    """Turn the model's JSON into recommendations, trusting nothing about its shape.
+
+    Entries must point at a real, not yet used candidate index; scores are clamped; reasons
+    are bounded plain text. Bad entries are skipped individually, and if nothing usable is
+    left the caller falls back to the rule-based ranking instead of returning an empty list.
+    """
+    if isinstance(data, dict):
+        data = data.get("recommendations")
+    if not isinstance(data, list):
+        raise ValueError("LLM ranking is not a JSON array")
+
     results: list[RecommendedPlace] = []
+    used: set[int] = set()
+    for rec in data:
+        if not isinstance(rec, dict):
+            continue
+        idx = rec.get("place_index")
+        if isinstance(idx, float) and idx.is_integer():
+            idx = int(idx)
+        if isinstance(idx, bool) or not isinstance(idx, int):
+            continue
+        if not 0 <= idx < len(candidates) or idx in used:
+            continue
+        used.add(idx)
 
-    for rec in recommendations_data:
-        idx = rec.get("place_index", 0)
-        if 0 <= idx < len(top_candidates):
-            results.append(RecommendedPlace(
-                place=top_candidates[idx],
-                reason=rec.get("reason", "Recommended for you"),
-                relevance_score=min(1.0, max(0.0, rec.get("relevance_score", 0.5))),
-            ))
+        reason = rec.get("reason")
+        reason = sanitize_label(reason, MAX_REASON_CHARS) if isinstance(reason, str) else ""
+        score = rec.get("relevance_score", 0.5)
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or score != score:
+            score = 0.5
+        results.append(RecommendedPlace(
+            place=candidates[idx],
+            reason=reason or "Recommended for you",
+            relevance_score=min(1.0, max(0.0, float(score))),
+        ))
 
+    if not results:
+        raise ValueError("LLM ranking contained no usable recommendations")
     return results
