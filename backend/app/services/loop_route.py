@@ -67,6 +67,7 @@ class LoopBudget:
     speed_ms: float
     visit_s: float
     usable_s: float
+    margin: float = 0.0  # share of the requested duration held back (already out of usable_s)
 
     @classmethod
     def for_request(cls, duration_hours: float, mode: str) -> LoopBudget:
@@ -74,10 +75,12 @@ class LoopBudget:
             settings.route_cycling_speed_kmh if mode == "cycling"
             else settings.route_walking_speed_kmh
         )
+        margin = min(max(settings.loop_safety_margin, 0.0), 0.9)  # tolerate silly settings
         return cls(
-            speed_ms=speed_kmh / 3.6,
-            visit_s=settings.route_visit_time_minutes * 60.0,
-            usable_s=duration_hours * 3600.0 * (1.0 - settings.loop_safety_margin),
+            speed_ms=max(speed_kmh, 0.5) / 3.6,
+            visit_s=max(settings.route_visit_time_minutes, 0.0) * 60.0,
+            usable_s=duration_hours * 3600.0 * (1.0 - margin),
+            margin=margin,
         )
 
     def time_s(self, length_m: float, stops: int) -> float:
@@ -144,7 +147,7 @@ def stop_score(place: Place) -> float:
         place.confidence
         + (0.5 if place.is_unusual else 0.0)
         + 0.5 * unusual_score
-        + (0.1 if place.name else 0.0)
+        + (0.25 if place.name else 0.0)  # a stop called "Point 4" in the GPX is a poor stop
     )
 
 
@@ -326,10 +329,11 @@ async def build_loop_route(req: LoopRouteRequest) -> RouteResponse:
     budget = LoopBudget.for_request(req.duration_hours, req.mode)
     min_time_s = 2 * budget.visit_s
     if budget.usable_s <= min_time_s:
+        needed_min = math.ceil(min_time_s / (1.0 - budget.margin) / 60.0) + 5
         raise LoopParamsError(
             f"{req.duration_hours:g} h is too short for two stops at "
-            f"{settings.route_visit_time_minutes:g} min per visit; ask for at least "
-            f"{math.ceil(min_time_s / (1 - settings.loop_safety_margin) / 60) + 5} minutes."
+            f"{settings.route_visit_time_minutes:g} min per visit; "
+            f"ask for at least {needed_min} minutes."
         )
 
     origin = Coordinates(lat=req.lat, lng=req.lng)

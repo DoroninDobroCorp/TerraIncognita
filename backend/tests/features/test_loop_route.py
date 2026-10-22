@@ -314,6 +314,15 @@ class TestSelectStops:
         assert spy.called
         assert all(call.kwargs.get("is_circular") is True for call in spy.call_args_list)
 
+    def test_named_places_beat_unnamed_ones_of_equal_quality(self):
+        named = mk("named", 1500, 40, 0.6)
+        unnamed = mk("unnamed", 1500, 50, 0.6)
+        unnamed.name = None
+        other = mk("other", 1500, 220, 0.6)
+        assert stop_score(named) > stop_score(unnamed)
+        stops = select_stops(START, [unnamed, named, other], budget(3.0), 2)
+        assert {p.id for p in stops} == {"named", "other"}
+
     def test_stop_score_prefers_unusual_and_confident_places(self):
         assert stop_score(mk("a", 1, 0, 0.9, C.RUINS)) > stop_score(mk("b", 1, 0, 0.9, C.MUSEUM))
         assert stop_score(mk("a", 1, 0, 0.9)) > stop_score(mk("b", 1, 0, 0.4))
@@ -593,3 +602,24 @@ class TestLoopExport:
 
     def test_the_route_survives_a_json_round_trip_unchanged(self, loop):
         assert Route.model_validate(loop).model_dump(mode="json") == loop
+
+
+class TestBudgetHardening:
+    def test_silly_settings_do_not_crash_or_go_negative(self, monkeypatch):
+        monkeypatch.setattr(settings, "route_walking_speed_kmh", 0.0)
+        monkeypatch.setattr(settings, "loop_safety_margin", 5.0)
+        monkeypatch.setattr(settings, "route_visit_time_minutes", -3.0)
+        b = LoopBudget.for_request(2.0, "walking")
+        assert b.speed_ms > 0 and b.visit_s == 0 and b.usable_s > 0
+        assert b.margin == pytest.approx(0.9)
+
+    def test_negative_margin_is_treated_as_zero(self, monkeypatch):
+        monkeypatch.setattr(settings, "loop_safety_margin", -1.0)
+        assert LoopBudget.for_request(1.0, "walking").usable_s == 3600
+
+    def test_too_short_message_names_a_workable_duration(self, monkeypatch):
+        monkeypatch.setattr(settings, "route_visit_time_minutes", 20.0)
+        monkeypatch.setattr(settings, "loop_safety_margin", 0.1)
+        resp = client.post("/api/route/loop", json={**BODY, "duration_hours": 0.5})
+        assert resp.status_code == 422
+        assert "at least 50 minutes" in resp.json()["detail"]  # ceil(40 / 0.9) + 5
