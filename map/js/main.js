@@ -39,6 +39,7 @@ function boot() {
   initUi();
   initPlaces();
   buildExploreCats();
+  initPwa();
   initMap(startApp);
   probeFeatures();
   checkHealth();

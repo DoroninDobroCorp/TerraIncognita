@@ -47,11 +47,12 @@ const _NATIVE_ACTIVATORS = /^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY)$/;
 
 document.addEventListener('click', (ev) => {
   const el = ev.target.closest && ev.target.closest('[data-action]');
-  if (!el || el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+  if (!el || el.disabled) return;
   if (el.hasAttribute('data-needs-network') && TI.net && !TI.net.ok) {
     toast('You are offline — this needs a connection', 'warning');
     return;
   }
+  if (el.getAttribute('aria-disabled') === 'true') return;
   if (el.tagName === 'A' && !el.hasAttribute('data-native')) ev.preventDefault();
   _run(TI.actions, 'action', el, ev);
 });
@@ -77,6 +78,7 @@ document.addEventListener('keydown', (ev) => {
 
   if (ev.key === 'Enter' && t.dataset && t.dataset.enter && !ev.isComposing) {
     ev.preventDefault();
+    if (t.hasAttribute('data-needs-network') && TI.net && !TI.net.ok) { toast('You are offline — this needs a connection', 'warning'); return; }
     _run(TI.enters, 'enter', t, ev);
     return;
   }

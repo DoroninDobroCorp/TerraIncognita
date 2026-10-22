@@ -49,7 +49,7 @@ function selectTab(btn) {
 }
 
 // ── Toast notifications ──
-function toast(msg, type = 'info', duration = 3500) {
+function toast(msg, type = 'info', duration = 3500, action = null) {
   const c = $('toast-container');
   if (!c) return;
   // Limit max visible toasts to prevent layout overflow
@@ -58,6 +58,11 @@ function toast(msg, type = 'info', duration = 3500) {
   t.className = 'toast ' + type;
   t.setAttribute('role', type === 'error' ? 'alert' : 'status');
   t.textContent = msg;
+  if (action) { // {label, action}: a button that runs a registered action (e.g. "Reload")
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'toast-action'; b.textContent = action.label; b.dataset.action = action.action;
+    t.appendChild(b);
+  }
   c.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, duration);
 }

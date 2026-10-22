@@ -21,6 +21,27 @@ function discoverBody() {
   };
 }
 
+// ── Last-results snapshot: the one thing worth keeping on this device for offline starts ──
+// Public place data only (no journal/visit data). Replaced on every successful discover call.
+const SNAPSHOT_MAX_PLACES = 200;
+function saveLastPlaces(places) {
+  store.setJSON(LS.lastPlaces, { t: Date.now(), lat: state.userLat, lng: state.userLng, places: places.slice(0, SNAPSHOT_MAX_PLACES) });
+}
+function loadLastPlaces() {
+  const s = store.getJSON(LS.lastPlaces, null);
+  return s && Array.isArray(s.places) && s.places.length ? s : null;
+}
+/** Offline/API-down fallback: last snapshot if we have one, else the built-in demo places. */
+function showFallbackPlaces() {
+  const snap = loadLastPlaces();
+  if (snap) {
+    state.places = snap.places; applyFilters();
+    toast(`📴 Showing places saved on ${dateStr(snap.t)}`, 'warning');
+  } else {
+    loadDemoData(); toast('API unavailable — showing demo data','warning');
+  }
+}
+
 // Fetch places (guarded against concurrent calls)
 let fetchBusy = false;
 async function fetchPlaces() {
@@ -28,9 +49,11 @@ async function fetchPlaces() {
   fetchBusy = true;
   showMapLoading(true);
   try {
+    if (!TI.net.ok) throw new Error('offline');
     const data = await api('/api/discover', {method:'POST', body: discoverBody()});
     state.places = data.places || []; applyFilters();
-  } catch(e) { loadDemoData(); toast('API unavailable — showing demo data','warning'); }
+    saveLastPlaces(state.places);
+  } catch(e) { showFallbackPlaces(); }
   showMapLoading(false);
   fetchBusy = false;
 }

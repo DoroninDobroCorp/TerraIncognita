@@ -12,6 +12,14 @@
         integrity="sha256-2O5Q3ujU9bBBT9Jnuc6Lu9m0bZVKMRW9xE164V9gqZQ="
         crossorigin="anonymous" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#16213e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Terra">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -33,6 +41,7 @@
 
 <!-- ═══════ Content Area ═══════ -->
 <main id="content">
+<div id="offline-banner" role="status" hidden><span aria-hidden="true">📴</span> <span id="offline-banner-text"></span></div>
 
 <!-- ═══════ MAP SECTION ═══════ -->
 <div id="section-map" class="section active">
@@ -51,7 +60,7 @@
   </div>
   <div id="search-bar">
     <label for="search-input" class="sr-only">Search for places</label>
-    <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" data-enter="search" />
+    <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" data-enter="search" data-needs-network />
   </div>
   <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill"></div></div><span class="fog-pct" id="fog-pct">0%</span></div></div>
   <div id="historical-panel">
@@ -123,7 +132,7 @@
       <button class="chat-suggestion" data-action="chat-suggest" data-needs-network>🏛️ Исторические руины</button>
     </div>
     <div id="chat-input-row">
-      <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" data-enter="chat-input" />
+      <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" data-enter="chat-input" data-needs-network />
       <button class="btn btn-primary" id="chat-send" aria-label="Send message" data-action="chat-send" data-needs-network>➤</button>
     </div>
   </div>
@@ -424,6 +433,7 @@
 <script src="js/profile.js"></script>
 <script src="js/community.js"></script>
 <script src="js/offline.js"></script>
+<script src="js/pwa.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
