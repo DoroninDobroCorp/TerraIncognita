@@ -33,8 +33,9 @@ async def test_get_map_config(client: AsyncClient):
     assert "dark" in data["tile_sources"]
     assert "satellite" in data["tile_sources"]
     assert "terrain" in data["tile_sources"]
-    # All 19 categories should be present (11 unusual + 6 classic + 2 notable)
-    assert len(data["category_styles"]) == 19
+    # Every PlaceCategory has a style: 19 original + culinary and underwater (deep research),
+    # which used to be missing, so the UI could not show those places
+    assert len(data["category_styles"]) == 21
     for cat_name, cat_style in data["category_styles"].items():
         assert "icon" in cat_style
         assert "label" in cat_style

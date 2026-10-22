@@ -410,13 +410,17 @@ def _apply_surprise_mode(places: list[Place]) -> list[Place]:
     """
     surprises: list[Place] = []
     for i, place in enumerate(places):
+        # model_copy() is shallow: give the copy its own metadata dict, otherwise the
+        # originals below are written into the source place (which may be a cached object)
+        metadata = dict(place.metadata)
+        metadata["_surprise_original_name"] = place.name
+        metadata["_surprise_original_description"] = place.description
         hidden = place.model_copy(update={
             "name": f"Mystery Stop #{i + 1}",
             "description": "🎁 Surprise! Visit this location to reveal what's here.",
             "photos": [],
+            "metadata": metadata,
         })
-        hidden.metadata["_surprise_original_name"] = place.name
-        hidden.metadata["_surprise_original_description"] = place.description
         surprises.append(hidden)
     return surprises
 
