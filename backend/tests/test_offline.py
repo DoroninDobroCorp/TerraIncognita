@@ -16,9 +16,19 @@ from app.services.offline_manager import (
 )
 
 
+class _NoNetworkClient:
+    async def get(self, url, **kwargs):
+        raise ConnectionError("no network in tests")
+
+
 @pytest.fixture(autouse=True)
-def reset_offline():
-    """Reset offline data before and after each test."""
+def reset_offline(monkeypatch):
+    """Reset offline data before and after each test.
+
+    check_connectivity() really probes the network now (it used to fail on an un-awaited
+    call and always report "offline"), so the tests must stub the HTTP client.
+    """
+    monkeypatch.setattr("app.utils.http_client.get_http_client", lambda: _NoNetworkClient())
     offline_manager._reset_store()
     yield
     offline_manager._reset_store()

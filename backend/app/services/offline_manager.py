@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,11 +25,28 @@ from app.models.offline import (
     TileSource,
 )
 from app.models.place import Coordinates, Place
+from app.utils.atomic_io import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
 # Only allow alphanumeric, hyphens, underscores in resource IDs
 _SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+# Web-Mercator (slippy-map tiles) is undefined beyond this latitude.
+_MAX_MERCATOR_LAT = 85.05112878
+
+MAX_REGIONS = 200
+MAX_QUEUE_ITEMS = 10_000
+_CONNECTIVITY_TTL_S = 30.0
+_CONNECTIVITY_URL = "https://overpass-api.de/api/status"
+
+
+class StorageLimitError(ValueError):
+    """A configured disk/count limit (storage MB, cached places, regions, queue) is reached."""
+
+
+class RegionTooLargeError(ValueError):
+    """The requested region would need more tiles than ``offline_max_region_tiles``."""
 
 
 def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -52,21 +70,27 @@ def _bearing(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 def _estimate_tile_count(bbox: BoundingBox, min_zoom: int, max_zoom: int) -> int:
-    """Estimate number of tiles needed for a bounding box across zoom levels."""
+    """Number of slippy-map tiles covering ``bbox`` across the zoom range (inclusive).
+
+    Latitudes are clamped to the Web-Mercator limit (the formula diverges at the poles) and
+    the tile indices to ``0..2^z-1``; a bbox edge that lies exactly on a tile boundary does
+    not pull in the neighbouring tile.
+    """
+    south = max(-_MAX_MERCATOR_LAT, min(_MAX_MERCATOR_LAT, bbox.min_lat))
+    north = max(-_MAX_MERCATOR_LAT, min(_MAX_MERCATOR_LAT, bbox.max_lat))
+
+    def merc_y(lat: float) -> float:
+        rad = math.radians(lat)
+        return (1 - math.log(math.tan(rad) + 1 / math.cos(rad)) / math.pi) / 2
+
     total = 0
     for z in range(min_zoom, max_zoom + 1):
-        n = 2 ** z
-        x_min = int((bbox.min_lng + 180) / 360 * n)
-        x_max = int((bbox.max_lng + 180) / 360 * n)
-        y_min = int(
-            (1 - math.log(math.tan(math.radians(bbox.max_lat))
-             + 1 / math.cos(math.radians(bbox.max_lat))) / math.pi) / 2 * n
-        )
-        y_max = int(
-            (1 - math.log(math.tan(math.radians(bbox.min_lat))
-             + 1 / math.cos(math.radians(bbox.min_lat))) / math.pi) / 2 * n
-        )
-        total += max(0, (x_max - x_min + 1)) * max(0, (y_max - y_min + 1))
+        n = 2**z
+        x_min = min(n - 1, max(0, math.floor((bbox.min_lng + 180) / 360 * n)))
+        x_max = min(n - 1, max(x_min, math.ceil((bbox.max_lng + 180) / 360 * n) - 1))
+        y_min = min(n - 1, max(0, math.floor(merc_y(north) * n)))
+        y_max = min(n - 1, max(y_min, math.ceil(merc_y(south) * n) - 1))
+        total += (x_max - x_min + 1) * (y_max - y_min + 1)
     return total
 
 
@@ -79,6 +103,7 @@ class OfflineManager:
         self._places_dir = self._base / "places"
         self._queue_dir = self._base / "sync_queue"
         self._meta_file = self._base / "meta.json"
+        self._conn_cache: tuple[float, bool] | None = None
         for d in (self._regions_dir, self._places_dir, self._queue_dir):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +137,7 @@ class OfflineManager:
         current = await self._current_disk_usage()
         limit = self._storage_limit_bytes()
         if current + additional_bytes > limit:
-            raise ValueError(
+            raise StorageLimitError(
                 f"Storage limit exceeded: {current + additional_bytes} > {limit} bytes"
             )
 
@@ -121,14 +146,24 @@ class OfflineManager:
     # ------------------------------------------------------------------
 
     async def check_connectivity(self) -> bool:
-        """Check if server is reachable (basic connectivity probe)."""
+        """Check if server is reachable (basic connectivity probe).
+
+        The result is cached for ``_CONNECTIVITY_TTL_S`` so that polling /status or
+        /connectivity cannot be turned into an outbound request per call.
+        """
+        now = time.monotonic()
+        if self._conn_cache is not None and now - self._conn_cache[0] < _CONNECTIVITY_TTL_S:
+            return self._conn_cache[1]
         try:
             from app.utils.http_client import get_http_client
-            client = await get_http_client()
-            resp = await client.get("https://overpass-api.de/api/status", timeout=5.0)
-            return resp.status_code == 200
+
+            client = get_http_client()  # synchronous accessor: returns the shared AsyncClient
+            resp = await client.get(_CONNECTIVITY_URL, timeout=5.0)
+            online = resp.status_code == 200
         except Exception:
-            return False
+            online = False
+        self._conn_cache = (time.monotonic(), online)
+        return online
 
     # ------------------------------------------------------------------
     # Region management
@@ -146,8 +181,20 @@ class OfflineManager:
         max_zoom: int = 14,
     ) -> tuple[OfflineRegion, int, float]:
         """Create a new offline region. Returns (region, tile_count, est_size_mb)."""
-        region_id = uuid.uuid4().hex[:12]
+        if bbox.min_lat >= bbox.max_lat or bbox.min_lng >= bbox.max_lng:
+            raise ValueError("Invalid bounding box: min must be less than max")
+        if min_zoom > max_zoom:
+            raise ValueError("min_zoom must be <= max_zoom")
         tile_count = _estimate_tile_count(bbox, min_zoom, max_zoom)
+        if tile_count > settings.offline_max_region_tiles:
+            raise RegionTooLargeError(
+                f"Region needs {tile_count} tiles, the limit is "
+                f"{settings.offline_max_region_tiles}; choose a smaller area or lower max_zoom"
+            )
+        if sum(1 for _ in self._regions_dir.glob("*.json")) >= MAX_REGIONS:
+            raise StorageLimitError(f"Region limit reached ({MAX_REGIONS}); delete one first")
+        await self._check_storage_limit(4096)
+        region_id = uuid.uuid4().hex[:12]
         est_size_mb = round(tile_count * 15 / 1024, 2)  # ~15 KB avg per vector tile
 
         region = OfflineRegion(
@@ -162,9 +209,7 @@ class OfflineManager:
             status="ready",
             progress_percent=100.0,
         )
-        self._region_path(region_id).write_text(
-            region.model_dump_json(indent=2), encoding="utf-8"
-        )
+        atomic_write_text(self._region_path(region_id), region.model_dump_json(indent=2))
         logger.info(
             "Created offline region %s (%s tiles, ~%.1f MB)", region_id, tile_count, est_size_mb
         )
@@ -185,7 +230,11 @@ class OfflineManager:
         path = self._region_path(region_id)
         if not path.exists():
             return None
-        return OfflineRegion.model_validate_json(path.read_text("utf-8"))
+        try:
+            return OfflineRegion.model_validate_json(path.read_text("utf-8"))
+        except Exception:
+            logger.warning("Corrupted region file: %s", path)
+            return None
 
     async def delete_region(self, region_id: str) -> bool:
         self._validate_id(region_id)
@@ -197,9 +246,8 @@ class OfflineManager:
         return True
 
     async def update_region(self, region: OfflineRegion) -> None:
-        self._region_path(region.region_id).write_text(
-            region.model_dump_json(indent=2), encoding="utf-8"
-        )
+        self._validate_id(region.region_id)
+        atomic_write_text(self._region_path(region.region_id), region.model_dump_json(indent=2))
 
     # ------------------------------------------------------------------
     # Place cache
@@ -211,23 +259,52 @@ class OfflineManager:
     async def cache_place(self, place: Place, has_llm_description: bool = False) -> CachedPlace:
         """Cache a single place for offline access."""
         self._validate_id(place.id)
-        await self._check_storage_limit(2048)  # estimate ~2KB per place
-        cached = CachedPlace(
-            place=place,
-            has_llm_description=has_llm_description,
-        )
-        self._place_path(place.id).write_text(
-            cached.model_dump_json(indent=2), encoding="utf-8"
-        )
-        return cached
+        return (await self._store_places([place], has_llm_description))[0]
 
     async def cache_places(
         self, places: list[Place], has_llm_description: bool = False
     ) -> int:
-        """Cache multiple places. Returns count cached."""
+        """Cache multiple places. Returns count cached.
+
+        Places whose id is not a safe file name are skipped (one odd upstream id must not
+        abort the whole batch). Raises :class:`StorageLimitError` when a limit is reached;
+        places stored before that point are kept.
+        """
+        valid: list[Place] = []
         for p in places:
-            await self.cache_place(p, has_llm_description)
-        return len(places)
+            if _SAFE_ID_RE.match(p.id):
+                valid.append(p)
+            else:
+                logger.warning("Not caching place with unsafe id %r", p.id)
+        await self._store_places(valid, has_llm_description)
+        return len(valid)
+
+    async def _store_places(
+        self, places: list[Place], has_llm_description: bool
+    ) -> list[CachedPlace]:
+        """Write places, enforcing the storage and count limits with a single directory scan."""
+        usage = await self._current_disk_usage()
+        count = sum(1 for _ in self._places_dir.glob("*.json"))
+        storage_limit = self._storage_limit_bytes()
+        stored: list[CachedPlace] = []
+        for place in places:
+            path = self._place_path(place.id)
+            existed = path.exists()
+            if not existed and count >= settings.offline_max_cached_places:
+                raise StorageLimitError(
+                    f"Cached place limit reached ({settings.offline_max_cached_places})"
+                )
+            if usage + 2048 > storage_limit:  # estimate ~2KB per place
+                raise StorageLimitError(
+                    f"Storage limit exceeded: {usage + 2048} > {storage_limit} bytes"
+                )
+            cached = CachedPlace(place=place, has_llm_description=has_llm_description)
+            payload = cached.model_dump_json(indent=2)
+            atomic_write_text(path, payload)
+            usage += len(payload.encode("utf-8"))
+            count += 0 if existed else 1
+            stored.append(cached)
+        return stored
 
     async def get_cached_place(self, place_id: str) -> CachedPlace | None:
         self._validate_id(place_id)
@@ -280,6 +357,7 @@ class OfflineManager:
 
     async def cache_route_places(self, route_id: str) -> int:
         """Cache all places from a saved route for offline use."""
+        self._validate_id(route_id)  # route_id comes from the request: no path traversal
         # Load route data from the route builder's data dir
         route_data_dir = Path(settings.journal_data_dir).parent / "routes"
         route_file = route_data_dir / f"{route_id}.json"
@@ -292,7 +370,9 @@ class OfflineManager:
                 place_data = wp.get("place")
                 if place_data:
                     places.append(Place.model_validate(place_data))
-            return await self.cache_places(places, has_llm_description=True)
+            return await self.cache_places(places, has_llm_description=False)
+        except StorageLimitError:
+            raise
         except Exception as exc:
             logger.warning("Failed to cache route %s places: %s", route_id, exc)
             return 0
@@ -312,6 +392,9 @@ class OfflineManager:
         data: dict[str, Any] | None = None,
     ) -> SyncQueueItem:
         """Add an operation to the sync queue."""
+        if sum(1 for _ in self._queue_dir.glob("*.json")) >= MAX_QUEUE_ITEMS:
+            raise StorageLimitError(f"Sync queue is full ({MAX_QUEUE_ITEMS} items)")
+        await self._check_storage_limit(4096)
         item = SyncQueueItem(
             id=uuid.uuid4().hex[:12],
             operation=operation,
@@ -319,9 +402,7 @@ class OfflineManager:
             resource_id=resource_id,
             data=data or {},
         )
-        self._queue_item_path(item.id).write_text(
-            item.model_dump_json(indent=2), encoding="utf-8"
-        )
+        atomic_write_text(self._queue_item_path(item.id), item.model_dump_json(indent=2))
         logger.info("Enqueued sync item %s: %s %s", item.id, operation.value, resource_type.value)
         return item
 
@@ -353,9 +434,7 @@ class OfflineManager:
             return False
         item.synced = True
         item.synced_at = datetime.now(UTC)
-        self._queue_item_path(item_id).write_text(
-            item.model_dump_json(indent=2), encoding="utf-8"
-        )
+        atomic_write_text(self._queue_item_path(item_id), item.model_dump_json(indent=2))
         return True
 
     async def delete_queue_item(self, item_id: str) -> bool:
@@ -414,7 +493,7 @@ class OfflineManager:
         dist = _haversine(current.lat, current.lng, target.lat, target.lng)
         bear = _bearing(current.lat, current.lng, target.lat, target.lng)
         return {
-            "bearing_deg": round(bear, 1),
+            "bearing_deg": round(bear, 1) % 360,  # 359.96 rounds to 360.0, outside [0, 360)
             "distance_m": round(dist, 1),
             "target_name": target_name,
             "target_coordinates": target,
@@ -478,7 +557,7 @@ class OfflineManager:
     def _save_meta(self, data: dict) -> None:
         meta = self._load_meta()
         meta.update(data)
-        self._meta_file.write_text(json.dumps(meta, default=str), encoding="utf-8")
+        atomic_write_text(self._meta_file, json.dumps(meta, default=str))
 
     def _reset_store(self) -> None:
         """Reset all offline data (for testing)."""
@@ -489,6 +568,7 @@ class OfflineManager:
             d.mkdir(parents=True, exist_ok=True)
         if self._meta_file.exists():
             self._meta_file.unlink()
+        self._conn_cache = None
 
 
 # Module-level singleton

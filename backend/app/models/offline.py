@@ -153,8 +153,15 @@ class CachePlacesRequest(BaseModel):
 
     bbox: BoundingBox
     categories: list[PlaceCategory] = Field(default_factory=list)
-    include_descriptions: bool = Field(True, description="Pre-fetch LLM descriptions")
-    route_id: str | None = Field(None, description="Cache all places from a planned route")
+    include_descriptions: bool = Field(
+        True,
+        description="Reserved: LLM descriptions are not pre-fetched (cost); places are cached as discovered",
+    )
+    route_id: str | None = Field(
+        None,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
+        description="Cache all places from a planned route",
+    )
 
 
 class CachePlacesResponse(BaseModel):
