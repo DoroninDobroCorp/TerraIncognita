@@ -27,6 +27,7 @@ from app.api.recommendations import router as recommendations_router
 from app.api.routes import router as routes_router
 from app.api.storytelling import router as storytelling_router
 from app.api.streak import router as streak_router
+from app.api.walk_report import router as walk_report_router
 from app.config import settings
 from app.middleware import (
     RateLimitMiddleware,
@@ -90,6 +91,7 @@ app.include_router(loop_route_router)
 app.include_router(place_ask_router)
 app.include_router(place_collections_router)
 app.include_router(streak_router)
+app.include_router(walk_report_router)
 
 # Serve map static files (explorer.html, etc.)
 _project_root = Path(__file__).resolve().parent.parent.parent

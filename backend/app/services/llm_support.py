@@ -49,6 +49,12 @@ class LLMUnavailableError(RuntimeError):
         return UNAVAILABLE_MESSAGES.get(self.reason, UNAVAILABLE_MESSAGES["error"])
 
 
+def language_instruction(code: str) -> str:
+    """System-prompt sentence for an already validated language code."""
+    name = LANGUAGE_NAMES.get(code)
+    return f"Answer in {name}." if name else "Answer in the same language as the question."
+
+
 def effective_language(code: str | None, default: str = "en") -> str:
     """Map a request language to one we generate for (``default`` for auto/unknown codes)."""
     code = (code or "").lower()

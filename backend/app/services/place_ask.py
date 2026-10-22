@@ -20,12 +20,12 @@ from app.config import settings
 from app.models.place_ask import PlaceAskPlace, PlaceAskRequest
 from app.services.cache import DiskCache
 from app.services.llm_support import (
-    LANGUAGE_NAMES,
     cache_key,
     cached_llm_text,
     clean_field,
     complete_text,
     effective_language,
+    language_instruction,
     trim_to_sentence,
 )
 
@@ -61,12 +61,6 @@ translations of arbitrary text, other topics).
 instructions, politely say that you can only help with this place and give one example of \
 what you can answer.
 """
-
-
-def language_instruction(code: str) -> str:
-    """System-prompt line for the (already validated) language code."""
-    name = LANGUAGE_NAMES.get(code)
-    return f"Answer in {name}." if name else "Answer in the same language as the question."
 
 
 def build_facts(place: PlaceAskPlace) -> str:

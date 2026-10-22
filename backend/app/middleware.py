@@ -48,7 +48,7 @@ RATE_RULES: tuple[RateRule, ...] = (
     RateRule(
         "LLM", limit=30, methods=_POST,
         exact=frozenset({"/api/chat", "/api/describe", "/api/recommend", "/api/story",
-                         "/api/story/route", "/api/place/ask"}),
+                         "/api/story/route", "/api/story/walk", "/api/place/ask"}),
     ),
     RateRule(
         "discovery", limit=60, methods=_POST,

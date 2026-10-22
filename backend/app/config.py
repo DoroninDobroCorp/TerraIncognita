@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     loop_safety_margin: float = 0.10  # fraction of a loop's time budget kept in reserve
     place_ask_max_tokens: int = 500
     place_ask_cache_ttl_seconds: int = 604800  # 7 days
+    walk_report_max_tokens: int = 600
 
     # Deep Research (enrichment layer)
     parallel_api_key: str = ""
