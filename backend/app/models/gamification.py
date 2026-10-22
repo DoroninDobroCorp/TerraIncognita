@@ -198,6 +198,8 @@ class XpEvent(BaseModel):
     description: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     visit_id: str | None = None
+    # Idempotency key of the reward ("visit:<place_id>", "streak:<day>"); None for ad-hoc awards
+    ref: str | None = None
 
 
 class XpEventResponse(BaseModel):
