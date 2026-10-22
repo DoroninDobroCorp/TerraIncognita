@@ -6,7 +6,7 @@ import enum
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.place import Coordinates, Place, PlaceCategory
 
@@ -141,12 +141,23 @@ class RouteResponse(BaseModel):
     )
 
 
+MAX_REQUEST_WAYPOINTS = 100  # builder output is <= 50 stops + start + end
+
+
+def _bounded_route(route: Route) -> Route:
+    if len(route.waypoints) > MAX_REQUEST_WAYPOINTS or len(route.segments) > MAX_REQUEST_WAYPOINTS:
+        raise ValueError(f"a route may have at most {MAX_REQUEST_WAYPOINTS} waypoints")
+    return route
+
+
 class RouteExportRequest(BaseModel):
     """POST /api/route/export — export route to GPX/KML."""
 
     route: Route
     format: str = Field("gpx", pattern=r"^(gpx|kml)$")
     include_descriptions: bool = True
+
+    _check_route = field_validator("route")(_bounded_route)
 
 
 class RouteExportResponse(BaseModel):
@@ -162,5 +173,9 @@ class RouteReorderRequest(BaseModel):
 
     route: Route
     waypoint_order: list[int] = Field(
-        ..., description="New order of waypoint indices (excluding origin/destination)"
+        ...,
+        max_length=MAX_REQUEST_WAYPOINTS,
+        description="New order of waypoint indices (excluding origin/destination)",
     )
+
+    _check_route = field_validator("route")(_bounded_route)

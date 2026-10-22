@@ -90,6 +90,7 @@ async def build_route(req: RouteRequest) -> RouteResponse:
     fitted = filter_by_time_budget(
         req.origin, ordered, max_duration_s,
         req.transport_mode.value, is_circular=is_circular,
+        destination=None if is_circular else destination,
     )
 
     # 5. Limit waypoints
@@ -196,6 +197,8 @@ def reorder_waypoints(route: Route, new_order: list[int]) -> RouteResponse:
     new_order contains indices of POI waypoints in desired order.
     Origin and destination remain fixed.
     """
+    if not route.waypoints:
+        raise ValueError("route has no waypoints to reorder")
     poi_waypoints = [w for w in route.waypoints if not w.is_origin and not w.is_destination]
 
     if sorted(new_order) != list(range(len(poi_waypoints))):

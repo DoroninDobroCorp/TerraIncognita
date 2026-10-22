@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 
 from app.models.route import Route
+
+# Characters XML 1.0 cannot represent at all (not even escaped): C0 controls except \t \n \r,
+# the non-characters U+FFFE/U+FFFF and lone surrogates. A place name containing one made the
+# whole GPX/KML unparseable for OsmAnd / Google Earth.
+_XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _x(text: str | None) -> str:
+    """Text safe to put into an XML element (ElementTree escapes <, >, & itself)."""
+    return _XML_ILLEGAL.sub("", text or "")
 
 
 def export_gpx(route: Route, include_descriptions: bool = True) -> str:
@@ -47,11 +58,11 @@ def export_gpx(route: Route, include_descriptions: bool = True) -> str:
             "lon": str(wp.place.coordinates.lng),
         })
         wpt_name = ET.SubElement(wpt, "name")
-        wpt_name.text = wp.place.name or f"Point {wp.order}"
+        wpt_name.text = _x(wp.place.name) or f"Point {wp.order}"
 
         if include_descriptions and wp.place.description:
             wpt_desc = ET.SubElement(wpt, "desc")
-            wpt_desc.text = wp.place.description
+            wpt_desc.text = _x(wp.place.description)
 
         if wp.place.categories:
             wpt_type = ET.SubElement(wpt, "type")
@@ -100,7 +111,7 @@ def export_kml(route: Route, include_descriptions: bool = True) -> str:
     for wp in route.waypoints:
         pm = ET.SubElement(doc, "Placemark")
         pm_name = ET.SubElement(pm, "name")
-        pm_name.text = wp.place.name or f"Point {wp.order}"
+        pm_name.text = _x(wp.place.name) or f"Point {wp.order}"
 
         if wp.is_origin:
             style_url = ET.SubElement(pm, "styleUrl")
@@ -114,7 +125,7 @@ def export_kml(route: Route, include_descriptions: bool = True) -> str:
 
         if include_descriptions and wp.place.description:
             pm_desc = ET.SubElement(pm, "description")
-            pm_desc.text = wp.place.description
+            pm_desc.text = _x(wp.place.description)
 
         point = ET.SubElement(pm, "Point")
         coords = ET.SubElement(point, "coordinates")
