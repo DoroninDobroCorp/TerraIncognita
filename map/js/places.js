@@ -1,20 +1,8 @@
-// Place discovery, filters, place card.
-// Classic script (no modules): shares the global scope with the other map/js files.
+// Place discovery, filters (presets, chips, sliders, toggles) and the place card.
+// Classic script (no modules): every file in map/js shares one global scope.
+'use strict';
 
-// Refresh
-document.getElementById('btn-refresh').addEventListener('click', () => {
-  if (mapAvailable) {
-    const c = map.getCenter();
-    if (c && typeof c.lat === 'number') { state.userLat = c.lat; state.userLng = c.lng; }
-  }
-  fetchPlaces();
-});
-
-// Search
-document.getElementById('search-input').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); const q = e.target.value.trim(); if (q) fetchChat(q); }
-});
-
+// ── Search + discovery ──
 async function fetchChat(q) {
   showMapLoading(true);
   analytics.track('search', { query: q.substring(0, 50) });
@@ -25,6 +13,14 @@ async function fetchChat(q) {
   showMapLoading(false);
 }
 
+function discoverBody() {
+  return {
+    lat:state.userLat, lng:state.userLng, radius_km:state.radius,
+    categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces]:[],
+    limit:200, sort_by:'confidence'
+  };
+}
+
 // Fetch places (guarded against concurrent calls)
 let fetchBusy = false;
 async function fetchPlaces() {
@@ -32,11 +28,7 @@ async function fetchPlaces() {
   fetchBusy = true;
   showMapLoading(true);
   try {
-    const data = await api('/api/discover', {method:'POST', body:{
-      lat:state.userLat, lng:state.userLng, radius_km:state.radius,
-      categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces]:[],
-      limit:200, sort_by:'confidence'
-    }});
+    const data = await api('/api/discover', {method:'POST', body: discoverBody()});
     state.places = data.places || []; applyFilters();
   } catch(e) { loadDemoData(); toast('API unavailable — showing demo data','warning'); }
   showMapLoading(false);
@@ -63,75 +55,133 @@ function applyFilters() {
     if (state.hideVisited && state.visitedPlaces.has(p.id)) return false;
     return true;
   });
-  document.getElementById('place-count').textContent = `${state.filteredPlaces.length} places`;
+  $('place-count').textContent = `${state.filteredPlaces.length} places`;
   renderPlaces();
   if (state.fogEnabled) updateFogStats();
 }
 
-// Place card
+// ── Place card ──
+const SOURCE_NAMES = {osm:'OpenStreetMap',atlas:'Atlas Obscura',wiki:'Wikidata',community:'Community'};
+
 function showPlaceCard(placeId) {
   const place = state.places.find(p=>p.id===placeId); if(!place)return;
   state.selectedPlace = place;
   const cats = place.categories||[];
-  document.getElementById('card-categories').innerHTML = cats.map(c=>{const d=CATEGORIES[c]||CATEGORIES.landmark;return`<span class="card-category" style="background:${d.color}">${d.icon} ${d.label}</span>`;}).join('');
-  const inFog = state.fogEnabled && !state.visitedPlaces.has(place.id);
-  document.getElementById('card-name').textContent = inFog?'❓ Mystery Place':(place.name||'Unknown');
-  const src={osm:'OpenStreetMap',atlas:'Atlas Obscura',wiki:'Wikidata',community:'Community'};
-  document.getElementById('card-meta').textContent = `📡 ${src[place.source]||place.source}${place.distance_m?' · �📏 '+(place.distance_m/1000).toFixed(1)+' km':''}`;
-  document.getElementById('card-desc').textContent = inFog?'Visit this place to reveal its secrets...':place.description||'No description';
-  const conf=place.confidence||0.5, fill=document.getElementById('card-conf-fill');
+  setHtml($('card-categories'), html`${cats.map(c => { const d = catDef(c); return html`<span class="card-category" style="background:${d.color}">${d.icon} ${d.label}</span>`; })}`);
+  const inFog = isInFog(place);
+  $('card-name').textContent = inFog?'❓ Mystery Place':(place.name||'Unknown');
+  $('card-meta').textContent = `📡 ${SOURCE_NAMES[place.source]||place.source}${place.distance_m?' · 📏 '+(place.distance_m/1000).toFixed(1)+' km':''}`;
+  $('card-desc').textContent = inFog?'Visit this place to reveal its secrets...':place.description||'No description';
+  const conf=place.confidence||0.5, fill=$('card-conf-fill');
   fill.style.width=(conf*100)+'%'; fill.style.background=conf>0.7?'#2ecc71':conf>0.4?'#f39c12':'#e74c3c';
-  document.getElementById('card-save').textContent = state.savedPlaces.has(place.id)?'★ Saved':'⭐ Save';
-  document.getElementById('place-card').classList.add('visible');
+  updateSaveButton();
+  $('place-card').classList.add('visible');
 }
-document.getElementById('card-close').addEventListener('click',()=>{document.getElementById('place-card').classList.remove('visible');state.selectedPlace=null;});
-document.getElementById('card-navigate').addEventListener('click',()=>{if(!state.selectedPlace)return;const p=state.selectedPlace;startNavigation(p);document.getElementById('place-card').classList.remove('visible');});
-document.getElementById('nav-stop').addEventListener('click',()=>{stopNavigation();});
-document.getElementById('card-save').addEventListener('click',()=>{if(!state.selectedPlace)return;const id=state.selectedPlace.id;if(state.savedPlaces.has(id))state.savedPlaces.delete(id);else state.savedPlaces.add(id);localStorage.setItem('ti_saved',JSON.stringify([...state.savedPlaces]));document.getElementById('card-save').textContent=state.savedPlaces.has(id)?'★ Saved':'⭐ Save';});
+function updateSaveButton() {
+  const p = state.selectedPlace;
+  $('card-save').textContent = p && state.savedPlaces.has(p.id) ? '★ Saved' : '⭐ Save';
+}
+function closePlaceCard() {
+  $('place-card').classList.remove('visible');
+  state.selectedPlace = null;
+}
 
-// Story button
-document.getElementById('card-story').addEventListener('click', async ()=>{
+async function showPlaceStory() {
   if(!state.selectedPlace) return;
   const p = state.selectedPlace;
   toast('Generating story...','info');
   try {
-    const data = await api('/api/story',{method:'POST',body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,categories:p.categories,language:'ru'}});
-    document.getElementById('card-desc').innerHTML = `<strong>📖 AI Story:</strong><br>${escHtml(data.story)}`;
+    const data = await api('/api/story',{method:'POST',body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,place_categories:p.categories,language:'ru'}});
+    setHtml($('card-desc'), html`<strong>📖 AI Story:</strong><br>${data.story}`);
     toast('Story generated!','success');
   } catch { toast('Story generation failed','error'); }
-});
+}
 
-// Check-in button
-document.getElementById('card-checkin').addEventListener('click', async ()=>{
+async function checkInSelectedPlace() {
   if(!state.selectedPlace) return;
   const p = state.selectedPlace;
   analytics.track('checkin', { place_id: p.id, category: p.categories?.[0] });
+  const markVisited = () => { state.visitedPlaces.add(p.id); persistVisited(); renderFog(); renderPlaces(); };
   try {
     await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
-    state.visitedPlaces.add(p.id);
-    localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces]));
-    renderFog(); renderPlaces(); toast('✅ Checked in at '+p.name,'success');
-  } catch { toast('Check-in failed — saved locally','warning'); state.visitedPlaces.add(p.id); localStorage.setItem('ti_visited',JSON.stringify([...state.visitedPlaces])); renderFog(); renderPlaces(); }
+    markVisited(); toast('✅ Checked in at '+p.name,'success');
+  } catch { toast('Check-in failed — saved locally','warning'); markVisited(); }
+}
+
+registerActions({
+  'show-place': (el) => showPlaceCard(el.dataset.id),
+  'close-card': () => closePlaceCard(),
+  'card-navigate': () => { if (!state.selectedPlace) return; startNavigation(state.selectedPlace); $('place-card').classList.remove('visible'); },
+  'card-save': () => {
+    if (!state.selectedPlace) return;
+    const id = state.selectedPlace.id;
+    if (state.savedPlaces.has(id)) state.savedPlaces.delete(id); else state.savedPlaces.add(id);
+    persistSaved(); updateSaveButton();
+  },
+  'card-story': () => showPlaceStory(),
+  'card-checkin': () => checkInSelectedPlace(),
+  refresh: () => {
+    const c = mapCenter();
+    state.userLat = c.lat; state.userLng = c.lng;
+    fetchPlaces();
+  },
 });
 
-// Filter panel
-document.getElementById('filter-handle').addEventListener('click',()=>{document.getElementById('filter-panel').classList.toggle('open');});
-let touchStartY=0;
-document.getElementById('filter-panel').addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
-document.getElementById('filter-panel').addEventListener('touchend',e=>{const d=e.changedTouches[0].clientY-touchStartY;if(d>50)document.getElementById('filter-panel').classList.remove('open');else if(d<-50)document.getElementById('filter-panel').classList.add('open');},{passive:true});
-
-rebuildCategoryChips();
-document.querySelectorAll('.preset-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');state.activeCategories=new Set(PRESETS[btn.dataset.preset]);document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',state.activeCategories.has(c.dataset.cat)));applyFilters();});});
-
-document.getElementById('radius-slider').addEventListener('input', function(){state.radius=parseFloat(this.value);document.getElementById('radius-value').textContent=state.radius.toFixed(1)+' km';});
-document.getElementById('radius-slider').addEventListener('change', debounce(()=>fetchPlaces(), 400));
-document.getElementById('confidence-slider').addEventListener('input', debounce(function(){state.minConfidence=parseInt(this.value);document.getElementById('confidence-value').textContent=state.minConfidence===0?'All':'≥ '+state.minConfidence+'%';applyFilters();}, 150));
-function handleToggle(el, onChange) { el.addEventListener('click',function(){this.classList.toggle('on');this.setAttribute('aria-checked',this.classList.contains('on'));onChange(this.classList.contains('on'));}); el.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();this.click();}}); }
-handleToggle(document.getElementById('toggle-visited'), v=>{state.hideVisited=v;applyFilters();});
-handleToggle(document.getElementById('toggle-fog'), v=>{state.fogEnabled=v;document.getElementById('btn-fog').classList.toggle('active',v);document.getElementById('fog-stats').classList.toggle('visible',v);renderFog();renderPlaces();});
-
+// ── Filter panel ──
 function rebuildCategoryChips() {
-  const c=document.getElementById('category-chips'); c.innerHTML='';
-  Object.entries(CATEGORIES).forEach(([k,d])=>{const ch=document.createElement('div');ch.className='chip active';ch.dataset.cat=k;ch.setAttribute('role','checkbox');ch.setAttribute('aria-checked','true');ch.setAttribute('tabindex','0');ch.innerHTML=`<span style="margin-right:3px">${d.icon}</span>${d.label}`;ch.addEventListener('click',()=>toggleChip(ch,k));ch.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();toggleChip(ch,k);}});c.appendChild(ch);});
+  setHtml($('category-chips'), html`${Object.entries(CATEGORIES).map(([k]) => {
+    const d = catDef(k), on = state.activeCategories.has(k);
+    return html`<div class="chip${on ? ' active' : ''}" data-action="toggle-chip" data-cat="${k}" role="checkbox" aria-checked="${String(on)}" tabindex="0"><span class="chip-icon">${d.icon}</span>${d.label}</div>`;
+  })}`);
 }
-function toggleChip(ch,k){ch.classList.toggle('active');const on=ch.classList.contains('active');ch.setAttribute('aria-checked',String(on));if(on)state.activeCategories.add(k);else state.activeCategories.delete(k);document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active'));applyFilters();}
+function toggleChip(ch) {
+  const k = ch.dataset.cat;
+  const on = !ch.classList.contains('active');
+  ch.classList.toggle('active', on);
+  ch.setAttribute('aria-checked', String(on));
+  if (on) state.activeCategories.add(k); else state.activeCategories.delete(k);
+  $$('.preset-btn').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); });
+  applyFilters();
+}
+function applyPreset(name) {
+  if (!PRESETS[name]) return;
+  $$('.preset-btn').forEach(b => { const on = b === document.querySelector(`.preset-btn[data-preset="${name}"]`); b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
+  state.activeCategories = new Set(PRESETS[name]);
+  $$('#category-chips .chip').forEach(c => { const on = state.activeCategories.has(c.dataset.cat); c.classList.toggle('active', on); c.setAttribute('aria-checked', String(on)); });
+  applyFilters();
+}
+function setSwitch(el, on) { el.classList.toggle('on', on); el.setAttribute('aria-checked', String(on)); }
+
+const _refetchSoon = debounce(() => fetchPlaces(), 400);
+const _applyConfidence = debounce((v) => {
+  state.minConfidence = v;
+  $('confidence-value').textContent = v === 0 ? 'All' : '≥ ' + v + '%';
+  applyFilters();
+}, 150);
+
+registerActions({
+  'toggle-filters': () => { const p = $('filter-panel'); const open = p.classList.toggle('open'); $('filter-handle').setAttribute('aria-expanded', String(open)); },
+  preset: (el) => applyPreset(el.dataset.preset),
+  'toggle-chip': (el) => toggleChip(el),
+  'toggle-hide-visited': (el) => { const on = !el.classList.contains('on'); setSwitch(el, on); state.hideVisited = on; applyFilters(); },
+  'toggle-fog-setting': (el) => setFogEnabled(!el.classList.contains('on')),
+});
+registerInput({
+  radius: (el) => { state.radius = parseFloat(el.value); $('radius-value').textContent = state.radius.toFixed(1) + ' km'; },
+  confidence: (el) => _applyConfidence(parseInt(el.value)),
+});
+registerChange({ radius: () => _refetchSoon() });
+registerEnter({ search: (el) => { const q = el.value.trim(); if (q) fetchChat(q); } });
+
+function initPlaces() {
+  rebuildCategoryChips();
+  // Swipe the filter sheet up/down
+  const fp = $('filter-panel');
+  let touchStartY = 0;
+  fp.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, { passive: true });
+  fp.addEventListener('touchend', e => {
+    const d = e.changedTouches[0].clientY - touchStartY;
+    if (d > 50) fp.classList.remove('open'); else if (d < -50) fp.classList.add('open');
+    $('filter-handle').setAttribute('aria-expanded', String(fp.classList.contains('open')));
+  }, { passive: true });
+}

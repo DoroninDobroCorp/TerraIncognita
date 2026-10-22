@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Terra Incognita</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Terra Incognita — discover hidden and unusual places around you">
   <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"
           integrity="sha256-G0W6/JRzbzxZYK5MP4SRlKnxYFr7F8kmnF0ZT1fnlxk="
@@ -18,83 +18,85 @@
 
 <div id="app">
 <!-- ═══════ Sidebar Navigation ═══════ -->
-<nav id="sidebar">
-  <button class="nav-btn active" data-section="map" title="Map">🗺️<span class="nav-tooltip">Map</span></button>
-  <button class="nav-btn" data-section="chat" title="AI Chat">🤖<span class="nav-tooltip">AI Chat</span></button>
-  <button class="nav-btn" data-section="journal" title="Journal">📓<span class="nav-tooltip">Journal</span></button>
-  <button class="nav-btn" data-section="routes" title="Routes">🛤️<span class="nav-tooltip">Routes</span></button>
+<nav id="sidebar" aria-label="Sections">
+  <button class="nav-btn active" aria-current="page" aria-label="Map" data-action="show-section" data-section="map" title="Map">🗺️<span class="nav-tooltip">Map</span></button>
+  <button class="nav-btn" aria-label="AI Chat" data-action="show-section" data-section="chat" title="AI Chat">🤖<span class="nav-tooltip">AI Chat</span></button>
+  <button class="nav-btn" aria-label="Journal" data-action="show-section" data-section="journal" title="Journal">📓<span class="nav-tooltip">Journal</span></button>
+  <button class="nav-btn" aria-label="Routes" data-action="show-section" data-section="routes" title="Routes">🛤️<span class="nav-tooltip">Routes</span></button>
   <div class="nav-divider"></div>
-  <button class="nav-btn" data-section="gamification" title="Gamification">🏆<span class="nav-tooltip">Achievements</span></button>
-  <button class="nav-btn" data-section="community" title="Community">👥<span class="nav-tooltip">Community</span></button>
-  <button class="nav-btn" data-section="offline" title="Offline">📴<span class="nav-tooltip">Offline</span></button>
+  <button class="nav-btn" aria-label="Achievements" data-action="show-section" data-section="gamification" title="Gamification">🏆<span class="nav-tooltip">Achievements</span></button>
+  <button class="nav-btn" aria-label="Community" data-action="show-section" data-section="community" title="Community">👥<span class="nav-tooltip">Community</span></button>
+  <button class="nav-btn" aria-label="Offline" data-action="show-section" data-section="offline" title="Offline">📴<span class="nav-tooltip">Offline</span></button>
   <div class="nav-spacer"></div>
-  <button class="nav-btn" id="nav-status" title="API Status">🟢<span class="nav-tooltip">Connected</span></button>
+  <div class="nav-btn nav-status" id="nav-status" role="status" aria-label="API status" title="API Status">🟢<span class="nav-tooltip">Connected</span></div>
 </nav>
 
 <!-- ═══════ Content Area ═══════ -->
-<div id="content">
+<main id="content">
 
 <!-- ═══════ MAP SECTION ═══════ -->
 <div id="section-map" class="section active">
-  <div id="layer-menu">
-    <button class="layer-btn active" data-layer="dark">🌙 Dark</button>
-    <button class="layer-btn" data-layer="satellite">🛰️ Satellite</button>
-    <button class="layer-btn" data-layer="terrain">⛰️ Terrain</button>
-    <button class="layer-btn" data-layer="historical" id="btn-historical">🕰️ History</button>
+  <div id="layer-menu" role="group" aria-label="Map layers">
+    <button class="layer-btn active" aria-pressed="true" data-action="base-layer" data-layer="streets">🗺️ Streets</button>
+    <button class="layer-btn" aria-pressed="false" data-action="base-layer" data-layer="satellite">🛰️ Satellite</button>
+    <button class="layer-btn" aria-pressed="false" data-action="base-layer" data-layer="terrain">⛰️ Terrain</button>
+    <button class="layer-btn" data-layer="historical" id="btn-historical" aria-expanded="false" aria-controls="historical-panel" data-action="toggle-history">🕰️ History</button>
   </div>
   <div class="map-controls">
-    <button class="ctrl-btn" id="btn-locate" title="My location" aria-label="Center on my location">📍</button>
-    <button class="ctrl-btn" id="btn-pin" title="Set location on map" aria-label="Set custom search point on map">📌</button>
-    <button class="ctrl-btn" id="btn-fog" title="Fog of War" aria-label="Toggle fog of war">🌫️</button>
-    <button class="ctrl-btn" id="btn-refresh" title="Refresh" aria-label="Refresh places">🔄</button>
-    <button class="ctrl-btn help-btn" onclick="showHelp('map')" title="Help">?</button>
+    <button class="ctrl-btn" id="btn-locate" aria-pressed="false" title="My location" aria-label="Center on my location" data-action="locate">📍</button>
+    <button class="ctrl-btn" id="btn-pin" aria-pressed="false" title="Set location on map" aria-label="Set custom search point on map" data-action="toggle-pin">📌</button>
+    <button class="ctrl-btn active" id="btn-fog" aria-pressed="true" title="Fog of War" aria-label="Toggle fog of war" data-action="toggle-fog">🌫️</button>
+    <button class="ctrl-btn" id="btn-refresh" title="Refresh" aria-label="Refresh places" data-action="refresh" data-needs-network>🔄</button>
+    <button class="ctrl-btn help-btn" title="Help" aria-label="Help" data-action="help" data-topic="map">?</button>
   </div>
   <div id="search-bar">
     <label for="search-input" class="sr-only">Search for places</label>
-    <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" />
+    <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" data-enter="search" />
   </div>
-  <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill" style="width:0%"></div></div><span style="font-weight:700;color:var(--accent)" id="fog-pct">0%</span></div></div>
+  <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill"></div></div><span class="fog-pct" id="fog-pct">0%</span></div></div>
   <div id="historical-panel">
-    <button class="hist-close" id="hist-close">✕</button>
+    <button class="hist-close" id="hist-close" aria-label="Close history panel" data-action="close-history">✕</button>
     <div class="hist-title">🕰️ Time Travel</div>
     <div class="hist-layer-list" id="hist-layers"></div>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:11px;color:var(--text-secondary)">Opacity</span><input type="range" id="hist-opacity" min="0" max="100" step="5" value="50" aria-label="Historical layer opacity" style="flex:1;accent-color:var(--accent)"><span id="hist-opacity-value" style="font-size:12px;font-weight:700;color:var(--accent)">50%</span></div>
+    <div class="hist-opacity-row"><label class="text-tiny text-secondary" for="hist-opacity">Opacity</label><input type="range" id="hist-opacity" min="0" max="100" step="5" value="50" aria-label="Historical layer opacity" data-input="hist-opacity"><span class="hist-opacity-value" id="hist-opacity-value">50%</span></div>
   </div>
-  <div id="loading-overlay"><div class="spinner"></div><span>Discovering places...</span></div>
-  <div id="map"></div>
-  <div id="place-card">
-    <button class="card-close" id="card-close">✕</button>
+  <div id="loading-overlay" role="status"><div class="spinner"></div><span>Discovering places...</span></div>
+  <div id="map" role="application" aria-label="Map"></div>
+  <div id="place-card" role="region" aria-label="Place details">
+    <button class="card-close" id="card-close" aria-label="Close place card" data-action="close-card">✕</button>
     <div id="card-categories"></div>
     <div class="card-name" id="card-name"></div>
     <div class="card-meta-info" id="card-meta"></div>
     <div class="card-desc" id="card-desc"></div>
-    <div style="margin-top:8px"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:3px">Confidence</div><div class="confidence-bar"><div class="confidence-fill" id="card-conf-fill"></div></div></div>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="btn btn-primary" style="flex:1" id="card-navigate">🧭 Navigate</button>
-      <button class="btn btn-secondary" style="flex:1" id="card-save">⭐ Save</button>
-      <button class="btn btn-secondary" id="card-story" title="Get AI story">📖</button>
-      <button class="btn btn-secondary" id="card-checkin" title="Check in">📍</button>
+    <div class="mt-8"><div class="text-tiny text-secondary mb-3">Confidence</div><div class="confidence-bar"><div class="confidence-fill" id="card-conf-fill"></div></div></div>
+    <div class="card-buttons">
+      <button class="btn btn-primary flex-1" id="card-navigate" data-action="card-navigate">🧭 Navigate</button>
+      <button class="btn btn-secondary flex-1" id="card-save" data-action="card-save">⭐ Save</button>
+      <button class="btn btn-secondary" id="card-story" title="Get AI story" aria-label="Get AI story" data-action="card-story" data-needs-network>📖</button>
+      <button class="btn btn-secondary" id="card-checkin" title="Check in" aria-label="Check in" data-action="card-checkin">📍</button>
     </div>
   </div>
-  
-  <div class="nav-distance-badge" id="nav-distance">🧭 <span id="nav-dist-text"></span><button style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;margin-left:4px" id="nav-stop">✕</button></div>
+
+  <div class="nav-distance-badge" id="nav-distance" role="status">🧭 <span id="nav-dist-text"></span><button class="nav-stop" id="nav-stop" aria-label="Stop navigation" data-action="nav-stop">✕</button></div>
   <div id="filter-panel">
-    <div class="filter-handle" id="filter-handle"></div>
-    <div class="filter-title"><span>🎛️ Filters</span><span id="place-count" style="font-size:12px;color:var(--text-secondary)">0 places</span></div>
+    <button class="filter-handle-btn" id="filter-handle" aria-expanded="false" aria-controls="filter-body" aria-label="Show or hide filters" data-action="toggle-filters"><span class="filter-handle"></span></button>
+    <div id="filter-body">
+    <div class="filter-title"><span>🎛️ Filters</span><span id="place-count" class="text-small text-secondary" aria-live="polite">0 places</span></div>
     <div class="filter-section"><div class="filter-section-title">Presets</div><div class="presets">
-      <button class="preset-btn active" data-preset="all">🌍 All</button>
-      <button class="preset-btn" data-preset="hidden">🕵️ Hidden</button>
-      <button class="preset-btn" data-preset="urbex">🏚️ Urbex</button>
-      <button class="preset-btn" data-preset="nature">🌿 Nature</button>
-      <button class="preset-btn" data-preset="history">🏛️ History</button>
-      <button class="preset-btn" data-preset="classic">⭐ Classic</button>
+      <button class="preset-btn active" aria-pressed="true" data-action="preset" data-preset="all">🌍 All</button>
+      <button class="preset-btn" aria-pressed="false" data-action="preset" data-preset="hidden">🕵️ Hidden</button>
+      <button class="preset-btn" aria-pressed="false" data-action="preset" data-preset="urbex">🏚️ Urbex</button>
+      <button class="preset-btn" aria-pressed="false" data-action="preset" data-preset="nature">🌿 Nature</button>
+      <button class="preset-btn" aria-pressed="false" data-action="preset" data-preset="history">🏛️ History</button>
+      <button class="preset-btn" aria-pressed="false" data-action="preset" data-preset="classic">⭐ Classic</button>
     </div></div>
     <div class="filter-section"><div class="filter-section-title">Categories</div><div class="category-chips" id="category-chips"></div></div>
-    <div class="filter-section"><div class="filter-section-title">Radius</div><div class="slider-row"><input type="range" id="radius-slider" min="0.5" max="50" step="0.5" value="5" aria-label="Search radius"><span class="slider-value" id="radius-value">5.0 km</span></div></div>
-    <div class="filter-section"><div class="filter-section-title">Confidence</div><div class="slider-row"><input type="range" id="confidence-slider" min="0" max="100" step="5" value="0" aria-label="Confidence threshold"><span class="slider-value" id="confidence-value">All</span></div></div>
+    <div class="filter-section"><div class="filter-section-title">Radius</div><div class="slider-row"><input type="range" id="radius-slider" min="0.5" max="50" step="0.5" value="5" aria-label="Search radius" data-input="radius" data-change="radius"><span class="slider-value" id="radius-value">5.0 km</span></div></div>
+    <div class="filter-section"><div class="filter-section-title">Confidence</div><div class="slider-row"><input type="range" id="confidence-slider" min="0" max="100" step="5" value="0" aria-label="Confidence threshold" data-input="confidence"><span class="slider-value" id="confidence-value">All</span></div></div>
     <div class="filter-section">
-      <div class="toggle-row"><span class="toggle-label">Hide visited places</span><div class="toggle" id="toggle-visited" role="switch" aria-checked="false" tabindex="0"></div></div>
-      <div class="toggle-row" style="margin-top:6px"><span class="toggle-label">Show fog of war</span><div class="toggle on" id="toggle-fog" role="switch" aria-checked="true" tabindex="0"></div></div>
+      <div class="toggle-row"><span class="toggle-label" id="lbl-hide-visited">Hide visited places</span><button type="button" class="toggle" id="toggle-visited" role="switch" aria-checked="false" aria-labelledby="lbl-hide-visited" data-action="toggle-hide-visited"></button></div>
+      <div class="toggle-row mt-6"><span class="toggle-label" id="lbl-show-fog">Show fog of war</span><button type="button" class="toggle on" id="toggle-fog" role="switch" aria-checked="true" aria-labelledby="lbl-show-fog" data-action="toggle-fog-setting"></button></div>
+    </div>
     </div>
   </div>
 </div>
@@ -104,7 +106,7 @@
   <div class="panel">
     <div class="panel-header">
       <h2>🤖 AI Explorer Chat</h2>
-      <button class="help-btn" onclick="showHelp('chat')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="chat">?</button>
     </div>
     <div id="chat-messages" role="log" aria-live="polite" aria-label="Chat conversation">
       <div class="chat-msg assistant">
@@ -116,13 +118,13 @@
       </div>
     </div>
     <div class="chat-suggestions" id="chat-suggestions">
-      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🏚️ Заброшенные места рядом</button>
-      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🌿 Скрытые природные места</button>
-      <button class="chat-suggestion" onclick="sendChat(this.textContent)">🏛️ Исторические руины</button>
+      <button class="chat-suggestion" data-action="chat-suggest" data-needs-network>🏚️ Заброшенные места рядом</button>
+      <button class="chat-suggestion" data-action="chat-suggest" data-needs-network>🌿 Скрытые природные места</button>
+      <button class="chat-suggestion" data-action="chat-suggest" data-needs-network>🏛️ Исторические руины</button>
     </div>
     <div id="chat-input-row">
-      <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" />
-      <button class="btn btn-primary" id="chat-send" onclick="sendChatFromInput()">➤</button>
+      <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" data-enter="chat-input" />
+      <button class="btn btn-primary" id="chat-send" aria-label="Send message" data-action="chat-send" data-needs-network>➤</button>
     </div>
   </div>
 </div>
@@ -132,29 +134,30 @@
   <div class="panel">
     <div class="panel-header">
       <h2>📓 Explorer Journal</h2>
-      <div class="tabs" style="margin:0 0 0 16px">
-        <button class="tab active" data-jtab="visits">Visits</button>
-        <button class="tab" data-jtab="trips">Trips</button>
-        <button class="tab" data-jtab="stats">Stats</button>
+      <div class="tabs tabs-inline" role="tablist" aria-label="Journal sections">
+        <button class="tab active" role="tab" id="tab-j-visits" aria-selected="true" aria-controls="jtab-visits" data-action="tab" data-group="j" data-tab="visits">Visits</button>
+        <button class="tab" role="tab" id="tab-j-trips" aria-selected="false" tabindex="-1" aria-controls="jtab-trips" data-action="tab" data-group="j" data-tab="trips">Trips</button>
+        <button class="tab" role="tab" id="tab-j-stats" aria-selected="false" tabindex="-1" aria-controls="jtab-stats" data-action="tab" data-group="j" data-tab="stats">Stats</button>
       </div>
-      <button class="help-btn" onclick="showHelp('journal')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="journal">?</button>
     </div>
     <div class="panel-body" id="journal-body">
       <!-- Visits tab -->
-      <div id="jtab-visits" class="jtab active">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <select class="input" id="visits-filter" style="width:auto"><option value="">All visits</option><option value="visited">Visited</option><option value="want_to_visit">Want to visit</option><option value="skip">Skipped</option></select>
-          <button class="btn btn-primary btn-sm" onclick="loadVisits()">🔄 Refresh</button>
+      <div id="jtab-visits" class="jtab" role="tabpanel" aria-labelledby="tab-j-visits">
+        <div class="toolbar">
+          <label class="sr-only" for="visits-filter">Filter visits</label>
+          <select class="input w-auto" id="visits-filter" data-change="load-visits"><option value="">All visits</option><option value="visited">Visited</option><option value="want_to_visit">Want to visit</option><option value="skip">Skipped</option></select>
+          <button class="btn btn-primary btn-sm" data-action="load-visits">🔄 Refresh</button>
         </div>
         <div id="visits-list"></div>
       </div>
       <!-- Trips tab -->
-      <div id="jtab-trips" class="jtab" style="display:none">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn btn-primary btn-sm" onclick="showCreateTrip()">+ New Trip</button>
-          <button class="btn btn-secondary btn-sm" onclick="loadTrips()">🔄 Refresh</button>
+      <div id="jtab-trips" class="jtab" role="tabpanel" aria-labelledby="tab-j-trips" hidden>
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" data-action="show-create-trip">+ New Trip</button>
+          <button class="btn btn-secondary btn-sm" data-action="load-trips">🔄 Refresh</button>
         </div>
-        <div id="create-trip-form" style="display:none;margin-bottom:14px" class="card">
+        <div id="create-trip-form" class="card mb-14" hidden>
           <div class="form-group"><label class="form-label" for="trip-name">Name *</label><input class="input" id="trip-name" placeholder="My adventure" required maxlength="100"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" for="trip-region">Region</label><input class="input" id="trip-region" placeholder="Montenegro"></div>
@@ -163,12 +166,12 @@
             <div class="form-group"><label class="form-label" for="trip-start">Start</label><input type="date" class="input" id="trip-start"></div>
             <div class="form-group"><label class="form-label" for="trip-end">End</label><input type="date" class="input" id="trip-end"></div>
           </div>
-          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="createTrip()">Create</button><button class="btn btn-secondary btn-sm" onclick="hideCreateTrip()">Cancel</button></div>
+          <div class="toolbar mt-8"><button class="btn btn-primary btn-sm" id="trip-create" data-action="create-trip">Create</button><button class="btn btn-secondary btn-sm" data-action="hide-create-trip">Cancel</button></div>
         </div>
         <div id="trips-list"></div>
       </div>
       <!-- Stats tab -->
-      <div id="jtab-stats" class="jtab" style="display:none">
+      <div id="jtab-stats" class="jtab" role="tabpanel" aria-labelledby="tab-j-stats" hidden>
         <div id="stats-content"></div>
       </div>
     </div>
@@ -180,57 +183,58 @@
   <div class="panel">
     <div class="panel-header">
       <h2>🛤️ Route Builder</h2>
-      <button class="help-btn" onclick="showHelp('routes')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="routes">?</button>
     </div>
     <div class="panel-body">
-      <div class="tabs" id="route-tabs">
-        <button class="tab active" data-rtab="build">Point-to-Point</button>
-        <button class="tab" data-rtab="explore">Circular Walk</button>
-        <button class="tab" data-rtab="saved">My Routes</button>
+      <div class="tabs" id="route-tabs" role="tablist" aria-label="Route types">
+        <button class="tab active" role="tab" id="tab-r-build" aria-selected="true" aria-controls="rtab-build" data-action="tab" data-group="r" data-tab="build">Point-to-Point</button>
+        <button class="tab" role="tab" id="tab-r-explore" aria-selected="false" tabindex="-1" aria-controls="rtab-explore" data-action="tab" data-group="r" data-tab="explore">Circular Walk</button>
+        <button class="tab" role="tab" id="tab-r-saved" aria-selected="false" tabindex="-1" aria-controls="rtab-saved" data-action="tab" data-group="r" data-tab="saved">My Routes</button>
       </div>
 
       <!-- Build route -->
-      <div id="rtab-build" class="rtab">
+      <div id="rtab-build" class="rtab" role="tabpanel" aria-labelledby="tab-r-build">
         <div class="form-group"><label class="form-label" for="route-from">From (lat, lng)</label><input class="input" id="route-from" placeholder="42.441, 18.771"></div>
         <div class="form-group"><label class="form-label" for="route-to">To (lat, lng)</label><input class="input" id="route-to" placeholder="42.487, 18.687"></div>
         <div class="form-group"><label class="form-label" for="route-time">Time Budget (hours)</label><input type="number" class="input" id="route-time" value="3" min="0.5" max="24" step="0.5"></div>
-        <div class="form-group"><label class="form-label">Mode</label>
+        <div class="form-group"><label class="form-label" for="route-mode">Mode</label>
           <select class="input" id="route-mode"><option value="walking">🚶 Walking</option><option value="cycling">🚲 Cycling</option><option value="driving">🚗 Driving</option></select>
         </div>
-        <button class="btn btn-primary" onclick="buildRoute()" style="width:100%">🗺️ Build Route</button>
+        <button class="btn btn-primary w-100" id="route-build-btn" data-action="route-build" data-needs-network>🗺️ Build Route</button>
       </div>
 
       <!-- Explore (circular) -->
-      <div id="rtab-explore" class="rtab" style="display:none">
+      <div id="rtab-explore" class="rtab" role="tabpanel" aria-labelledby="tab-r-explore" hidden>
         <div class="form-group"><label class="form-label" for="explore-center">Start Point (lat, lng)</label><input class="input" id="explore-center" placeholder="42.441, 18.771 or use 📍"></div>
         <div class="form-group"><label class="form-label" for="explore-time">Time Budget (hours)</label><input type="number" class="input" id="explore-time" value="2" min="0.5" max="12" step="0.5"></div>
-        <div class="form-group"><label class="form-label">Categories</label>
-          <div id="explore-cats" class="category-chips" style="margin-top:4px"></div>
+        <div class="form-group"><span class="form-label" id="lbl-explore-cats">Categories</span>
+          <div id="explore-cats" class="category-chips mt-4" role="group" aria-labelledby="lbl-explore-cats"></div>
         </div>
-        <button class="btn btn-primary" onclick="exploreRoute()" style="width:100%">🔄 Generate Circular Walk</button>
+        <button class="btn btn-primary w-100" id="route-explore-btn" data-action="route-explore" data-needs-network>🔄 Generate Circular Walk</button>
       </div>
 
       <!-- Saved routes -->
-      <div id="rtab-saved" class="rtab" style="display:none">
+      <div id="rtab-saved" class="rtab" role="tabpanel" aria-labelledby="tab-r-saved" hidden>
         <div id="saved-routes-list"></div>
       </div>
 
       <!-- Route result -->
-      <div id="route-result" style="display:none;margin-top:16px">
+      <div id="route-result" class="mt-16" hidden>
         <div class="card">
           <div class="card-title" id="route-title">Route</div>
           <div class="card-meta" id="route-meta"></div>
-          <div id="route-waypoints" style="margin-top:10px"></div>
-          <div class="card-actions" style="margin-top:12px">
-            <button class="btn btn-primary btn-sm" onclick="exportRoute('gpx')">📥 GPX</button>
-            <button class="btn btn-primary btn-sm" onclick="exportRoute('kml')">📥 KML</button>
-            <button class="btn btn-secondary btn-sm" onclick="getRouteStory()">📖 Story</button>
-            <button class="btn btn-secondary btn-sm" onclick="saveRouteLocal()">💾 Save</button>
+          <div id="route-waypoints" class="mt-10"></div>
+          <div class="card-actions mt-12">
+            <button class="btn btn-primary btn-sm" data-action="route-export" data-fmt="gpx" data-needs-network>📥 GPX</button>
+            <button class="btn btn-primary btn-sm" data-action="route-export" data-fmt="kml" data-needs-network>📥 KML</button>
+            <button class="btn btn-secondary btn-sm" data-action="route-show-map">🗺️ Map</button>
+            <button class="btn btn-secondary btn-sm" data-action="route-story" data-needs-network>📖 Story</button>
+            <button class="btn btn-secondary btn-sm" data-action="route-save">💾 Save</button>
           </div>
         </div>
-        <div id="route-story" style="display:none;margin-top:10px" class="card">
+        <div id="route-story" class="card mt-10" hidden>
           <div class="card-title">📖 Route Story</div>
-          <div id="route-story-text" style="font-size:13px;line-height:1.7;margin-top:8px"></div>
+          <div class="route-story-text" id="route-story-text"></div>
         </div>
       </div>
     </div>
@@ -242,7 +246,7 @@
   <div class="panel">
     <div class="panel-header">
       <h2>🏆 Explorer Profile</h2>
-      <button class="help-btn" onclick="showHelp('gamification')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="gamification">?</button>
     </div>
     <div class="panel-body">
       <div id="profile-content">
@@ -250,7 +254,7 @@
           <div class="profile-level">🌍</div>
           <div class="profile-title" id="profile-title">Explorer</div>
           <div class="profile-xp" id="profile-xp">0 XP · Level 1</div>
-          <div class="progress-bar" style="max-width:200px;margin:0 auto"><div class="progress-fill" id="profile-xp-bar" style="width:0%"></div></div>
+          <div class="progress-bar progress-bar-profile"><div class="progress-fill" id="profile-xp-bar"></div></div>
           <div class="profile-stats">
             <div class="profile-stat"><div class="profile-stat-value" id="ps-explored">0</div><div class="profile-stat-label">km² explored</div></div>
             <div class="profile-stat"><div class="profile-stat-value" id="ps-achievements">0</div><div class="profile-stat-label">achievements</div></div>
@@ -259,19 +263,19 @@
         </div>
       </div>
 
-      <div class="tabs" id="gam-tabs">
-        <button class="tab active" data-gtab="achievements">Achievements</button>
-        <button class="tab" data-gtab="leaderboard">Leaderboard</button>
-        <button class="tab" data-gtab="fog">Fog Stats</button>
+      <div class="tabs" id="gam-tabs" role="tablist" aria-label="Profile sections">
+        <button class="tab active" role="tab" id="tab-g-achievements" aria-selected="true" aria-controls="gtab-achievements" data-action="tab" data-group="g" data-tab="achievements">Achievements</button>
+        <button class="tab" role="tab" id="tab-g-leaderboard" aria-selected="false" tabindex="-1" aria-controls="gtab-leaderboard" data-action="tab" data-group="g" data-tab="leaderboard">Leaderboard</button>
+        <button class="tab" role="tab" id="tab-g-fog" aria-selected="false" tabindex="-1" aria-controls="gtab-fog" data-action="tab" data-group="g" data-tab="fog">Fog Stats</button>
       </div>
 
-      <div id="gtab-achievements" class="gtab">
+      <div id="gtab-achievements" class="gtab" role="tabpanel" aria-labelledby="tab-g-achievements">
         <div class="achievement-grid" id="achievements-grid"></div>
       </div>
-      <div id="gtab-leaderboard" class="gtab" style="display:none">
+      <div id="gtab-leaderboard" class="gtab" role="tabpanel" aria-labelledby="tab-g-leaderboard" hidden>
         <div id="leaderboard-list"></div>
       </div>
-      <div id="gtab-fog" class="gtab" style="display:none">
+      <div id="gtab-fog" class="gtab" role="tabpanel" aria-labelledby="tab-g-fog" hidden>
         <div id="fog-region-stats"></div>
       </div>
     </div>
@@ -283,48 +287,49 @@
   <div class="panel">
     <div class="panel-header">
       <h2>👥 Community</h2>
-      <button class="help-btn" onclick="showHelp('community')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="community">?</button>
     </div>
     <div class="panel-body">
-      <div class="tabs" id="comm-tabs">
-        <button class="tab active" data-ctab="places">Places</button>
-        <button class="tab" data-ctab="routes">Routes</button>
-        <button class="tab" data-ctab="people">People</button>
+      <div class="tabs" id="comm-tabs" role="tablist" aria-label="Community sections">
+        <button class="tab active" role="tab" id="tab-c-places" aria-selected="true" aria-controls="ctab-places" data-action="tab" data-group="c" data-tab="places">Places</button>
+        <button class="tab" role="tab" id="tab-c-routes" aria-selected="false" tabindex="-1" aria-controls="ctab-routes" data-action="tab" data-group="c" data-tab="routes">Routes</button>
+        <button class="tab" role="tab" id="tab-c-people" aria-selected="false" tabindex="-1" aria-controls="ctab-people" data-action="tab" data-group="c" data-tab="people">People</button>
       </div>
 
-      <div id="ctab-places" class="ctab">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn btn-primary btn-sm" onclick="showSubmitPlace()">+ Submit Place</button>
-          <select class="input" id="comm-places-filter" style="width:auto" onchange="loadCommunityPlaces()"><option value="">All</option><option value="pending">Pending</option><option value="approved">Approved</option></select>
+      <div id="ctab-places" class="ctab" role="tabpanel" aria-labelledby="tab-c-places">
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" data-action="show-submit-place">+ Submit Place</button>
+          <label class="sr-only" for="comm-places-filter">Filter places</label>
+          <select class="input w-auto" id="comm-places-filter" data-change="load-community-places"><option value="">All</option><option value="pending">Pending</option><option value="confirmed">Approved</option><option value="rejected">Rejected</option></select>
         </div>
-        <div id="submit-place-form" style="display:none;margin-bottom:14px" class="card">
+        <div id="submit-place-form" class="card mb-14" hidden>
           <div class="form-group"><label class="form-label" for="cp-name">Name *</label><input class="input" id="cp-name" placeholder="Place name" required maxlength="200"></div>
-          <div class="form-group"><label class="form-label">Description</label><textarea class="input" id="cp-desc" placeholder="What makes this place interesting?" maxlength="2000"></textarea></div>
+          <div class="form-group"><label class="form-label" for="cp-desc">Description</label><textarea class="input" id="cp-desc" placeholder="What makes this place interesting?" maxlength="2000"></textarea></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" for="cp-lat">Lat *</label><input type="number" class="input" id="cp-lat" placeholder="42.441" step="any" min="-90" max="90" required></div>
             <div class="form-group"><label class="form-label" for="cp-lng">Lng *</label><input type="number" class="input" id="cp-lng" placeholder="18.771" step="any" min="-180" max="180" required></div>
           </div>
           <div class="form-group"><label class="form-label" for="cp-cats">Categories</label><input class="input" id="cp-cats" placeholder="abandoned, ruins"></div>
           <div class="form-group"><label class="form-label" for="cp-tags">Tags</label><input class="input" id="cp-tags" placeholder="wwii, bunker, hidden"></div>
-          <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="submitCommunityPlace()">Submit</button><button class="btn btn-secondary btn-sm" onclick="hideSubmitPlace()">Cancel</button></div>
+          <div class="toolbar mt-8"><button class="btn btn-primary btn-sm" id="cp-submit" data-action="submit-place" data-needs-network>Submit</button><button class="btn btn-secondary btn-sm" data-action="hide-submit-place">Cancel</button></div>
         </div>
         <div id="community-places-list"></div>
       </div>
 
-      <div id="ctab-routes" class="ctab" style="display:none">
+      <div id="ctab-routes" class="ctab" role="tabpanel" aria-labelledby="tab-c-routes" hidden>
         <div id="community-routes-list"></div>
       </div>
 
-      <div id="ctab-people" class="ctab" style="display:none">
+      <div id="ctab-people" class="ctab" role="tabpanel" aria-labelledby="tab-c-people" hidden>
         <div class="form-group"><label class="form-label" for="my-user-id">Your User ID</label><input class="input" id="my-user-id" placeholder="my-explorer-id"></div>
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn btn-secondary btn-sm" onclick="loadFollowing()">Following</button>
-          <button class="btn btn-secondary btn-sm" onclick="loadFollowers()">Followers</button>
+        <div class="toolbar">
+          <button class="btn btn-secondary btn-sm" data-action="load-following">Following</button>
+          <button class="btn btn-secondary btn-sm" data-action="load-followers">Followers</button>
         </div>
         <div id="people-list"></div>
-        <div style="margin-top:14px">
+        <div class="mt-14">
           <div class="card-title">My Karma</div>
-          <div id="karma-display" style="font-size:24px;font-weight:700;color:var(--accent);margin-top:4px">—</div>
+          <div class="karma-display" id="karma-display">—</div>
         </div>
       </div>
     </div>
@@ -337,19 +342,19 @@
     <div class="panel-header">
       <h2>📴 Offline Mode</h2>
       <span class="badge" id="offline-status-badge">Online</span>
-      <button class="help-btn" onclick="showHelp('offline')">?</button>
+      <button class="help-btn" aria-label="Help" data-action="help" data-topic="offline">?</button>
     </div>
     <div class="panel-body">
-      <div class="tabs" id="off-tabs">
-        <button class="tab active" data-otab="tiles">Tiles</button>
-        <button class="tab" data-otab="places">Cached Places</button>
-        <button class="tab" data-otab="sync">Sync Queue</button>
+      <div class="tabs" id="off-tabs" role="tablist" aria-label="Offline sections">
+        <button class="tab active" role="tab" id="tab-o-tiles" aria-selected="true" aria-controls="otab-tiles" data-action="tab" data-group="o" data-tab="tiles">Tiles</button>
+        <button class="tab" role="tab" id="tab-o-places" aria-selected="false" tabindex="-1" aria-controls="otab-places" data-action="tab" data-group="o" data-tab="places">Cached Places</button>
+        <button class="tab" role="tab" id="tab-o-sync" aria-selected="false" tabindex="-1" aria-controls="otab-sync" data-action="tab" data-group="o" data-tab="sync">Sync Queue</button>
       </div>
 
-      <div id="otab-tiles" class="otab">
-        <div class="card" style="margin-bottom:14px">
+      <div id="otab-tiles" class="otab" role="tabpanel" aria-labelledby="tab-o-tiles">
+        <div class="card mb-14">
           <div class="card-title">📥 Download Region</div>
-          <div class="form-group" style="margin-top:8px"><label class="form-label" for="dl-region-name">Region Name</label><input class="input" id="dl-region-name" placeholder="Kotor Bay"></div>
+          <div class="form-group mt-8"><label class="form-label" for="dl-region-name">Region Name</label><input class="input" id="dl-region-name" placeholder="Kotor Bay"></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" for="dl-min-lat">Min Lat</label><input class="input" id="dl-min-lat" placeholder="42.40"></div>
             <div class="form-group"><label class="form-label" for="dl-min-lng">Min Lng</label><input class="input" id="dl-min-lng" placeholder="18.70"></div>
@@ -362,48 +367,51 @@
             <div class="form-group"><label class="form-label" for="dl-min-zoom">Min Zoom</label><input type="number" class="input" id="dl-min-zoom" value="10" min="1" max="18"></div>
             <div class="form-group"><label class="form-label" for="dl-max-zoom">Max Zoom</label><input type="number" class="input" id="dl-max-zoom" value="15" min="1" max="18"></div>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="downloadTiles()" style="margin-top:8px;width:100%">📥 Download</button>
+          <button class="btn btn-primary btn-sm w-100 mt-8" data-action="download-tiles" data-needs-network>📥 Download</button>
         </div>
         <div id="tile-regions-list"></div>
       </div>
 
-      <div id="otab-places" class="otab" style="display:none">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn btn-primary btn-sm" onclick="cachePlaces()">Cache Current View</button>
-          <button class="btn btn-danger btn-sm" onclick="clearCachedPlaces()">Clear All</button>
+      <div id="otab-places" class="otab" role="tabpanel" aria-labelledby="tab-o-places" hidden>
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" data-action="cache-places" data-needs-network>Cache Current View</button>
+          <button class="btn btn-danger btn-sm" data-action="clear-cached-places">Clear All</button>
         </div>
         <div id="cached-places-list"></div>
       </div>
 
-      <div id="otab-sync" class="otab" style="display:none">
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <button class="btn btn-primary btn-sm" onclick="syncNow()">🔄 Sync Now</button>
-          <button class="btn btn-secondary btn-sm" onclick="clearSynced()">Clear Synced</button>
+      <div id="otab-sync" class="otab" role="tabpanel" aria-labelledby="tab-o-sync" hidden>
+        <div class="toolbar">
+          <button class="btn btn-primary btn-sm" data-action="sync-now" data-needs-network>🔄 Sync Now</button>
+          <button class="btn btn-secondary btn-sm" data-action="clear-synced">Clear Synced</button>
         </div>
         <div id="sync-queue-list"></div>
       </div>
 
-      <div class="card" style="margin-top:16px">
+      <div class="card mt-16">
         <div class="card-title">💾 Storage Status</div>
-        <div id="offline-storage-info" style="margin-top:8px;font-size:12px;color:var(--text-secondary)">Loading...</div>
+        <div class="storage-info" id="offline-storage-info">Loading...</div>
       </div>
     </div>
   </div>
 </div>
 
-</div><!-- /content -->
+</main><!-- /content -->
 </div><!-- /app -->
 
-<!-- ═══════ HELP OVERLAY ═══════ -->
-<div id="help-overlay">
+<!-- ═══════ MODAL DIALOG (help, onboarding, settings) ═══════ -->
+<div id="help-overlay" data-action="dialog-backdrop">
   <div class="help-dialog" id="help-dialog"></div>
 </div>
 
 <!-- ═══════ TOAST CONTAINER ═══════ -->
-<div id="toast-container"></div>
+<div id="toast-container" aria-live="polite"></div>
+
+<noscript><p class="noscript">Terra Incognita needs JavaScript.</p></noscript>
 
 <script src="js/config.js"></script>
 <script src="js/util.js"></script>
+<script src="js/actions.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/help.js"></script>
 <script src="js/api.js"></script>

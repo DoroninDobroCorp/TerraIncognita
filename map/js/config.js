@@ -1,9 +1,12 @@
-// Constants, category/preset tables, map styles and the shared `state` object.
-// Classic script (no modules): shares the global scope with the other map/js files.
+// Constants, category/preset tables and the shared `state` object.
+// Classic script (no modules): every file in map/js shares one global scope.
+// Load order is fixed by app.html; nothing in here touches the DOM.
+'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const API = window.location.origin || 'http://localhost:1312';
 
+// Category table. Replaced by GET /api/map/config at start-up (see main.js).
 let CATEGORIES = {
   abandoned:{icon:'🏚️',label:'Abandoned',color:'#e74c3c',group:'unusual'},
   underground:{icon:'🕳️',label:'Underground',color:'#8e44ad',group:'unusual'},
@@ -31,22 +34,66 @@ const PRESETS = {
   history: ['ruins','military','religious','landmark','museum','monument','architecture'],
   classic: Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'classic'),
 };
+/** Rebuild the derived preset lists after CATEGORIES was replaced from the API. */
+function rebuildPresets() {
+  PRESETS.all = Object.keys(CATEGORIES);
+  PRESETS.hidden = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'unusual');
+  PRESETS.classic = Object.keys(CATEGORIES).filter(k => CATEGORIES[k].group === 'classic');
+}
 
 const FOG_REVEAL_RADIUS_DEG = 0.002;
 const FOG_CIRCLE_SEGMENTS = 24;
 
-let state = {
+// localStorage keys (kept identical to the pre-split app so existing data survives).
+const LS = {
+  userId: 'ti_user_id',
+  storageVersion: 'ti_storage_version',
+  onboarded: 'ti_onboarded',
+  visited: 'ti_visited',
+  saved: 'ti_saved',
+  routes: 'ti_routes',
+  theme: 'ti_theme',
+  lowPower: 'ti_low_power',
+  speak: 'ti_speak',
+  dailyDismissed: 'ti_daily_dismissed',
+  lastPlaces: 'ti_last_places',
+};
+
+// Shared mutable app state. Persisted pieces are loaded lazily by main.js (see loadPersistedState).
+const state = {
   places: [], filteredPlaces: [],
   activeCategories: new Set(Object.keys(CATEGORIES)),
   radius: 5.0, minConfidence: 0, hideVisited: false, fogEnabled: true,
-  visitedPlaces: new Set(JSON.parse(localStorage.getItem('ti_visited') || '[]')),
-  savedPlaces: new Set(JSON.parse(localStorage.getItem('ti_saved') || '[]')),
+  visitedPlaces: new Set(), savedPlaces: new Set(),
   userLat: 42.4410, userLng: 18.7712,
   currentPreset: 'all', selectedPlace: null, currentRoute: null,
+  pinMode: false,
+  lowPower: false,
 };
 
-const STYLES = {
-  dark:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ osm:{ type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' }}, layers:[{id:'osm',type:'raster',source:'osm'}] },
-  satellite:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ sat:{ type:'raster', tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256 }}, layers:[{id:'sat',type:'raster',source:'sat'}] },
-  terrain:{ version:8, glyphs:'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf', sources:{ ter:{ type:'raster', tiles:['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'], tileSize:256, attribution:'&copy; <a href="https://opentopomap.org">OpenTopoMap</a>' }}, layers:[{id:'ter',type:'raster',source:'ter'}] },
+// Base map layers. All three raster layers live in ONE style; switching just flips visibility,
+// so overlays (places, fog, route line, history, heatmap) survive a layer change.
+const BASE_LAYERS = {
+  streets: {
+    sourceId: 'osm', layerId: 'osm',
+    source: { type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, maxzoom:19,
+      attribution:'&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' },
+  },
+  satellite: {
+    sourceId: 'sat', layerId: 'sat',
+    source: { type:'raster', tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:19,
+      attribution:'Imagery &copy; Esri' },
+  },
+  terrain: {
+    sourceId: 'ter', layerId: 'ter',
+    source: { type:'raster', tiles:['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'], tileSize:256, maxzoom:17,
+      attribution:'&copy; <a href="https://opentopomap.org">OpenTopoMap</a>' },
+  },
 };
+const GLYPHS_URL = 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf';
+
+// Used when GET /api/map/historical fails (URLs mirror the server's list).
+const DEFAULT_HIST = [
+  {id:'ohm',name:'OpenHistoricalMap',period:'Multi-era',year_start:1000,year_end:2000,url:'https://tile.openhistoricalmap.org/historicmap/{z}/{x}/{y}.png',tile_size:256,min_zoom:1,max_zoom:18},
+  {id:'esri',name:'Esri Historic Topo',period:'Early 20th C.',year_start:1890,year_end:1940,url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',tile_size:256,min_zoom:1,max_zoom:16},
+];

@@ -1,105 +1,154 @@
-// Community: places, reviews, routes, people, karma.
-// Classic script (no modules): shares the global scope with the other map/js files.
+// Community tab: submitted places, reviews, published routes, follows, karma.
+// Everything rendered here is written by OTHER users — it all goes through html`` (escaped).
+// Classic script (no modules): every file in map/js shares one global scope.
+'use strict';
 
-// ═══════════════════════════════════════════════════════
-//  COMMUNITY
-// ═══════════════════════════════════════════════════════
+const lengthOf = (v) => Array.isArray(v) ? v.length : (parseInt(v) || 0);  // confirmations/votes are id lists
+
 async function loadCommunityPlaces() {
-  const list=document.getElementById('community-places-list');
-  const filter=document.getElementById('comm-places-filter')?.value||'';
-  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+  const list=$('community-places-list');
+  const filter=$('comm-places-filter')?.value||'';
+  showSkeleton(list);
   try {
-    const q = filter?`?status=${filter}&limit=30`:'?limit=30';
+    const q = filter?`?status=${encodeURIComponent(filter)}&limit=30`:'?limit=30';
     const data = await api('/api/community/places'+q);
-    if(!data.places||!data.places.length){list.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-text">No community places yet. Submit the first one!</div></div>';return;}
-    list.innerHTML = data.places.map(p=>`
-      <div class="card" style="margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:start">
-          <div class="card-title">${escHtml(p.name)}</div>
-          <span class="tag ${p.moderation_status==='approved'?'green':p.moderation_status==='rejected'?'red':'yellow'}">${escHtml(p.moderation_status)}</span>
+    if(!data.places||!data.places.length){setHtml(list, emptyStateHtml('👥', 'No community places yet. Submit the first one!'));return;}
+    setHtml(list, html`${data.places.map(p => html`
+      <div class="card mb-10">
+        <div class="row-between align-start">
+          <div class="card-title">${p.name}</div>
+          <span class="tag ${p.moderation_status==='confirmed'||p.moderation_status==='approved'?'green':p.moderation_status==='rejected'?'red':'yellow'}">${p.moderation_status}</span>
         </div>
-        <div style="font-size:12px;margin-top:4px">${escHtml((p.description||'').substring(0,150))}</div>
-        <div class="card-meta" style="margin-top:4px">${(p.categories||[]).map(c=>`<span class="tag blue">${escHtml(c)}</span>`).join('')}</div>
-        <div style="margin-top:8px;font-size:11px;color:var(--text-secondary)">by ${escHtml(p.submitted_by||'anonymous')} · 👍 ${parseInt(p.confirmations)||0} 👎 ${parseInt(p.rejections)||0}</div>
-        <div class="card-actions" style="margin-top:8px">
-          <button class="btn btn-sm btn-secondary" onclick="loadPlaceReviews('${escHtml(p.id)}')">💬 Reviews</button>
-          <button class="btn btn-sm btn-secondary" onclick="showOnMap(${parseFloat(p.coordinates?.lat)||0},${parseFloat(p.coordinates?.lng)||0})">🗺️ Map</button>
+        <div class="text-small mt-4">${(p.description||'').substring(0,150)}</div>
+        <div class="card-meta mt-4">${(p.categories||[]).map(c => html`<span class="tag blue">${c}</span>`)}</div>
+        <div class="text-tiny text-secondary mt-8">by ${p.submitted_by||'anonymous'} · 👍 ${lengthOf(p.confirmations)} 👎 ${lengthOf(p.rejections)}</div>
+        <div class="card-actions mt-8">
+          <button class="btn btn-sm btn-secondary" data-action="place-reviews" data-id="${p.id}">💬 Reviews</button>
+          <button class="btn btn-sm btn-secondary" data-action="show-on-map" data-lat="${num(p.coordinates?.lat)}" data-lng="${num(p.coordinates?.lng)}">🗺️ Map</button>
         </div>
-      </div>`).join('');
-  } catch { list.innerHTML='<div class="empty-state">Could not load community places<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadCommunityPlaces()">🔄 Retry</button></div>'; }
+      </div>`)}`);
+  } catch { setHtml(list, errorStateHtml('👥', 'Could not load community places', 'load-community-places')); }
 }
 
-function showSubmitPlace(){document.getElementById('submit-place-form').style.display='block';}
-function hideSubmitPlace(){document.getElementById('submit-place-form').style.display='none';}
+function showSubmitPlace() { $('submit-place-form').hidden = false; $('cp-name').focus(); }
+function hideSubmitPlace() { $('submit-place-form').hidden = true; }
+
+/** "Abandoned, ruins" -> ["abandoned","ruins"] keeping only known category ids. */
+function parseCategories(text) {
+  const wanted = text.split(',').map(s => s.trim().toLowerCase().replace(/[\s-]+/g, '_')).filter(Boolean);
+  const known = wanted.filter(c => CATEGORIES[c]);
+  return { known, dropped: wanted.filter(c => !CATEGORIES[c]) };
+}
+
 async function submitCommunityPlace() {
-  const name=document.getElementById('cp-name').value.trim(), desc=document.getElementById('cp-desc').value.trim();
-  const lat=parseFloat(document.getElementById('cp-lat').value), lng=parseFloat(document.getElementById('cp-lng').value);
+  const name=$('cp-name').value.trim(), desc=$('cp-desc').value.trim();
+  const lat=parseFloat($('cp-lat').value), lng=parseFloat($('cp-lng').value);
   if(!name){toast('Please enter a place name','warning');return;}
   if(name.length>200){toast('Name is too long (max 200 characters)','warning');return;}
   if(desc.length>2000){toast('Description is too long (max 2000 characters)','warning');return;}
   if(isNaN(lat)||isNaN(lng)||lat<-90||lat>90||lng<-180||lng>180){toast('Enter valid coordinates (lat: -90 to 90, lng: -180 to 180)','warning');return;}
-  const cats=document.getElementById('cp-cats').value.split(',').map(s=>s.trim()).filter(Boolean);
-  const tags=document.getElementById('cp-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
-  const btn=document.querySelector('#ctab-submit .btn-primary'); btn.disabled=true; btn.textContent='Submitting...';
+  const { known: cats, dropped } = parseCategories($('cp-cats').value);
+  if (dropped.length) toast(`Unknown categories ignored: ${dropped.join(', ')}`, 'warning');
+  const tags=$('cp-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const btn=$('cp-submit'); btn.disabled=true; btn.textContent='Submitting...';
   analytics.track('community_place_submit');
   try {
     await api('/api/community/places',{method:'POST',body:{name,description:desc,categories:cats,lat,lng,tags,author_id:getActiveUserId()}});
     toast('Place submitted for moderation!','success'); hideSubmitPlace(); loadCommunityPlaces();
-  } catch(e) { toast('Submission failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; btn.textContent='Submit Place'; }
+  } catch(e) { toast('Submission failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; btn.textContent='Submit'; }
 }
 
 async function loadPlaceReviews(placeId) {
   try {
-    const data = await api(`/api/community/places/${placeId}/reviews?limit=20`);
+    const data = await api(`/api/community/places/${encodeURIComponent(placeId)}/reviews?limit=20`);
     const reviews = data.reviews||[];
-    document.getElementById('community-places-list').innerHTML = `
-      <button class="btn btn-secondary btn-sm" onclick="loadCommunityPlaces()" style="margin-bottom:14px">← Back</button>
-      <h3 style="font-size:14px;margin-bottom:10px">💬 Reviews (${reviews.length})</h3>
-      ${reviews.map(r=>`
+    setHtml($('community-places-list'), html`
+      <button class="btn btn-secondary btn-sm mb-14" data-action="load-community-places">← Back</button>
+      <h3 class="subhead">💬 Reviews (${reviews.length})</h3>
+      ${reviews.length ? reviews.map(r => html`
         <div class="review-card">
-          <div class="review-header"><span class="review-author">${escHtml(r.author_id)}</span><span class="review-date">${r.visit_date||''}</span></div>
-          <div class="review-text">${escHtml(r.text||'')}</div>
-          <div class="review-votes"><button class="vote-btn" onclick="voteReview('${r.id}',true)">👍 ${r.upvotes||0}</button><button class="vote-btn" onclick="voteReview('${r.id}',false)">👎 ${r.downvotes||0}</button></div>
-        </div>`).join('')||'<div style="color:var(--text-secondary)">No reviews yet</div>'}
-      <div style="margin-top:14px">
-        <div class="form-group"><label class="form-label">Write a Review</label><textarea class="input" id="review-text" placeholder="Share your experience"></textarea></div>
-        <button class="btn btn-primary btn-sm" onclick="writeReview('${placeId}')" style="width:100%">Submit Review</button>
-      </div>`;
+          <div class="review-header"><span class="review-author">${r.author_id}</span><span class="review-date">${r.visit_date||''}</span></div>
+          <div class="review-text">${r.text||''}</div>
+          <div class="review-votes"><button class="vote-btn" data-action="vote-review" data-id="${r.id}" data-up="1">👍 ${lengthOf(r.upvotes)}</button><button class="vote-btn" data-action="vote-review" data-id="${r.id}" data-up="0">👎 ${lengthOf(r.downvotes)}</button></div>
+        </div>`) : html`<div class="text-secondary">No reviews yet</div>`}
+      <div class="mt-14">
+        <div class="form-group"><label class="form-label" for="review-text">Write a Review</label><textarea class="input" id="review-text" placeholder="Share your experience" maxlength="5000"></textarea></div>
+        <button class="btn btn-primary btn-sm w-100" data-action="write-review" data-id="${placeId}">Submit Review</button>
+      </div>`);
   } catch { toast('Could not load reviews','error'); }
 }
-async function writeReview(placeId){const t=document.getElementById('review-text').value;if(!t.trim()){toast('Please write a review first','warning');return;}try{await api(`/api/community/places/${placeId}/reviews`,{method:'POST',body:{author_id:getActiveUserId(),text:t,review_type:'visit'}});toast('Review posted!','success');loadPlaceReviews(placeId);}catch{toast('Failed to post review','error');}}
-async function voteReview(reviewId,up){try{await api(`/api/community/reviews/${reviewId}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{}}
+async function writeReview(placeId) {
+  const t = $('review-text').value;
+  if(!t.trim()){toast('Please write a review first','warning');return;}
+  try{await api(`/api/community/places/${encodeURIComponent(placeId)}/reviews`,{method:'POST',body:{author_id:getActiveUserId(),text:t,review_type:'review'}});toast('Review posted!','success');loadPlaceReviews(placeId);}
+  catch{toast('Failed to post review','error');}
+}
+async function voteReview(reviewId, up) {
+  try{await api(`/api/community/reviews/${encodeURIComponent(reviewId)}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{ /* vote is best-effort */ }
+}
 
-// Community routes
-document.querySelectorAll('[data-ctab="routes"]').forEach(t=>t.addEventListener('click', async ()=>{
-  const list=document.getElementById('community-routes-list');
-  list.innerHTML='<div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div><div class="skeleton skeleton-block"></div>';
+// ── Community routes ──
+async function loadCommunityRoutes() {
+  const list=$('community-routes-list');
+  showSkeleton(list);
   try {
     const data=await api('/api/community/routes?limit=20');
-    list.innerHTML=(data.routes||[]).map(r=>`
-      <div class="card" style="margin-bottom:10px">
-        <div class="card-title">${escHtml(r.title)}</div>
-        <div style="font-size:12px;margin-top:4px">${escHtml(r.description||'')}</div>
-        <div class="card-meta" style="margin-top:4px">${(r.distance_km||0).toFixed(1)} km · ${(r.duration_hours||0).toFixed(1)} h · by ${r.author_id||'?'}</div>
-        ${r.tags?`<div style="margin-top:4px">${r.tags.map(t=>`<span class="tag gray">${t}</span>`).join('')}</div>`:''}
-      </div>`).join('')||'<div class="empty-state"><div class="empty-icon">🛤️</div><div class="empty-text">No community routes yet</div></div>';
-  } catch { list.innerHTML='<div class="empty-state">Could not load routes<br><button class="btn btn-sm btn-secondary" style="margin-top:12px" onclick="loadCommunityRoutes()">🔄 Retry</button></div>'; }
-}));
+    const routes = data.routes || [];
+    setHtml(list, routes.length ? html`${routes.map(r => html`
+      <div class="card mb-10">
+        <div class="card-title">${r.title}</div>
+        <div class="text-small mt-4">${r.description||''}</div>
+        <div class="card-meta mt-4">${num(r.distance_km).toFixed(1)} km · ${num(r.duration_hours).toFixed(1)} h · by ${r.author_id||'?'}</div>
+        ${r.tags&&r.tags.length?html`<div class="mt-4">${r.tags.map(t => html`<span class="tag gray">${t}</span>`)}</div>`:''}
+      </div>`)}` : emptyStateHtml('🛤️', 'No community routes yet'));
+  } catch { setHtml(list, errorStateHtml('🛤️', 'Could not load routes', 'load-community-routes')); }
+}
 
-// Following/Followers
+// ── Following / followers / karma ──
 async function loadFollowing() {
   const uid=getActiveUserId();
-  const list=document.getElementById('people-list');
-  try { const d=await api(`/api/community/following/${uid}`); list.innerHTML=(d.follows||[]).map(f=>`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${escHtml(f.following_id)}</div></div><button class="btn btn-danger btn-sm" onclick="unfollow('${escHtml(f.follower_id)}','${escHtml(f.following_id)}')">Unfollow</button></div>`).join('')||'<div class="empty-state">Not following anyone yet</div>'; } catch { list.innerHTML='<div class="empty-state">Could not load following<br><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="loadFollowing()">🔄 Retry</button></div>'; }
+  const list=$('people-list');
+  try {
+    const d=await api(`/api/community/following/${encodeURIComponent(uid)}`);
+    const follows = d.follows || [];
+    setHtml(list, follows.length ? html`${follows.map(f => html`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${f.following_id}</div></div><button class="btn btn-danger btn-sm" data-action="unfollow" data-a="${f.follower_id}" data-b="${f.following_id}">Unfollow</button></div>`)}` : html`<div class="empty-state">Not following anyone yet</div>`);
+  } catch { setHtml(list, errorStateHtml('👤', 'Could not load following', 'load-following')); }
 }
 async function loadFollowers() {
   const uid=getActiveUserId();
-  const list=document.getElementById('people-list');
-  try { const d=await api(`/api/community/followers/${uid}`); list.innerHTML=(d.follows||[]).map(f=>`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${escHtml(f.follower_id)}</div></div></div>`).join('')||'<div class="empty-state">No followers yet</div>'; } catch { list.innerHTML='<div class="empty-state">Could not load followers<br><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="loadFollowers()">🔄 Retry</button></div>'; }
+  const list=$('people-list');
+  try {
+    const d=await api(`/api/community/followers/${encodeURIComponent(uid)}`);
+    const follows = d.follows || [];
+    setHtml(list, follows.length ? html`${follows.map(f => html`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${f.follower_id}</div></div></div>`)}` : html`<div class="empty-state">No followers yet</div>`);
+  } catch { setHtml(list, errorStateHtml('👤', 'Could not load followers', 'load-followers')); }
 }
-async function unfollow(a,b){try{await api(`/api/community/follow/${a}/${b}`,{method:'DELETE'});toast('Unfollowed','info');loadFollowing();}catch{toast('Unfollow failed','error');}}
+async function unfollow(a, b) {
+  try{await api(`/api/community/follow/${encodeURIComponent(a)}/${encodeURIComponent(b)}`,{method:'DELETE'});toast('Unfollowed','info');loadFollowing();}catch{toast('Unfollow failed','error');}
+}
+async function loadKarma() {
+  try {
+    const d = await api(`/api/community/karma/${encodeURIComponent(getActiveUserId())}`);
+    const k = (d.karma && typeof d.karma === 'object') ? d.karma.karma : d.karma;  // {"karma": {"karma": 12, ...}}
+    $('karma-display').textContent = (k||0)+' karma';
+  } catch { $('karma-display').textContent='—'; }
+}
 
-// Karma
-document.querySelectorAll('[data-ctab="people"]').forEach(t=>t.addEventListener('click', async ()=>{
-  try { const d=await api(`/api/community/karma/${getActiveUserId()}`); document.getElementById('karma-display').textContent=(d.karma||0)+' karma'; } catch { document.getElementById('karma-display').textContent='—'; }
-}));
+TI.tabHooks['c:routes'] = () => loadCommunityRoutes();
+TI.tabHooks['c:people'] = () => loadKarma();
+
+registerActions({
+  'load-community-places': () => loadCommunityPlaces(),
+  'show-submit-place': () => showSubmitPlace(),
+  'hide-submit-place': () => hideSubmitPlace(),
+  'submit-place': () => submitCommunityPlace(),
+  'place-reviews': (el) => loadPlaceReviews(el.dataset.id),
+  'show-on-map': (el) => showOnMap(parseFloat(el.dataset.lat), parseFloat(el.dataset.lng)),
+  'write-review': (el) => writeReview(el.dataset.id),
+  'vote-review': (el) => voteReview(el.dataset.id, el.dataset.up === '1'),
+  'load-community-routes': () => loadCommunityRoutes(),
+  'load-following': () => loadFollowing(),
+  'load-followers': () => loadFollowers(),
+  unfollow: (el) => unfollow(el.dataset.a, el.dataset.b),
+});
+registerChange({ 'load-community-places': () => loadCommunityPlaces() });

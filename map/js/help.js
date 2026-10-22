@@ -1,5 +1,6 @@
-// Contextual help dialogs.
-// Classic script (no modules): shares the global scope with the other map/js files.
+// Contextual help dialogs (static, trusted markup — see openDialog in ui.js).
+// Classic script (no modules): every file in map/js shares one global scope.
+'use strict';
 
 // ═══════════════════════════════════════════════════════
 //  HELP SYSTEM
@@ -111,17 +112,7 @@ const HELP = {
 function showHelp(section) {
   const h = HELP[section];
   if (!h) return;
-  _helpPreviousFocus = document.activeElement;
-  const d = document.getElementById('help-dialog');
-  d.innerHTML = `<h3>${h.title}</h3>${h.body}<button class="btn btn-primary btn-sm" style="margin-top:16px;width:100%" onclick="closeHelp()">Got it!</button>`;
-  document.getElementById('help-overlay').classList.add('visible');
-  d.setAttribute('role','dialog'); d.setAttribute('aria-modal','true');
-  setTimeout(() => { const btn = d.querySelector('.btn'); if (btn) btn.focus(); }, 100);
+  openDialog(html`<h3 id="dialog-title">${h.title}</h3>${raw(h.body)}<button class="btn btn-primary btn-sm w-100 mt-16" data-action="close-dialog">Got it!</button>`);
 }
-let _helpPreviousFocus = null;
-function closeHelp() {
-  document.getElementById('help-overlay').classList.remove('visible');
-  if (_helpPreviousFocus) { _helpPreviousFocus.focus(); _helpPreviousFocus = null; }
-}
-document.getElementById('help-overlay').addEventListener('click', e => { if (e.target.id === 'help-overlay') closeHelp(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.getElementById('help-overlay').classList.contains('visible')) closeHelp(); });
+
+registerActions({ help: (el) => showHelp(el.dataset.topic) });
