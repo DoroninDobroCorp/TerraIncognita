@@ -34,7 +34,7 @@ pytest tests -q             # must pass; CI runs it on Python 3.11, 3.12 and 3.1
 ## Adding a data source
 
 1. Subclass `BaseSource` from `app/sources/base.py` (implement `source_name` and async `search(lat, lng, radius_km)`) and return `Place` objects with `source=PlaceSource.<yours>`.
-2. Register it in `app/services/discovery.py` (sources run concurrently; a failing source must never fail the request — `_safe_search` already isolates errors).
+2. Register it in `app/services/discovery.py` (sources run concurrently; a failing source must never fail the request — `_query_source` in discovery.py already isolates errors and time-boxes each source).
 3. Add a fixture-based parser test. Fusion, classification and scoring then apply automatically.
 
 ## Adding an API endpoint
