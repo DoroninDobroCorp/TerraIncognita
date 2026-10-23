@@ -64,45 +64,36 @@ Health check endpoint.
 
 ## Configuration
 
-Set via environment variables (prefix `TERRA_`) or `.env` file:
+Set via environment variables (prefix `TERRA_`) or a `.env` file — see [`.env.example`](.env.example) for every
+option. The ones you will touch first:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TERRA_OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Overpass API endpoint |
-| `TERRA_CACHE_DIR` | `cache` | Cache directory path |
-| `TERRA_CACHE_TTL_SECONDS` | `86400` | Cache TTL (24h) |
-| `TERRA_ANTHROPIC_API_KEY` | — | For LLM classification (optional) |
-| `TERRA_DEFAULT_RADIUS_KM` | `5.0` | Default search radius |
-| `TERRA_MAX_RADIUS_KM` | `50.0` | Maximum allowed radius |
+| `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | — | Optional; enables chat, descriptions, stories, ask-a-place |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on LLM tokens; LLM endpoints answer 503 once spent |
+| `TERRA_CORS_ORIGINS` | `*` | Comma-separated allowed origins |
+| `TERRA_TRUSTED_PROXY_HOPS` | `0` | Set to `1` behind nginx so rate limits see real client IPs |
+| `TERRA_DISCOVERY_DEADLINE_SECONDS` | `25` | Answer `/api/discover` after this long if any source has produced places |
+| `TERRA_CACHE_DIR` / `TERRA_CACHE_TTL_SECONDS` / `TERRA_CACHE_MAX_ENTRIES` | `cache` / `86400` / `20000` | Disk cache |
+| `TERRA_DEFAULT_RADIUS_KM` / `TERRA_MAX_RADIUS_KM` | `5.0` / `50.0` | Search radius |
 
 ## Architecture
 
-```
-app/
-├── main.py           # FastAPI app
-├── config.py         # Settings
-├── models/place.py   # Place, PlaceCategory, API models
-├── sources/          # Data source adapters
-│   ├── base.py       # Abstract base
-│   ├── osm.py        # OpenStreetMap/Overpass
-│   ├── atlas_obscura.py  # Atlas Obscura
-│   └── wikidata.py   # Wikidata SPARQL
-├── services/
-│   ├── discovery.py  # Orchestrator
-│   ├── fusion.py     # Deduplication & merge
-│   ├── classifier.py # Category classification
-│   └── cache.py      # Disk cache
-└── utils/
-    ├── geo.py        # Haversine, bounding box
-    └── rate_limiter.py
-```
+See [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) — request path, discovery pipeline, LLM layer, persistence
+and known limits. Source layout: `app/api` (thin routers) → `app/services` (logic) → `app/sources` (OSM,
+Wikidata, Atlas Obscura, deep research) with `app/models` (pydantic) and `app/utils`; `app/middleware.py` holds
+rate limits, body cap, scanner block and security headers.
 
 ## Docker
 
+Build from the **repository root** so the map UI and static data are included:
+
 ```bash
-docker build -t terra-backend .
-docker run -p 8000:8000 terra-backend
+docker build -f backend/Dockerfile -t terra-incognita .
+docker run -p 8000:8000 --env-file backend/.env -v terra-data:/srv/terra/backend/data terra-incognita
 ```
+
+Production examples (nginx, systemd, nightly backup) are in [`deploy/`](../deploy).
 
 ## Daily place, loops, collections, streak, ask-the-place
 
