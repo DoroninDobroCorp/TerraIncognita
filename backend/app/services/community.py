@@ -334,7 +334,7 @@ class CommunityService:
             self._save_places()
             self._save_karma()
             self._save_quotas()
-            logger.info("Place submitted: %s by %s", place_id, author_id)
+            logger.info("Place submitted: %s by %r", place_id, author_id)
             return place
 
     async def confirm_place(self, place_id: str, req: ConfirmPlaceRequest) -> CommunityPlace:
@@ -464,7 +464,7 @@ class CommunityService:
             updated.updated_at = datetime.now(UTC)
             self._places[place_id] = updated.model_dump(mode="json")
             self._save_places()
-            logger.info("Place updated: %s by %s", place_id, author_id)
+            logger.info("Place updated: %s by %r", place_id, author_id)
             return updated
 
     async def delete_place(self, place_id: str, author_id: str) -> None:
@@ -489,7 +489,7 @@ class CommunityService:
             self._save_karma()
             if to_delete:
                 self._save_reviews()
-            logger.info("Place deleted: %s by %s", place_id, author_id)
+            logger.info("Place deleted: %s by %r", place_id, author_id)
 
     async def get_place_summary(self, place_id: str) -> PlaceSummary:
         """Get aggregated community activity summary for a place."""
@@ -568,7 +568,7 @@ class CommunityService:
             self._save_reviews()
             self._save_karma()
             self._save_quotas()
-            logger.info("Review created: %s for place %s by %s", review_id, place_id, author_id)
+            logger.info("Review created: %s for place %r by %r", review_id, place_id, author_id)
             return review
 
     async def vote_review(self, review_id: str, user_id: str, upvote: bool) -> Review:
@@ -663,7 +663,7 @@ class CommunityService:
             review.updated_at = datetime.now(UTC)
             self._reviews[review_id] = review.model_dump(mode="json")
             self._save_reviews()
-            logger.info("Review updated: %s by %s", review_id, author_id)
+            logger.info("Review updated: %s by %r", review_id, author_id)
             return review
 
     async def delete_review(self, review_id: str, author_id: str) -> None:
@@ -680,7 +680,7 @@ class CommunityService:
                 self._revoke_karma(author_id, KARMA_REVIEW_WRITTEN, "review_written")
                 self._save_karma()
             self._save_reviews()
-            logger.info("Review deleted: %s by %s", review_id, author_id)
+            logger.info("Review deleted: %s by %r", review_id, author_id)
 
     async def report_outdated(self, review_id: str, user_id: str, reason: str = "") -> Review:
         """Flag a review's information as outdated."""
@@ -699,7 +699,7 @@ class CommunityService:
             review.updated_at = datetime.now(UTC)
             self._reviews[review_id] = review.model_dump(mode="json")
             self._save_reviews()
-            logger.info("Review %s reported as outdated by %s: %r", review_id, user_id, reason[:200])
+            logger.info("Review %s reported as outdated by %r: %r", review_id, user_id, reason[:200])
             return review
 
     # ── Story 8.3: Social Routes ─────────────────────────────────
@@ -740,7 +740,7 @@ class CommunityService:
             self._save_routes()
             self._save_karma()
             self._save_quotas()
-            logger.info("Route published: %s by %s", route_id, author_id)
+            logger.info("Route published: %s by %r", route_id, author_id)
             return route
 
     async def rate_route(self, route_id: str, user_id: str, score: int, comment: str = "") -> PublishedRoute:

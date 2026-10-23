@@ -129,7 +129,7 @@ async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
             language=req.language,
         )
     except Exception:
-        logger.exception("Failed to generate description for %s", req.place_id)
+        logger.exception("Failed to generate description for %r", req.place_id)
         return _fallback_description(req)
 
 

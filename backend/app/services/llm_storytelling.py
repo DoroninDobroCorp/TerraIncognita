@@ -140,7 +140,7 @@ async def generate_place_story(
             "language": language,
         }
     except Exception:
-        logger.exception("Failed to generate story for %s", place.id)
+        logger.exception("Failed to generate story for %r", place.id)
         return _fallback_story(place, language)
 
 

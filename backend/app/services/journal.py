@@ -204,7 +204,7 @@ async def create_visit(
             _save_trips()
 
     _save_visits()
-    logger.info("Created visit %s for place %s", visit_id, place_id)
+    logger.info("Created visit %s for place %r", visit_id, place_id)
 
     # Trigger gamification hook (Epic 6)
     if status == VisitStatus.VISITED:

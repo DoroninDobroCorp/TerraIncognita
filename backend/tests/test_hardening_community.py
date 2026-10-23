@@ -333,3 +333,19 @@ class TestStoredXss:
         r = client.post("/api/community/routes", json={
             "author_id": "a", "title": "t", "waypoint_place_ids": [f"w{i}" for i in range(500)]})
         assert r.status_code == 422
+
+
+class TestLogForging:
+    """Client-chosen ids go into log lines: a newline must not be able to forge a record."""
+
+    async def test_log_records_have_no_raw_newlines(self, svc, caplog):
+        evil = "bob\n2026-01-01 00:00:00 ERROR [app] forged line"
+        with caplog.at_level("INFO"):
+            place = await _place(svc, author=evil)
+            await svc.create_review("p\nforged", evil, "x")
+            await svc.confirm_place(place.id, ConfirmPlaceRequest(user_id="m1\nforged", confirm=True))
+            await svc.update_place(place.id, evil, name="New name")
+            await svc.delete_place(place.id, evil)
+        messages = [r.getMessage() for r in caplog.records if r.name.startswith("app.services.community")]
+        assert messages
+        assert not [m for m in messages if "\n" in m], messages
