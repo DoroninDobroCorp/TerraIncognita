@@ -10,10 +10,12 @@
 function renderUnusual(place, inFog) {
   const badge = $('card-unusual'), box = $('card-reasons');
   const score = Number(place.unusual_score);
-  const hasScore = !inFog && place.unusual_score != null && Number.isFinite(score);
+  // The backend sends 0 for "not scored / mainstream", so a zero score shows no badge at all.
+  const pct = Number.isFinite(score) ? Math.round(clamp(score, 0, 1) * 100) : 0;
+  const hasScore = !inFog && place.unusual_score != null && pct > 0;
   badge.hidden = !hasScore;
   if (hasScore) {
-    const pct = Math.round(clamp(score, 0, 1) * 100);
+    badge.className = 'unusual-badge ' + (pct >= 70 ? 'high' : pct >= 40 ? 'mid' : 'low');
     badge.textContent = `✨ ${pct}`;
     badge.title = `Unusualness score ${pct} / 100`;
     badge.setAttribute('aria-label', `Unusualness score ${pct} out of 100`);
