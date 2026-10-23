@@ -247,8 +247,10 @@ class ScannerBlockMiddleware(BaseHTTPMiddleware):
 
 # ── Security headers ─────────────────────────────────────────
 
-# Hosts the bundled map UI talks to (tiles, routing, geocoding, open-data enrichment).
+# Hosts the bundled map UI talks to (tiles, glyphs, routing, geocoding) plus the CDN that the
+# service worker (map/sw.js) re-fetches maplibre-gl from when it refreshes its offline cache.
 _CONNECT_HOSTS = (
+    "https://unpkg.com",
     "https://router.project-osrm.org",
     "https://nominatim.openstreetmap.org",
     "https://demotiles.maplibre.org",
@@ -257,15 +259,24 @@ _CONNECT_HOSTS = (
     "https://server.arcgisonline.com",
     "https://tile.openhistoricalmap.org",
     "https://maps.georeferencer.com",
-    "https://*.wikipedia.org",
-    "https://commons.wikimedia.org",
-    "https://*.wikimedia.org",
+)
+
+# map/app.html has NO inline script and NO inline event handlers, so script-src needs no
+# 'unsafe-inline'. The three legacy pages (explorer/index/debug.html) still carry one inline
+# <script> block each; they are allowed by hash instead. backend/tests/test_map_assets.py
+# recomputes these hashes, so editing one of those blocks fails the test until this list is
+# updated. (explorer.html's popup "Show details" link is an inline onclick in a runtime
+# template and is therefore blocked — it cannot be hash-allowed.)
+_LEGACY_INLINE_SCRIPT_HASHES = (
+    "'sha256-VxhZlUWqYg09e3PuYxidWhNzgtCjF/cHH/emL0bYEmY='",  # map/explorer.html
+    "'sha256-KrR/MfVPb3/O9bqsYx0jP7ekZ2bWxAY9I9QYz0ZKpf4='",  # map/index.html
+    "'sha256-GvjjD+oQ0458JuVUf5MygZK9je1zL4KR7YQAInG6HGA='",  # map/debug.html
 )
 
 DEFAULT_CSP = "; ".join([
     "default-src 'self'",
-    # Inline handlers are still used by the bundled UI → 'unsafe-inline' for scripts.
-    "script-src 'self' 'unsafe-inline' https://unpkg.com",
+    f"script-src 'self' https://unpkg.com {' '.join(_LEGACY_INLINE_SCRIPT_HASHES)}",
+    # Dynamic widths/colours in templates and the legacy pages' <style> blocks still need inline styles.
     "style-src 'self' 'unsafe-inline' https://unpkg.com",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://unpkg.com https://demotiles.maplibre.org",

@@ -1,0 +1,2 @@
+# The repo-wide *.png ignore must not hide the PWA icons (map/sw.js and the manifest need them).
+!*.png
