@@ -710,6 +710,7 @@ async def check_achievements(
     }
 
     progress_changed = False
+    unlocked_defs: list[AchievementDefinition] = []
     async with _write_lock:
         for ach_def in ACHIEVEMENTS:
             current = condition_values.get(ach_def.condition_type, 0)
@@ -725,7 +726,7 @@ async def check_achievements(
                     completed=True,
                     notified=False,
                 )
-                total_xp_earned += ach_def.xp_reward
+                unlocked_defs.append(ach_def)
                 newly_unlocked.append(AchievementProgress(
                     definition=ach_def,
                     current_value=current,
@@ -751,9 +752,15 @@ async def check_achievements(
         if newly_unlocked or progress_changed:
             _save_achievements()
 
-    # Award XP for newly unlocked achievements
-    if total_xp_earned > 0:
-        await _award_xp(total_xp_earned, "achievement_unlock", "Achievement rewards")
+    # Award XP for newly unlocked achievements: one history entry per achievement, each paid
+    # at most once ever (if the achievement store is lost or skipped as corrupt, everything
+    # unlocks again but the rewards are not repaid)
+    for ach_def in unlocked_defs:
+        if await _award_xp(
+            ach_def.xp_reward, "achievement_unlock", f"Achievement: {ach_def.name}",
+            ref=f"achievement:{ach_def.id}",
+        ):
+            total_xp_earned += ach_def.xp_reward
 
     return NewAchievementsResponse(
         new_achievements=newly_unlocked,

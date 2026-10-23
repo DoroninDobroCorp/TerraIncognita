@@ -101,6 +101,29 @@ class TestXpFarming:
         assert (await gam.get_explorer_profile()).total_xp == 200
 
 
+class TestAchievementRewards:
+    async def test_losing_the_achievement_store_does_not_pay_the_rewards_again(self):
+        """A damaged/quarantined achievements.json re-unlocks everything; each reward is paid
+        once per achievement id regardless."""
+        first = await gam.check_achievements([_visit(0)], [])
+        assert first.xp_earned > 0
+        xp_before = (await gam.get_explorer_profile()).total_xp
+
+        gam._achievements.clear()  # as if achievements.json was lost or skipped as corrupt
+        again = await gam.check_achievements([_visit(0)], [])
+
+        assert "first_visit" in _unlocked(again)  # shown as unlocked again...
+        assert again.xp_earned == 0               # ...but not paid again
+        assert (await gam.get_explorer_profile()).total_xp == xp_before
+
+    async def test_each_achievement_has_its_own_history_entry(self):
+        await gam.check_achievements([_visit(i) for i in range(10)], [])
+        events, _ = await gam.get_xp_history(limit=100)
+        descriptions = {e.description for e in events}
+        assert "Achievement: First Steps" in descriptions
+        assert "Achievement: Getting Started" in descriptions
+
+
 class TestAchievementProgress:
     async def test_progress_is_refreshed_on_every_check(self):
         await gam.check_achievements([_visit(i) for i in range(3)], [])
