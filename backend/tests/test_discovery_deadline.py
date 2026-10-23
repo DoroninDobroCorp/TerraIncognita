@@ -10,6 +10,7 @@ import pytest
 from app.config import settings
 from app.models.place import Coordinates, DiscoverRequest, Place, PlaceCategory, PlaceSource
 from app.services import discovery
+from app.sources.base import PartialSourceResult, SourceError
 
 _NAMES = {"a": "Fort Mamula", "b": "Kotor Aqueduct", "osm1": "Hill Bunker", "wiki1": "Old Lighthouse"}
 
@@ -106,3 +107,51 @@ async def test_all_sources_failing_returns_an_empty_answer(monkeypatch):
 def _no_leftover_tasks():
     yield
     discovery._background_tasks.clear()
+
+
+class TestMaxWait:
+    async def test_waiting_for_a_first_useful_source_is_bounded(self, monkeypatch):
+        """Nothing useful has arrived at the deadline; we still must answer before the client gives up."""
+        monkeypatch.setattr(settings, "discovery_deadline_seconds", 0.05)
+        monkeypatch.setattr(settings, "discovery_max_wait_seconds", 0.15)
+        slow = FakeSource("osm", [_place("osm1")], delay=2.0)
+        resp = await _run(slow, FakeSource("atlas", []), FakeSource("wiki", [], delay=0.01))
+        assert resp.places == [] and resp.source_status["osm"] == "timeout"
+        assert not slow.finished  # still running in the background, warming the cache
+        discovery._background_tasks.clear()
+
+
+class TestSourceOutcomes:
+    async def test_partial_result_is_used_and_reported(self):
+        class Partial(FakeSource):
+            async def search(self, lat, lng, radius_km):
+                raise PartialSourceResult([_place("osm1")], "gems tier failed")
+
+        resp = await _run(Partial("osm", []), FakeSource("atlas", []), FakeSource("wiki", []))
+        assert [p.id for p in resp.places] == ["osm1"]
+        assert resp.source_status["osm"] == "partial"
+
+    async def test_expected_failures_log_one_line_without_a_traceback(self, caplog):
+        class Blocked(FakeSource):
+            async def search(self, lat, lng, radius_km):
+                raise SourceError("blocked (403)")
+
+        with caplog.at_level("WARNING", logger="app.services.discovery"):
+            resp = await _run(FakeSource("osm", [_place("osm1")]), Blocked("atlas", []), FakeSource("wiki", []))
+        assert resp.source_status["atlas"] == "error"
+        records = [r for r in caplog.records if "atlas" in r.getMessage()]
+        assert records and all(r.exc_info is None for r in records)
+
+    async def test_unexpected_failures_keep_their_traceback(self, caplog):
+        with caplog.at_level("ERROR", logger="app.services.discovery"):
+            await _run(FakeSource("osm", [], fail=True), FakeSource("atlas", []), FakeSource("wiki", []))
+        assert any(r.exc_info for r in caplog.records)
+
+
+class TestPaginationBoundary:
+    async def test_has_more_is_false_when_the_last_page_ends_exactly_at_the_total(self):
+        places = [_place(pid) for pid in ("a", "b")]
+        p1, p2, p3, p4 = _patched(FakeSource("osm", places), FakeSource("atlas", []), FakeSource("wiki", []))
+        with p1, p2, p3, p4:
+            page = await discovery.discover(DiscoverRequest(lat=42.45, lng=18.53, radius_km=5, limit=2))
+        assert page.total == 2 and page.has_more is False and page.cursor is None

@@ -30,8 +30,10 @@ otherwise make FastAPI fail to serialise its own 422).
 ```
 OSM · Wikidata · Atlas Obscura · Deep Research   (concurrent, each isolated + time-boxed)
         │
-        ▼  answer at discovery_deadline_seconds (25 s) once anything has arrived;
-        │  stragglers are reported as "timeout" and keep running to warm the disk cache
+        ▼  answer at discovery_deadline_seconds (25 s) once anything has arrived (if nothing has,
+        │  keep waiting, but never past discovery_max_wait_seconds = 40 s: the UI gives up at 45 s);
+        │  stragglers are reported as "timeout" and keep running to warm the disk cache. Identical
+        │  concurrent upstream queries share one in-flight request (utils/single_flight.py)
    fuse_places        merge duplicates only if distance AND identity agree (shared Wikidata id,
         │             matching names in any script, or compatible unnamed objects); lose no data
    classify_places    rule-based categories (whole-word, multilingual stems)
@@ -42,7 +44,13 @@ OSM · Wikidata · Atlas Obscura · Deep Research   (concurrent, each isolated +
 ```
 
 - **Sources** (`app/sources/`) implement `BaseSource.search(lat, lng, radius_km)`; a failing source yields
-  `source_status[name] = "error"` and never fails the request. Failures are *not* cached.
+  `source_status[name] = "error"` and never fails the request (expected failures — `SourceError`, HTTP errors —
+  are one log line, bugs get a traceback). An incomplete answer (OSM's hidden-places query failed or was cut
+  short) is used and reported as `"partial"`. Statuses: `ok | empty | partial | error | timeout`. Failures are
+  *not* cached.
+- **Identity**: a merged place keeps the id of its best-ranked source (OSM first), the other ids go to
+  `metadata.merged_ids`; visits and `exclude_visited` match any of them. Clusters never hold two different
+  Wikidata ids, and output order does not depend on which source answered first.
 - **Scoring** is deterministic and rule-based: category rarity, Atlas Obscura listing, abandonment/age/access
   tags, minus mainstream signals (many Wikipedia editions, tourist attraction, museums). `sort_by="unusual"`
   also stops parts of one site from crowding the top. Tune it against `tests/test_golden_search.py`.
@@ -59,7 +67,7 @@ OSM · Wikidata · Atlas Obscura · Deep Research   (concurrent, each isolated +
 | Streak | `GET /api/streak` | `services/streak.py` — local-day streak from journal visits |
 | Ask a place | `POST /api/place/ask` | `services/place_ask.py` |
 | Walk essay | `POST /api/story/walk` | `services/walk_report.py` |
-| Routes, journal, fog/XP, community, offline | see `backend/README.md` | `services/{route_*,journal,gamification,community,offline_manager}.py` |
+| Routes, journal, fog/XP, community, offline | see the interactive API docs at `/docs` | `services/{route_*,journal,gamification,community,offline_manager}.py` |
 
 ## LLM layer
 

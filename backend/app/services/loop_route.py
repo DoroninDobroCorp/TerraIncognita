@@ -344,7 +344,7 @@ async def build_loop_route(req: LoopRouteRequest) -> RouteResponse:
         searched_km = radius_km
         result = await discover(DiscoverRequest(
             lat=req.lat, lng=req.lng, radius_km=radius_km, categories=req.categories,
-            exclude_visited=req.exclude_visited, limit=_DISCOVER_LIMIT, sort_by="confidence",
+            exclude_visited=req.exclude_visited, limit=_DISCOVER_LIMIT, sort_by="unusual",
         ))
         discovered = len(result.places)
         if len(_candidates(origin, result.places, budget, req.max_stops)) < 2:

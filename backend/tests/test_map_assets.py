@@ -467,3 +467,56 @@ def test_ui_uses_the_cross_branch_contract_paths():
                    "/api/place/ask", "/api/stats/heatmap", "tz_offset_minutes", "'unusual'", "unusual_reasons",
                    "unusual_score"):
         assert needle in js, f"UI no longer references {needle}"
+
+
+# ── behaviour of small pure helpers, run in node ────────────────────────────
+
+
+def _run_node(script: str) -> str:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def _js_function(name: str) -> str:
+    """Source of a top-level `function name(...) {...}` from api.js (brace-matched)."""
+    src = (MAP_DIR / "js" / "api.js").read_text(encoding="utf-8")
+    start = src.index(f"function {name}(")
+    depth, i = 0, src.index("{", start)
+    while True:
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        i += 1
+        if depth == 0:
+            return src[start:i]
+
+
+def test_missing_endpoint_detection_tells_absent_routes_from_real_404s():
+    """'No places nearby' is a 404 from an endpoint that exists; it must not hide the feature."""
+    script = _js_function("isMissingEndpoint") + """
+    const err = (status, body) => ({ status, body });
+    console.log(JSON.stringify([
+      isMissingEndpoint(err(404, '{"detail":"Not Found"}')),                      // old backend: route absent
+      isMissingEndpoint(err(404, '{"detail":"No places found within 50 km of here."}')), // real answer
+      isMissingEndpoint(err(404, 'x'.repeat(500))),                                // proxy/static 404, not JSON
+      isMissingEndpoint(err(405, '')), isMissingEndpoint(err(501, '')),
+      isMissingEndpoint(err(422, '{"detail":[]}')), isMissingEndpoint(err(500, '')),
+      isMissingEndpoint(null),
+    ]));
+    """
+    assert json.loads(_run_node(script)) == [True, False, True, True, True, False, False, False]
+
+
+def test_api_detail_prefers_the_servers_own_message():
+    script = _js_function("apiDetail") + """
+    console.log(JSON.stringify([
+      apiDetail({ body: '{"detail":"Try more time or a faster mode."}', message: 'HTTP 404: {...' }),
+      apiDetail({ body: '{"detail":[{"type":"x","loc":["body"],"msg":"Field required"}]}', message: 'm' }),
+      apiDetail({ body: 'not json', message: 'HTTP 500: not json' }),
+    ]));
+    """
+    assert json.loads(_run_node(script)) == [
+        "Try more time or a faster mode.", "Field required", "HTTP 500: not json",
+    ]

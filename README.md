@@ -72,7 +72,7 @@ Open <http://localhost:8000/> for the interactive map; the API docs are at `/doc
 
 ### Configuration
 
-Every option is documented in [`backend/.env.example`](backend/.env.example). The important ones:
+The main options are in [`backend/.env.example`](backend/.env.example); every setting lives in [`backend/app/config.py`](backend/app/config.py). The important ones:
 
 | Variable | Description |
 |----------|-------------|
@@ -97,8 +97,11 @@ Build from the repository root so the map UI is included:
 
 ```bash
 docker build -f backend/Dockerfile -t terra-incognita .
-docker run -p 8000:8000 --env-file backend/.env -v terra-data:/srv/terra/backend/data terra-incognita
+docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
+  -v terra-data:/srv/terra/backend/data -v terra-cache:/srv/terra/backend/cache terra-incognita
 ```
+
+`--env-file` needs the file to exist: `cp backend/.env.example backend/.env` (every line in it may stay commented out). Publishing on `127.0.0.1` keeps clients from reaching the app directly and forging `X-Forwarded-For` when nginx sits in front (drop the `127.0.0.1:` to expose it directly, and leave `TERRA_TRUSTED_PROXY_HOPS` at 0). The `data` volume holds your journal/XP/community data, the `cache` volume the cache and the LLM budget counter.
 
 Run **one worker**: rate limits, the LLM budget and service state live in process memory. Production examples (nginx, systemd with journald, nightly backup) are in [`deploy/`](deploy).
 
@@ -214,7 +217,7 @@ uvicorn app.main:app --reload
 
 ### Настройка
 
-Все параметры описаны в [`backend/.env.example`](backend/.env.example). Главные:
+Основные параметры — в [`backend/.env.example`](backend/.env.example), все настройки — в [`backend/app/config.py`](backend/app/config.py). Главные:
 
 | Переменная | Описание |
 |------------|----------|
@@ -239,8 +242,11 @@ ruff check app tests
 
 ```bash
 docker build -f backend/Dockerfile -t terra-incognita .
-docker run -p 8000:8000 --env-file backend/.env -v terra-data:/srv/terra/backend/data terra-incognita
+docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
+  -v terra-data:/srv/terra/backend/data -v terra-cache:/srv/terra/backend/cache terra-incognita
 ```
+
+`--env-file` требует существующий файл: `cp backend/.env.example backend/.env` (все строки в нём могут оставаться закомментированными). Публикация на `127.0.0.1` не даёт обращаться к приложению напрямую и подделывать `X-Forwarded-For`, когда впереди стоит nginx (уберите `127.0.0.1:`, чтобы открыть напрямую, и оставьте `TERRA_TRUSTED_PROXY_HOPS` равным 0). Том `data` хранит дневник, XP и данные сообщества, том `cache` — кэш и счётчик бюджета LLM.
 
 Запускайте **один воркер**: лимиты, бюджет LLM и состояние сервисов хранятся в памяти процесса. Примеры для продакшена (nginx, systemd с journald, ночной бэкап) — в [`deploy/`](deploy).
 

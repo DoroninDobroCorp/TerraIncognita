@@ -58,8 +58,11 @@ def ranked_set(n: int = 8) -> list[Place]:
     return [mk(f"p{i}", None, C.RUINS, confidence=0.95 - i * 0.05) for i in range(n)]
 
 
-def discover_returning(*pages: list[Place]):
-    responses = [DiscoverResponse(places=p, total=len(p), has_more=False) for p in pages]
+def discover_returning(*pages: list[Place], status: dict[str, str] | None = None):
+    responses = [
+        DiscoverResponse(places=p, total=len(p), has_more=False, source_status=status or {})
+        for p in pages
+    ]
     return patch(
         "app.services.daily_place.discover", new_callable=AsyncMock, side_effect=responses,
     )
@@ -276,7 +279,7 @@ class TestGetDailyPlace:
             await get_daily_place(42.463, 18.537, 12, "en", today=DAY)
         req = mock.await_args.args[0]
         assert (req.lat, req.lng) == cell_center(cell_of(42.463, 18.537))
-        assert (req.radius_km, req.limit, req.sort_by) == (12.0, 200, "confidence")
+        assert (req.radius_km, req.limit, req.sort_by) == (12.0, 200, "unusual")
 
     async def test_radius_widens_until_something_is_found(self, no_llm_key):
         with discover_returning([], [], ranked_set(3)) as mock:
@@ -465,3 +468,27 @@ class TestDailyEndpoint:
         with discover_returning(ranked_set(3)):
             codes = [client.get("/api/daily?lat=42.46&lng=18.53").status_code for _ in range(31)]
         assert codes[:30] == [200] * 30 and codes[30] == 429
+
+
+class TestDegradedDiscovery:
+    """The pick is shared by the whole cell for the whole day: don't freeze one made from a crippled answer."""
+
+    @pytest.mark.parametrize("status", [{"osm": "timeout"}, {"wiki": "error"}, {"osm": "partial"}])
+    async def test_a_pick_from_a_degraded_discovery_is_not_cached(self, no_llm_key, status):
+        with discover_returning(ranked_set(3), ranked_set(3), status=status) as mock:
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+        assert mock.await_count == 2  # the second request got its own chance
+
+    async def test_a_healthy_pick_is_cached_for_the_day(self, no_llm_key):
+        with discover_returning(ranked_set(3), ranked_set(3), status={"osm": "ok", "wiki": "ok"}) as mock:
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+        assert mock.await_count == 1
+
+    async def test_atlas_obscura_being_blocked_does_not_count_as_degraded(self, no_llm_key):
+        status = {"osm": "ok", "wiki": "ok", "atlas": "error"}
+        with discover_returning(ranked_set(3), ranked_set(3), status=status) as mock:
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+        assert mock.await_count == 1

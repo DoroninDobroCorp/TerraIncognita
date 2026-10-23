@@ -102,7 +102,7 @@ function renderAskLog(placeId) {
 function askErrorMessage(e) {
   if (e && e.status === 503) return '🤖 The AI guide is unavailable right now (the daily AI budget is used up or no AI key is configured). Please try again later.';
   if (e && e.status === 429) return 'You are asking too fast — wait a minute and try again.';
-  if (e && [404, 405, 501].includes(e.status)) return 'This server cannot answer questions about places yet.';
+  if (isMissingEndpoint(e)) return 'This server cannot answer questions about places yet.';
   return 'Could not get an answer. Check your connection and try again.';
 }
 

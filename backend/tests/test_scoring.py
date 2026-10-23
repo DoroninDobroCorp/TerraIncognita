@@ -429,3 +429,17 @@ def test_quirky_museums_curated_by_atlas_obscura_are_not_penalised_as_museums():
     assert "museum (a managed visitor attraction)" in score_place(ordinary).penalties
     assert "museum (a managed visitor attraction)" not in score_place(quirky).penalties
     assert score_place(quirky).score > 0.3 > score_place(ordinary).score
+
+
+def test_reasons_do_not_invent_a_year_for_century_dates():
+    import app.models.place as pm
+
+    for raw, phrase in [("C19", "dates from the 19th century"), ("before 1800", "dates from before 1800")]:
+        place = pm.Place(
+            id="x", source=pm.PlaceSource.OSM, name="Old Ruin",
+            categories=[pm.PlaceCategory.RUINS], coordinates=pm.Coordinates(lat=1, lng=1),
+            metadata={"osm_tags": {"historic": "ruins", "start_date": raw}},
+        )
+        apply_unusual_scores([place])
+        assert phrase in place.unusual_reasons, (raw, place.unusual_reasons)
+        assert not any("1850" in r for r in place.unusual_reasons)

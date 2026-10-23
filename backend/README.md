@@ -64,8 +64,8 @@ Health check endpoint.
 
 ## Configuration
 
-Set via environment variables (prefix `TERRA_`) or a `.env` file — see [`.env.example`](.env.example) for every
-option. The ones you will touch first:
+Set via environment variables (prefix `TERRA_`) or a `.env` file — [`.env.example`](.env.example) lists the main
+options and `app/config.py` every setting. The ones you will touch first:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -91,10 +91,11 @@ Build from the **repository root** so the map UI and static data are included:
 
 ```bash
 docker build -f backend/Dockerfile -t terra-incognita .
-docker run -p 8000:8000 --env-file backend/.env -v terra-data:/srv/terra/backend/data terra-incognita
+docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
+  -v terra-data:/srv/terra/backend/data -v terra-cache:/srv/terra/backend/cache terra-incognita
 ```
 
-Production examples (nginx, systemd, nightly backup) are in [`deploy/`](../deploy).
+`backend/.env` must exist for `--env-file` (copy `.env.example`; all lines may stay commented). Bind to `127.0.0.1` when nginx fronts the container so `X-Forwarded-For` cannot be forged. Production examples (nginx, systemd, nightly backup) are in [`deploy/`](../deploy).
 
 ## Daily place, loops, collections, streak, ask-the-place
 

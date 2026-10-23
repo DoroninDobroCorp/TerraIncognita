@@ -7,6 +7,7 @@ import pytest
 from app.models.place import PlaceCategory as C
 from app.sources.osm_tags import (
     commons_category,
+    describe_date,
     effective_tags,
     extract_photos,
     interpret_tags,
@@ -231,3 +232,24 @@ def test_meaningful_tag_list_drops_noise():
         "access": "no",
     }
     assert sorted(meaningful_tag_list(tags)) == ["abandoned=yes", "access=no", "military=bunker"]
+
+
+class TestDescribeDate:
+    @pytest.mark.parametrize("raw, expected", [
+        ("1914-06", "dates from 1914"),
+        ("1650", "dates from 1650"),
+        ("C19", "dates from the 19th century"),
+        ("19th century", "dates from the 19th century"),
+        ("C1", "dates from the 1st century"),
+        ("C12", "dates from the 12th century"),
+        ("C22", "dates from the 22nd century"),
+        ("before 1800", "dates from before 1800"),
+        ("<1800", "dates from before 1800"),
+        ("1900..1910", "dates from 1900"),
+    ])
+    def test_wording_matches_the_precision_of_the_data(self, raw, expected):
+        assert describe_date(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["", "   ", None, "unknown", "yes"])
+    def test_nothing_to_say_without_a_date(self, raw):
+        assert describe_date(raw) is None

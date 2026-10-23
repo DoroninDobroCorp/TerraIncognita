@@ -16,9 +16,10 @@ import httpx
 from app.config import settings
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.cache import disk_cache
-from app.sources.base import BaseSource
+from app.sources.base import BaseSource, SourceError
 from app.utils.geo import bounding_box
 from app.utils.http_client import get_http_client
+from app.utils.single_flight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ _CATEGORY_MAP: dict[str, list[PlaceCategory]] = {
 }
 
 
-class AtlasObscuraError(RuntimeError):
+class AtlasObscuraError(SourceError):
     """Atlas Obscura could not be queried (blocked, down, or a back-off is active)."""
 
 
@@ -63,6 +64,7 @@ class AtlasObscuraSource(BaseSource):
 
     def __init__(self) -> None:
         self._retry_after = 0.0  # time.monotonic() before which we do not even try
+        self._in_flight = SingleFlight()
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         cache_key = f"atlas_{lat:.3f}_{lng:.3f}_{radius_km:.1f}"
@@ -73,15 +75,18 @@ class AtlasObscuraSource(BaseSource):
 
         if time.monotonic() < self._retry_after:
             raise AtlasObscuraError("backing off after a recent failure")
-        try:
-            places = await self._fetch_nearby(lat, lng, radius_km)
-        except AtlasObscuraError:
-            self._retry_after = time.monotonic() + _BACKOFF_SECONDS
-            raise
-        # Only a real answer is cached: a failure must not look like "nothing nearby" for 24 h.
-        await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
-        logger.info("Atlas Obscura returned %d places", len(places))
-        return places
+        async def fetch() -> list[Place]:
+            try:
+                places = await self._fetch_nearby(lat, lng, radius_km)
+            except AtlasObscuraError:
+                self._retry_after = time.monotonic() + _BACKOFF_SECONDS
+                raise
+            # Only a real answer is cached: a failure must not look like "nothing nearby" for 24 h.
+            await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
+            logger.info("Atlas Obscura returned %d places", len(places))
+            return places
+
+        return await self._in_flight.run(cache_key, fetch)
 
     async def _fetch_nearby(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         """Fetch places from Atlas Obscura's nearby endpoint."""

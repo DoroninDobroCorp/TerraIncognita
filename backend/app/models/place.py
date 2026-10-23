@@ -133,7 +133,7 @@ class DiscoverResponse(BaseModel):
     cursor: str | None = None
     deep_research_status: str = "idle"  # "idle" | "pending" | "cached"
     deep_research_message: str | None = None
-    # Per-source outcome: "ok" | "empty" | "error" | "timeout". A failing source never fails the request.
+    # Per-source outcome: "ok" | "empty" | "partial" | "error" | "timeout". A failing source never fails the request.
     source_status: dict[str, str] = Field(default_factory=dict)
 
 

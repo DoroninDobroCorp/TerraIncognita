@@ -252,15 +252,28 @@ async def _story_for(place: Place, lang: str) -> str | None:
 # ── Orchestration ────────────────────────────────────────────────
 
 
-async def _choose_place(cell: tuple[int, int], steps: list[float], day: date) -> Place:
+# Sources whose outage changes the shortlist enough that the day's pick should not be frozen.
+# (Atlas Obscura is blocked on most servers and would be "down" every single day.)
+_CORE_SOURCES = ("osm", "wiki")
+
+
+def _degraded(source_status: dict[str, str]) -> bool:
+    return any(source_status.get(name) in ("timeout", "error", "partial") for name in _CORE_SOURCES)
+
+
+async def _choose_place(
+    cell: tuple[int, int], steps: list[float], day: date
+) -> tuple[Place, bool]:
+    """(today's place, whether it was chosen from a degraded discovery and must not be cached)."""
     lat, lng = cell_center(cell)
     for radius in steps:
         result = await discover(DiscoverRequest(
-            lat=lat, lng=lng, radius_km=radius, limit=_DISCOVER_LIMIT, sort_by="confidence",
+            lat=lat, lng=lng, radius_km=radius, limit=_DISCOVER_LIMIT, sort_by="unusual",
         ))
+        degraded = _degraded(result.source_status)
         named = [p for p in result.places if p.name and p.name.strip()]
         if named:
-            return pick_daily(named, day, cell, settings.daily_top_k)
+            return pick_daily(named, day, cell, settings.daily_top_k), degraded
         logger.info("Daily place: nothing within %s km of cell %s", radius, cell)
     raise NoPlacesNearbyError(steps[-1])
 
@@ -282,8 +295,13 @@ async def get_daily_place(
         except ValueError:
             logger.warning("Discarding unreadable daily pick cache entry")
     if place is None:
-        place = await _choose_place(cell, steps, day)
-        await pick_cache.set(key, place.model_dump(mode="json"))
+        place, degraded = await _choose_place(cell, steps, day)
+        if degraded:
+            # The pick is shared by everyone in the cell for the whole day; do not freeze one made
+            # while OSM/Wikidata were down — the next request gets a proper chance.
+            logger.info("Daily place chosen from a degraded discovery; not cached")
+        else:
+            await pick_cache.set(key, place.model_dump(mode="json"))
 
     distance_m = haversine_distance_m(lat, lng, place.coordinates.lat, place.coordinates.lng)
     place = place.model_copy(update={"distance_m": round(distance_m, 1)})

@@ -14,6 +14,7 @@ from app.services.cache import disk_cache
 from app.sources.base import BaseSource
 from app.utils.geo import bounding_box
 from app.utils.http_client import get_http_client
+from app.utils.single_flight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,9 @@ class WikidataSource(BaseSource):
 
     source_name = "wiki"
 
+    def __init__(self) -> None:
+        self._in_flight = SingleFlight()
+
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         south, west, north, east = bounding_box(lat, lng, radius_km)
         cache_key = f"wiki_{south:.3f}_{west:.3f}_{north:.3f}_{east:.3f}"
@@ -101,10 +105,13 @@ class WikidataSource(BaseSource):
             logger.debug("Wikidata cache hit")
             return [Place.model_validate(p) for p in cached]
 
-        places = await self._query_sparql(south, west, north, east)
-        await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
-        logger.info("Wikidata returned %d places", len(places))
-        return places
+        async def fetch() -> list[Place]:
+            places = await self._query_sparql(south, west, north, east)
+            await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
+            logger.info("Wikidata returned %d places", len(places))
+            return places
+
+        return await self._in_flight.run(cache_key, fetch)
 
     async def _query_sparql(
         self, south: float, west: float, north: float, east: float

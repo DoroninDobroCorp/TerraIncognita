@@ -305,7 +305,9 @@ class TestMergeKeepsEverything:
         rich = make("atlas_1", "Fort Arza", east=5, source=PlaceSource.ATLAS_OBSCURA,
                     description="d", photos=["x"], metadata={"k": "rich"})
         m = self.merged(poor, rich)
-        assert m.metadata["k"] == "rich" and m.id == "atlas_1"
+        # data conflicts go to the richer entry; the id stays with the best-ranked source (OSM)
+        assert m.metadata["k"] == "rich" and m.id == "osm_1"
+        assert m.metadata["merged_ids"] == ["atlas_1"]
 
     def test_best_description_is_the_longest(self):
         a = make("a", "Fort Arza", description="Short")
@@ -359,8 +361,9 @@ class TestMergeKeepsEverything:
                    photos=["p"])
         osm = make("osm_1", "Fort Arza", north=12)
         m = self.merged(llm, osm)
-        assert m.id == "dr_1"  # richest entry supplies the content
-        assert m.coordinates == osm.coordinates  # …but not the coordinates
+        assert m.description.startswith("rich")  # richest entry supplies the content
+        assert m.id == "osm_1"  # the best-ranked source owns the id...
+        assert m.coordinates == osm.coordinates  # ...and the coordinates
 
     def test_confidence_counts_all_sources(self):
         single = make("a", "Fort Arza", description="d", photos=["p"])
@@ -427,3 +430,69 @@ class TestNameVariants:
         [m] = fuse_places([[osm], [atlas]])
         assert m.metadata["name_en"] == "Catacombs entrance"
         assert {m.name, *m.metadata["alt_names"]} == {"Вход в катакомбы", "Odesa Catacombs"}
+
+
+class TestClusterGuards:
+    """Pairwise rules are sound; connected components must not undo them via a bridging entry."""
+
+    def test_a_bridge_cannot_merge_two_different_wikidata_ids(self):
+        fortress = make("wiki_Q1", "Fort A", source=PlaceSource.WIKIDATA, categories=[MIL],
+                        metadata={"wikidata_id": "Q1"})
+        island = make("wiki_Q2", "Fort A", east=20, source=PlaceSource.WIKIDATA, categories=[MIL],
+                      metadata={"wikidata_id": "Q2"})
+        bridge = make("osm_1", "Fort A", east=10, categories=[MIL])  # no wikidata tag: matches both
+        result = fuse_places([[fortress, island], [bridge]])
+        ids = [{p.id, *p.metadata.get("merged_ids", [])} for p in result]
+        assert not any({"wiki_Q1", "wiki_Q2"} <= group for group in ids), ids
+
+    def test_a_bridge_cannot_merge_two_unnamed_entries_of_one_source(self):
+        a = make("osm_node_10", None, north=0, categories=[MIL])
+        b = make("osm_node_11", None, north=80, categories=[MIL])
+        bridge = make("atlas_5", None, north=40, source=PlaceSource.ATLAS_OBSCURA, categories=[MIL])
+        result = fuse_places([[a, b], [bridge]], dedup_distance_m=50)
+        groups = clusters(result)
+        assert not any({"osm_node_10", "osm_node_11"} <= g for g in groups), groups
+
+    def test_unnamed_duplicates_at_the_same_point_still_merge(self):
+        node = make("osm_node_1", None, categories=[MIL])
+        way = make("osm_way_1", None, north=1, categories=[MIL])  # centre of the same bunker
+        assert len(fuse_places([[node, way]])) == 1
+
+    def test_a_legitimate_three_way_merge_is_unaffected(self):
+        osm = make("osm_1", "Fort Arza", categories=[MIL])
+        atlas = make("atlas_1", "Arza Fort", east=10, source=PlaceSource.ATLAS_OBSCURA, categories=[MIL])
+        wiki = make("wiki_Q5", "Tvrđava Arza", east=15, source=PlaceSource.WIKIDATA, categories=[MIL],
+                    metadata={"wikidata_id": "Q5"})
+        assert len(fuse_places([[osm], [atlas], [wiki]])) == 1
+
+
+class TestStableIdentity:
+    def _fort(self, source, pid, name, **kw):
+        return make(pid, name, source=source, categories=[MIL], **kw)
+
+    def test_the_id_does_not_depend_on_which_sources_answered(self):
+        osm = self._fort(PlaceSource.OSM, "osm_node_1", "Fort Mamula")
+        wiki = self._fort(PlaceSource.WIKIDATA, "wiki_Q123", "Tvrđava Mamula", east=5,
+                          description="Fortress at the Bay of Kotor", photos=["p.jpg"],
+                          metadata={"wikidata_id": "Q123"})
+        with_wiki = fuse_places([[osm], [wiki]])
+        assert [p.id for p in with_wiki] == ["osm_node_1"]
+        assert with_wiki[0].metadata["merged_ids"] == ["wiki_Q123"]
+        # ...while the richer entry still supplies the data
+        assert with_wiki[0].name == "Tvrđava Mamula" or with_wiki[0].description
+        assert [p.id for p in fuse_places([[osm]])] == ["osm_node_1"]
+
+    def test_output_is_fully_independent_of_input_order(self):
+        items = [
+            ("osm_1", "Fort Mamula", 0, PlaceSource.OSM),
+            ("osm_2", "Mamula Fort", 25, PlaceSource.OSM),  # same richness as osm_1: a tie
+            ("atlas_1", None, 40, PlaceSource.ATLAS_OBSCURA),
+        ]
+        outputs = set()
+        for perm in itertools.permutations(items):
+            places = [make(i, n, north=nm, source=s, categories=[MIL]) for i, n, nm, s in perm]
+            outputs.add(tuple(
+                (p.id, p.name, tuple(p.metadata.get("alt_names", [])), tuple(p.metadata.get("merged_ids", [])))
+                for p in fuse_places([places])
+            ))
+        assert len(outputs) == 1, outputs

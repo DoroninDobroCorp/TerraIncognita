@@ -145,3 +145,8 @@ class TestBackgroundRuns:
             await asyncio.gather(*list(dr._running.values()))
         await asyncio.sleep(0)
         assert dr._running == {}
+
+
+def test_production_caches_use_separate_directories():
+    """Same keys in one directory would make the 30-minute 'found nothing' marker a 30-day answer."""
+    assert dr._dr_cache._dir != dr._nothing_found._dir

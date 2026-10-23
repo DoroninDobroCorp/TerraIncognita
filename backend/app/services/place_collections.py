@@ -66,8 +66,14 @@ def find_visited_place_ids(
     places: list[Place], visits: list[Visit], proximity_m: float
 ) -> set[str]:
     """Ids of ``places`` the explorer has visited (see module docstring for the rules)."""
-    by_id = {p.id: p for p in places}
-    visited: set[str] = {v.place_id for v in visits if v.place_id in by_id}
+    # A merged place answers to every id that was folded into it (they depend on which
+    # sources responded when the visit was recorded).
+    by_id: dict[str, Place] = {}
+    for p in places:
+        by_id[p.id] = p
+        for merged_id in p.metadata.get("merged_ids", ()):
+            by_id.setdefault(merged_id, p)
+    visited: set[str] = {by_id[v.place_id].id for v in visits if v.place_id in by_id}
 
     # Places not yet matched, sorted by latitude so a visit only looks at a thin strip.
     pending = sorted(

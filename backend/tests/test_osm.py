@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import parse_qs
 
 import httpx
@@ -10,6 +11,7 @@ import pytest
 from app.config import settings
 from app.models.place import Place, PlaceCategory, PlaceSource
 from app.services.cache import DiskCache
+from app.sources.base import PartialSourceResult
 from app.sources.osm import (
     _GEM_CLAUSES,
     _LANDMARK_CLAUSES,
@@ -410,16 +412,43 @@ class TestOSMSearch:
         monkeypatch.setattr(settings, "overpass_fallback_urls", "")
         overpass.handlers = {(PRIMARY, "gems"): httpx.Response(500),
                              (PRIMARY, "landmarks"): _ok(_LANDMARK_ELEMENT)}
-        places = await osm.search(42.45, 18.53, 5.0)
-        assert [p.name for p in places] == ["City Museum"]
+        # The landmarks arrive, but the hidden places did not: reported as partial, not "ok".
+        with pytest.raises(PartialSourceResult) as partial:
+            await osm.search(42.45, 18.53, 5.0)
+        assert [p.name for p in partial.value.places] == ["City Museum"]
 
-    async def test_partial_result_with_remark_is_returned_but_not_cached(self, osm, overpass):
+    async def test_a_failing_landmark_tier_is_cosmetic(self, osm, overpass, monkeypatch):
+        monkeypatch.setattr(settings, "overpass_fallback_urls", "")
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT),
+                             (PRIMARY, "landmarks"): httpx.Response(500)}
+        places = await osm.search(42.45, 18.53, 5.0)  # no exception: the gems are all there
+        assert len(places) == 1
+
+    async def test_partial_result_with_remark_is_reported_partial_and_not_cached(self, osm, overpass):
         overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT, remark="runtime remark: partial"),
                              (PRIMARY, "landmarks"): _ok()}
-        assert len(await osm.search(42.45, 18.53, 5.0)) == 1
+        with pytest.raises(PartialSourceResult) as partial:
+            await osm.search(42.45, 18.53, 5.0)
+        assert len(partial.value.places) == 1
         n = len(overpass.calls)
-        await osm.search(42.45, 18.53, 5.0)
+        with pytest.raises(PartialSourceResult):
+            await osm.search(42.45, 18.53, 5.0)
         assert len(overpass.calls) > n  # gems tier asked again; the clean landmark tier was cached
+
+    async def test_jittered_coordinates_hit_the_same_cache_entry(self, osm, overpass):
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT), (PRIMARY, "landmarks"): _ok()}
+        await osm.search(42.45, 18.53, 5.0)
+        calls = len(overpass.calls)
+        await osm.search(42.450001, 18.530001, 5.0)  # a fresh GPS fix a few centimetres away
+        assert len(overpass.calls) == calls
+
+    async def test_concurrent_identical_searches_share_one_upstream_query(self, osm, overpass):
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT), (PRIMARY, "landmarks"): _ok()}
+        a, b = await asyncio.gather(
+            osm.search(42.45, 18.53, 5.0), osm.search(42.45, 18.53, 5.0)
+        )
+        assert len(a) == len(b) == 1
+        assert len(overpass.calls) == 2  # one per tier, not four
 
     async def test_duplicate_elements_across_tiers_are_deduplicated(self, osm, overpass):
         overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT),

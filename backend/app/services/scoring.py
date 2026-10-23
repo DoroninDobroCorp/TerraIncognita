@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 
 from app.models.place import Place, PlaceCategory, PlaceSource
 from app.services import names
-from app.sources.osm_tags import OsmInterpretation, interpret_tags, parse_year
+from app.sources.osm_tags import OsmInterpretation, describe_date, interpret_tags, parse_year
 
 C = PlaceCategory
 
@@ -111,6 +111,7 @@ class _Ctx:
     sitelinks: int | None
     has_wikipedia: bool
     year: int | None
+    date_text: str = ""  # the raw start_date-like value, for wording the age honestly
 
     @property
     def feature(self) -> str | None:
@@ -147,7 +148,7 @@ class Penalty:
 
 
 def _year_reason(ctx: _Ctx) -> str:
-    return f"dates from {ctx.year}"
+    return describe_date(ctx.date_text) or f"dates from {ctx.year}"
 
 
 def _sitelinks_label(ctx: _Ctx) -> str:
@@ -273,11 +274,10 @@ def _context(place: Place) -> _Ctx:
         or tags.get("wikipedia")
         or any(place.metadata.get(k) for k in _WIKI_META_KEYS)
     )
-    year = parse_year(
-        str(place.metadata.get("start_date") or tags.get("start_date") or "") or None
-    )
+    date_text = str(place.metadata.get("start_date") or tags.get("start_date") or "")
+    year = parse_year(date_text or None)
     return _Ctx(place, tags, info, cats, frozenset(sources), base, named, sitelinks,
-                has_wikipedia, year)
+                has_wikipedia, year, date_text)
 
 
 def _second_best(cats: frozenset[PlaceCategory]) -> float:

@@ -261,3 +261,16 @@ def test_collections_are_rate_limited_under_the_daily_rule():
     assert rule.name == "daily"
     assert rule is next(r for r in RATE_RULES if r.matches("GET", "/api/daily"))
     assert not rule.matches("POST", "/api/daily")
+
+
+class TestVisitsRecordedUnderMergedIds:
+    def test_a_visit_under_a_folded_in_id_counts_for_the_merged_place(self):
+        merged = mk_place("osm_node_1", "Fort Mamula", 42.45, 18.53, C.MILITARY)
+        merged.metadata["merged_ids"] = ["wiki_Q123"]
+        visits = [mk_visit("wiki_Q123", 42.45, 18.53, "Tvrđava Mamula")]
+        assert find_visited_place_ids([merged], visits, 100.0) == {"osm_node_1"}
+
+    def test_the_visit_id_may_also_be_the_primary_one(self):
+        merged = mk_place("osm_node_1", "Fort Mamula", 42.45, 18.53, C.MILITARY)
+        merged.metadata["merged_ids"] = ["wiki_Q123"]
+        assert find_visited_place_ids([merged], [mk_visit("osm_node_1", 42.45, 18.53)], 100.0) == {"osm_node_1"}

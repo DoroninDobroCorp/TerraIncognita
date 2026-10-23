@@ -6,7 +6,30 @@ const API_TIMEOUT = 10000;
 const API_MAX_RETRIES = 2;
 
 class ApiError extends Error {
-  constructor(message, status = 0) { super(message); this.name = 'ApiError'; this.status = status; }
+  /** `body` is the full response text (the message carries only its first 200 characters). */
+  constructor(message, status = 0, body = '') { super(message); this.name = 'ApiError'; this.status = status; this.body = body; }
+}
+
+/** The server's own explanation of an error, e.g. FastAPI's {"detail": "..."}; falls back to the message. */
+function apiDetail(err) {
+  try {
+    const detail = JSON.parse(err.body || '').detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail[0] && detail[0].msg) return detail[0].msg;
+  } catch { /* not JSON */ }
+  return (err && err.message) || 'unknown error';
+}
+
+/**
+ * True when the server does not have the endpoint at all (old backend): 405/501, or the router's default
+ * 404 {"detail": "Not Found"}. A 404 that carries a message of its own ("no places nearby") is a real answer
+ * from an endpoint that exists and must not disable the feature.
+ */
+function isMissingEndpoint(err) {
+  if (!err) return false;
+  if ([405, 501].includes(err.status)) return true;
+  if (err.status !== 404) return false;
+  try { return JSON.parse(err.body || '').detail === 'Not Found'; } catch { return true; } // proxy / static 404
 }
 
 function sanitizePath(p) { return p.replace(/[^a-zA-Z0-9\-_\/?.=&%:,@+]/g, ''); }
@@ -32,7 +55,7 @@ async function api(path, opts = {}) {
       clearTimeout(timer);
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        throw new ApiError(`HTTP ${res.status}${text ? ': ' + text.substring(0, 200) : ''}`, res.status);
+        throw new ApiError(`HTTP ${res.status}${text ? ': ' + text.substring(0, 200) : ''}`, res.status, text);
       }
       const ct = res.headers.get('content-type') || '';
       if (!ct.includes('json')) throw new ApiError('Non-JSON response', res.status);
@@ -108,9 +131,9 @@ function applyFeatureVisibility() {
   const ask = $('card-ask'); // lives in the place card, whose visibility also depends on fog
   if (ask && features.ask === false) ask.hidden = true;
 }
-/** Mark a feature unavailable when the server answers 404/405/501 for it. Returns true if it did. */
+/** Mark a feature unavailable when the server has no such endpoint (see isMissingEndpoint). Returns true if it did. */
 function featureUnavailable(name, err) {
-  if (err && [404, 405, 501].includes(err.status)) {
+  if (isMissingEndpoint(err)) {
     features[name] = false;
     applyFeatureVisibility();
     return true;

@@ -62,7 +62,7 @@ async function buildLoop() {
     toast('Loop ready!','success');
   } catch (e) {
     if (featureUnavailable('loop', e)) { toast('This server cannot build loop routes yet','warning'); selectTab($('tab-r-build')); }
-    else toast('Loop failed: ' + (e.message || 'check connection'), 'error');
+    else toast('Loop failed: ' + (apiDetail(e) || 'check connection'), 'error');
   } finally { btn.disabled = false; }
 }
 

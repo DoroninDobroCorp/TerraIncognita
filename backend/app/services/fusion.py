@@ -12,9 +12,16 @@ to it, a hilltop into a pillbox:
   object twice), within ``dedup_distance_meters``, when their categories agree — or when their
   coordinates are practically identical.
 
+Pairwise rules alone are not enough: a third entry can bridge two entries the rules refuse to
+merge. Clusters therefore never contain two different Wikidata ids, and never two *unnamed*
+entries of the same source that are not at the same point.
+
 Merging keeps everything: photos, tags, sources, categories (+ per-category confidence), metadata
 (deep-merged), the other names and ids of the cluster, the best description and the highest
-unusualness score. Finally a confidence score is computed.
+unusualness score. The merged place keeps the id of its best-ranked source (OSM first), so the id
+a visit was recorded under does not depend on which other sources happened to answer; every other
+id is listed in ``metadata["merged_ids"]``. The result does not depend on the input order.
+Finally a confidence score is computed.
 """
 
 from __future__ import annotations
@@ -153,6 +160,24 @@ def _cluster(entries: list[_Entry], threshold: float, name_range: float) -> list
             i = parent[i]
         return i
 
+    # Per-cluster facts the guard needs (kept on the root): Wikidata ids, and the sources of
+    # unnamed members.
+    wikidata: list[set[str]] = [{e.wikidata_id} if e.wikidata_id else set() for e in entries]
+    unnamed_sources: list[set[PlaceSource]] = [
+        set() if e.variants else set(e.sources) for e in entries
+    ]
+
+    def may_merge(ri: int, rj: int, a: _Entry, b: _Entry) -> bool:
+        if len(wikidata[ri] | wikidata[rj]) > 1:
+            return False  # two different Wikidata ids are two different places, bridged or not
+        if unnamed_sources[ri] & unnamed_sources[rj]:
+            distance = haversine_distance_m(
+                a.place.coordinates.lat, a.place.coordinates.lng,
+                b.place.coordinates.lat, b.place.coordinates.lng,
+            )
+            return distance <= SAME_POINT_M
+        return True
+
     lat0 = math.radians(sum(e.place.coordinates.lat for e in entries) / n)
     for e in entries:
         e.x = e.place.coordinates.lng * 111_320.0 * max(math.cos(lat0), 0.01)
@@ -168,10 +193,15 @@ def _cluster(entries: list[_Entry], threshold: float, name_range: float) -> list
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for j in grid.get((cx + dx, cy + dy), ()):
-                    if j <= i or find(i) == find(j):
+                    ri, rj = find(i), find(j)
+                    if j <= i or ri == rj:
                         continue
-                    if _same_place(e, entries[j], threshold, name_range):
-                        parent[find(j)] = find(i)
+                    if _same_place(e, entries[j], threshold, name_range) and may_merge(
+                        ri, rj, e, entries[j]
+                    ):
+                        parent[rj] = ri
+                        wikidata[ri] |= wikidata[rj]
+                        unnamed_sources[ri] |= unnamed_sources[rj]
 
     groups: dict[int, list[_Entry]] = {}  # insertion order = order of each group's first member
     for i, e in enumerate(entries):
@@ -197,6 +227,8 @@ def fuse_places(
     if not all_places:
         return []
 
+    # Canonical order: the output must not depend on which source answered first.
+    all_places.sort(key=lambda p: (_COORDINATE_RANK.get(p.source, 9), p.id))
     clusters = _cluster([_make_entry(p) for p in all_places], threshold, name_range)
     merged = [_merge_cluster([e.place for e in c]) for c in clusters]
     logger.info(
@@ -247,7 +279,9 @@ def _merge_cluster(cluster: list[Place]) -> Place:
         metadata["name_generated"] = True
     if alt_names:
         metadata["alt_names"] = list(dict.fromkeys([*metadata.get("alt_names", []), *alt_names]))
-    metadata["merged_ids"] = [p.id for p in ordered if p.id != primary.id]
+    # The id belongs to the best-ranked source, whichever member happens to be richest.
+    id_owner = min(ordered, key=lambda p: (_COORDINATE_RANK.get(p.source, 9), p.id))
+    metadata["merged_ids"] = [p.id for p in ordered if p.id != id_owner.id]
     if any("_needs_llm_classification" not in p.metadata for p in ordered):
         metadata.pop("_needs_llm_classification", None)  # someone knows what it is
 
@@ -255,6 +289,8 @@ def _merge_cluster(cluster: list[Place]) -> Place:
     anchor = min(ordered, key=lambda p: _COORDINATE_RANK.get(p.source, 9))
     reasons = list(dict.fromkeys(r for p in ordered for r in p.unusual_reasons))[:_MAX_REASONS]
 
+    primary.id = id_owner.id
+    primary.source = id_owner.source
     primary.name = name
     primary.description = max(
         (p.description for p in ordered if p.description), key=len, default=None

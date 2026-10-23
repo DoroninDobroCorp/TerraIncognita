@@ -39,7 +39,9 @@ _dr_cache = DiskCache(
 _running: dict[str, asyncio.Task] = {}
 # "Researched, found nothing (or failed)" is remembered briefly so an empty/failed run is
 # retried later instead of cached as the answer for 30 days — or re-run on every request.
-_nothing_found = DiskCache(cache_dir=settings.cache_dir, ttl=1800)
+# Its own directory: the keys are identical to ``_dr_cache``'s, so sharing one would make an
+# empty marker look like a (30-day) cached answer.
+_nothing_found = DiskCache(cache_dir=f"{settings.cache_dir}/dr_empty", ttl=1800)
 
 
 def _configured() -> bool:

@@ -145,8 +145,8 @@ WCAG contrast of every text/background pair per theme (4.5:1, 7:1 for sun) and t
 inline `<script>` each in `explorer.html`, `index.html`, `debug.html` (a test recomputes them: if you edit one of
 those inline scripts the test tells you the new hash). `style-src` still allows `'unsafe-inline'` (dynamic widths
 and colours in templates, inline `<style>` of the legacy pages).
-Known casualty: `explorer.html`'s marker popup builds `onclick="showPlaceCard(...)"` at runtime, which no hash can
-allow, so its "Show details →" link is blocked. Fix it there (`addEventListener`) rather than loosening the CSP.
+(`explorer.html`'s marker popup is built with DOM APIs and `addEventListener`; an `onclick=` string built at runtime
+could not be allowed by any hash, so keep it that way rather than loosening the CSP.)
 
 ## Backend contract the UI codes against
 

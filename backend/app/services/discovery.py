@@ -11,6 +11,8 @@ import base64
 import logging
 import time
 
+import httpx
+
 from app.config import settings
 from app.models.place import (
     DiscoverRequest,
@@ -21,6 +23,7 @@ from app.services.classifier import classify_places
 from app.services.fusion import fuse_places, recompute_confidence
 from app.services.scoring import apply_unusual_scores, diversify_by_site, unusual_sort_key
 from app.sources.atlas_obscura import AtlasObscuraSource
+from app.sources.base import PartialSourceResult, SourceError
 from app.sources.deep_research import DeepResearchSource
 from app.sources.osm import OSMSource
 from app.sources.wikidata import WikidataSource
@@ -36,6 +39,7 @@ _deep = DeepResearchSource()
 
 # Outcome of one source query, reported in DiscoverResponse.source_status.
 STATUS_OK = "ok"
+STATUS_PARTIAL = "partial"  # answered, but part of the query failed
 STATUS_EMPTY = "empty"
 STATUS_ERROR = "error"
 STATUS_TIMEOUT = "timeout"
@@ -135,15 +139,23 @@ async def _gather_sources(sources, req: DiscoverRequest) -> list[tuple[list[Plac
     source has produced places, those are returned and the stragglers are reported as
     ``timeout`` while they finish in the background. If nothing has produced places yet we
     keep waiting for the first source that does (or for all of them to give up) — an empty
-    answer helps nobody.
+    answer helps nobody — but never past ``discovery_max_wait_seconds``, which stays below
+    the client's own timeout.
     """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
     tasks = [
         asyncio.ensure_future(_query_source(name, src, req.lat, req.lng, req.radius_km))
         for name, src in sources
     ]
     _, pending = await asyncio.wait(tasks, timeout=settings.discovery_deadline_seconds)
     while pending and not any(t.done() and t.result()[0] for t in tasks):
-        _, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        remaining = started + settings.discovery_max_wait_seconds - loop.time()
+        if remaining <= 0:
+            break
+        _, pending = await asyncio.wait(
+            pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+        )
     outcomes: list[tuple[list[Place], str]] = []
     for task in tasks:
         if task in pending:
@@ -168,8 +180,15 @@ async def _query_source(
     except TimeoutError:
         logger.warning("Source %s timed out after %.0fs", name, settings.discovery_source_timeout_seconds)
         return [], STATUS_TIMEOUT
+    except PartialSourceResult as partial:
+        logger.warning("Source %s answered only in part: %s", name, partial.reason)
+        return partial.places, STATUS_PARTIAL
+    except (SourceError, httpx.HTTPError) as exc:
+        # Outages, blocks and rate limits are routine: one line, not a traceback per request.
+        logger.warning("Source %s unavailable: %s", name, exc or type(exc).__name__)
+        return [], STATUS_ERROR
     except Exception:
-        logger.exception("Source %s failed", name)
+        logger.exception("Source %s failed unexpectedly", name)
         return [], STATUS_ERROR
     return places, (STATUS_OK if places else STATUS_EMPTY)
 

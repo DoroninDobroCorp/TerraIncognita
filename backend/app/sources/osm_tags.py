@@ -506,6 +506,32 @@ def parse_year(value: str | None) -> int | None:
     return None
 
 
+_BEFORE_RE = re.compile(r"^\s*(?:before|pre|<)\b|^\s*<", re.IGNORECASE)
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def describe_date(value: str | None) -> str | None:
+    """Honest wording for an age: only the precision the data actually has.
+
+    "1914-06" -> "dates from 1914", "C19" -> "dates from the 19th century",
+    "before 1800" -> "dates from before 1800".
+    """
+    if not value or not value.strip():
+        return None
+    text = value.strip()
+    if m := _YEAR_RE.search(text):
+        year = int(m.group(1))
+        if 100 <= year <= 2100:
+            return f"dates from {'before ' if _BEFORE_RE.match(text) else ''}{year}"
+    if m := _CENTURY_RE.search(text):
+        return f"dates from the {_ordinal(int(m.group(1) or m.group(2)))} century"
+    return None
+
+
 # ── Tag lists for the Place.tags field ──────────────────────────
 
 

@@ -1,6 +1,7 @@
 # Build from the repository root so the map UI and static data ship with the API:
 #   docker build -f backend/Dockerfile -t terra-incognita .
-#   docker run -p 8000:8000 --env-file backend/.env -v terra-data:/srv/terra/backend/data terra-incognita
+#   docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
+#     -v terra-data:/srv/terra/backend/data -v terra-cache:/srv/terra/backend/cache terra-incognita
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

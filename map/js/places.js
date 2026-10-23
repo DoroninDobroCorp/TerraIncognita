@@ -42,10 +42,15 @@ function showFallbackPlaces() {
   }
 }
 
-/** Newer backends report per-source outcomes ("ok" | "empty" | "error" | "timeout"); say so when results are partial. */
+/** Sources whose "error" is routine and not worth a warning (Atlas Obscura blocks most servers). */
+const OPTIONAL_SOURCES = new Set(['atlas']);
+
+/** Newer backends report per-source outcomes ("ok" | "empty" | "partial" | "error" | "timeout"); say so when results are incomplete. */
 function warnAboutSlowSources(status) {
   if (!status || typeof status !== 'object') return;
-  const bad = Object.entries(status).filter(([, v]) => v === 'timeout' || v === 'error').map(([k]) => SOURCE_NAMES[k] || k);
+  const bad = Object.entries(status)
+    .filter(([k, v]) => v === 'timeout' || v === 'partial' || (v === 'error' && !OPTIONAL_SOURCES.has(k)))
+    .map(([k]) => SOURCE_NAMES[k] || k);
   if (bad.length) toast(`⚠️ ${bad.join(', ')} did not answer — results may be incomplete`, 'warning', 6000);
 }
 

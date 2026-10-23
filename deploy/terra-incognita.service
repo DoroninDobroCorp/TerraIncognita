@@ -1,5 +1,10 @@
 # /etc/systemd/system/terra-incognita.service
 # Logs go to journald: `journalctl -u terra-incognita -f` (no server.log to grow forever).
+#
+# One-time setup (ReadWritePaths= fails the unit when a path does not exist yet):
+#   useradd --system terra
+#   install -d -o terra -g terra -m 0750 /srv/terra/backend/data /srv/terra/backend/cache
+#   cp backend/.env.example /srv/terra/backend/.env     # optional: the "-" below makes it so
 [Unit]
 Description=Terra Incognita API
 After=network.target
@@ -7,7 +12,7 @@ After=network.target
 [Service]
 User=terra
 WorkingDirectory=/srv/terra/backend
-EnvironmentFile=/srv/terra/backend/.env
+EnvironmentFile=-/srv/terra/backend/.env
 ExecStart=/srv/terra/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
 Restart=on-failure
 RestartSec=3

@@ -18,7 +18,7 @@ import httpx
 from app.config import settings
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.cache import disk_cache
-from app.sources.base import BaseSource
+from app.sources.base import BaseSource, PartialSourceResult, SourceError
 from app.sources.osm_tags import (
     commons_category,
     extract_photos,
@@ -34,6 +34,7 @@ from app.sources.osm_tags import (
 from app.utils.geo import bounding_box
 from app.utils.http_client import get_http_client
 from app.utils.rate_limiter import RateLimiter
+from app.utils.single_flight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ def build_overpass_query(
     return f"[out:json][timeout:{timeout}];\n(\n{body}\n);\nout center tags{limit};\n"
 
 
-class OverpassError(RuntimeError):
+class OverpassError(SourceError):
     """Overpass answered, but not with a usable result (timeout remark, overload, bad status)."""
 
 
@@ -181,10 +182,13 @@ class OSMSource(BaseSource):
             max_requests=settings.overpass_rate_limit_requests,
             window_seconds=settings.overpass_rate_limit_window_seconds,
         )
+        self._in_flight = SingleFlight()
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         south, west, north, east = bounding_box(lat, lng, radius_km)
-        bbox = f"{south},{west},{north},{east}"
+        # ~100 m grid: a reload with a slightly different GPS fix must hit the entry that an
+        # earlier (possibly still running) request fills, and the cache stays reusable.
+        bbox = f"{south:.3f},{west:.3f},{north:.3f},{east:.3f}"
 
         tiers: list[tuple[str, tuple[str, ...]]] = [("gems", _GEM_CLAUSES)]
         if radius_km <= settings.overpass_landmark_max_radius_km:
@@ -202,21 +206,45 @@ class OSMSource(BaseSource):
             logger.warning("OSM tier failed (partial result returned): %s", err)
 
         places: dict[str, Place] = {}
-        for batch in results:
-            if not isinstance(batch, BaseException):
-                for place in batch:
-                    places.setdefault(place.id, place)
+        incomplete: set[str] = set()  # tiers that failed or came back with a server "remark"
+        for (name, _), result in zip(tiers, results, strict=True):
+            if isinstance(result, BaseException):
+                incomplete.add(name)
+                continue
+            batch, complete = result
+            if not complete:
+                incomplete.add(name)
+            for place in batch:
+                places.setdefault(place.id, place)
         logger.info("OSM returned %d places for bbox=%s", len(places), bbox)
+        # Losing the landmark tier is cosmetic; an incomplete gems tier means hidden places the
+        # app exists for may be missing, and the caller should say so rather than report "ok".
+        if "gems" in incomplete:
+            raise PartialSourceResult(
+                list(places.values()), "the query for hidden places failed or was cut short"
+            )
         return list(places.values())
 
-    async def _search_tier(self, tier: str, clauses: tuple[str, ...], bbox: str) -> list[Place]:
+    async def _search_tier(
+        self, tier: str, clauses: tuple[str, ...], bbox: str
+    ) -> tuple[list[Place], bool]:
+        """(places, complete). ``complete`` is False when Overpass flagged the answer as partial."""
         # "osm2": entries written by the pre-tier query (different shape) are not reused.
         cache_key = f"osm2_{tier}_{bbox}"
         cached = await disk_cache.get(cache_key)
         if cached is not None:
             logger.debug("OSM cache hit for %s", cache_key)
-            return [Place.model_validate(p) for p in cached]
+            return [Place.model_validate(p) for p in cached], True
 
+        # A retry while an earlier request is still waiting on Overpass shares that request
+        # instead of sending the same heavy query again.
+        return await self._in_flight.run(
+            cache_key, lambda: self._fetch_tier(tier, clauses, bbox, cache_key)
+        )
+
+    async def _fetch_tier(
+        self, tier: str, clauses: tuple[str, ...], bbox: str, cache_key: str
+    ) -> tuple[list[Place], bool]:
         query = build_overpass_query(
             bbox, settings.overpass_timeout, clauses,
             max_elements=settings.overpass_max_elements,
@@ -229,9 +257,10 @@ class OSMSource(BaseSource):
                 tier, settings.overpass_max_elements, bbox,
             )
         places = self._parse_elements(elements)
-        if not data.get("remark"):  # a remark means a partial result: do not cache it
+        complete = not data.get("remark")  # a remark means a partial result: do not cache it
+        if complete:
             await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
-        return places
+        return places, complete
 
     # ------------------------------------------------------------------
 
