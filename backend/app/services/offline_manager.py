@@ -348,6 +348,17 @@ class OfflineManager:
         path.unlink()
         return True
 
+    async def cache_stats(self) -> tuple[int, int]:
+        """(number of cached places, bytes they occupy) from directory metadata only."""
+        count = size = 0
+        for f in self._places_dir.glob("*.json"):
+            try:
+                size += f.stat().st_size
+                count += 1
+            except OSError:  # removed while scanning
+                continue
+        return count, size
+
     async def clear_cached_places(self) -> int:
         count = 0
         for f in self._places_dir.glob("*.json"):

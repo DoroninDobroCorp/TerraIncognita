@@ -77,7 +77,7 @@ class FogRegionRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
     radius_km: float = Field(5.0, gt=0, le=50)
-    region_name: str = "custom"
+    region_name: str = Field("custom", max_length=100)
 
 
 # ── Story 6.2: Achievement System ───────────────────────────────

@@ -228,3 +228,36 @@ class TestConnectivity:
         for _ in range(5):
             await offline_manager.check_connectivity()
         assert fake.calls == 1
+
+
+class TestNavigationInput:
+    @pytest.mark.parametrize("place_id", ["../x", "a/b", "a.b", "x" * 100])
+    def test_unsafe_target_place_id_is_422_not_500(self, place_id):
+        resp = client.post("/api/offline/navigate", json={
+            "current_position": {"lat": 43.0, "lng": 18.0}, "target_place_id": place_id})
+        assert resp.status_code == 422
+
+    def test_unknown_but_valid_target_place_id_is_404(self):
+        resp = client.post("/api/offline/navigate", json={
+            "current_position": {"lat": 43.0, "lng": 18.0}, "target_place_id": "nope"})
+        assert resp.status_code == 404
+
+
+class TestCacheEndpointCost:
+    def test_totals_come_from_directory_stats_not_from_parsing_every_cached_place(self, monkeypatch):
+        """The endpoint parsed every cached place's JSON (up to 10k files) on each call just to
+        add up file sizes, on the event loop."""
+        for i in range(3):
+            _cache_sync(_place(f"c{i}"))
+
+        async def boom(*a, **k):
+            raise AssertionError("list_cached_places parses every file")
+
+        monkeypatch.setattr(offline_manager, "list_cached_places", boom)
+        monkeypatch.setattr("app.api.offline.discover", _fake_discovery)
+        resp = client.post("/api/offline/places/cache", json={
+            "bbox": {"min_lat": 42.4, "min_lng": 18.7, "max_lat": 42.5, "max_lng": 18.8}})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_cached"] == 4  # 3 pre-cached + a1
+        assert body["disk_usage_bytes"] > 0

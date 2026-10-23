@@ -176,7 +176,7 @@ class OfflineNavRequest(BaseModel):
     """POST /api/offline/navigate — compass navigation to a point."""
 
     current_position: Coordinates
-    target_place_id: str | None = None
+    target_place_id: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
     target_coordinates: Coordinates | None = None
 
 

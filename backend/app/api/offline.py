@@ -109,14 +109,9 @@ async def cache_places(req: CachePlacesRequest):
             raise HTTPException(507, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        all_cached = await offline_manager.list_cached_places()
-        total_size = sum(
-            offline_manager._place_path(cp.place.id).stat().st_size
-            for cp in all_cached
-            if offline_manager._place_path(cp.place.id).exists()
-        )
+        total_cached, total_size = await offline_manager.cache_stats()
         return CachePlacesResponse(
-            cached_count=cached_count, total_cached=len(all_cached), disk_usage_bytes=total_size
+            cached_count=cached_count, total_cached=total_cached, disk_usage_bytes=total_size
         )
 
     # BBox-based caching: discover places and cache them
@@ -154,16 +149,11 @@ async def cache_places(req: CachePlacesRequest):
     except StorageLimitError as exc:
         raise HTTPException(507, str(exc)) from exc
 
-    all_cached = await offline_manager.list_cached_places()
-    total_size = sum(
-        offline_manager._place_path(cp.place.id).stat().st_size
-        for cp in all_cached
-        if offline_manager._place_path(cp.place.id).exists()
-    )
+    total_cached, total_size = await offline_manager.cache_stats()
 
     return CachePlacesResponse(
         cached_count=cached_count,
-        total_cached=len(all_cached),
+        total_cached=total_cached,
         disk_usage_bytes=total_size,
     )
 
