@@ -164,15 +164,25 @@ class TestSourceStatus:
         assert set(result.source_status.values()) == {"error"}
 
     async def test_sources_are_queried_concurrently(self, sources):
-        async def slow_empty(*_):
-            await asyncio.sleep(0.25)
-            return []
+        # Every source waits until all four have started. Run one after another this would
+        # deadlock (and time out); no wall-clock thresholds, so it cannot flake on a busy machine.
+        started: set[str] = set()
+        all_started = asyncio.Event()
 
-        for m in ("osm", "atlas", "wiki", "deep"):
-            sources[m].search.side_effect = slow_empty
-        t0 = time.monotonic()
-        await discover(DiscoverRequest(**REQ))
-        assert time.monotonic() - t0 < 0.7  # serial would be >= 1.0 s
+        def rendezvous(name):
+            async def search(*_):
+                started.add(name)
+                if len(started) == 4:
+                    all_started.set()
+                await asyncio.wait_for(all_started.wait(), timeout=5)
+                return []
+            return search
+
+        for name in ("osm", "atlas", "wiki", "deep"):
+            sources[name].search.side_effect = rendezvous(name)
+        result = await discover(DiscoverRequest(**REQ))
+        assert started == {"osm", "atlas", "wiki", "deep"}
+        assert set(result.source_status.values()) == {"empty"}  # none timed out waiting for the others
 
 
 class TestDiscoverApi:

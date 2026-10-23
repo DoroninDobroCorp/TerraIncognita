@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+import time
+
 import pytest
 
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
@@ -383,3 +386,38 @@ def test_museums_are_penalised_even_with_a_rare_underlying_category():
     a, b = score_place(mine_museum), score_place(real_mine)
     assert a.score < 0.4 < b.score
     assert "museum (a managed visitor attraction)" in a.penalties
+
+
+def test_active_military_sites_are_not_gems_but_abandoned_ones_are():
+    active = score_place(osm_place({"military": "base", "name": "Pomorska baza", "access": "no"}))
+    abandoned = score_place(osm_place({"military": "barracks", "name": "Stara kasarna", "abandoned": "yes"}))
+    bunker = score_place(osm_place({"military": "bunker", "name": "Bunker Zeta"}))
+    assert active.score < 0.45 and "active military site" in active.penalties
+    assert abandoned.score > 0.7 and "active military site" not in abandoned.penalties
+    assert bunker.score > 0.65 and "active military site" not in bunker.penalties
+
+
+def test_area_words_shared_by_many_names_do_not_make_everything_a_namesake():
+    # 1500 places called "<something> Kotor": "kotor" is an area word, not an identity. Treating it as
+    # one made the search cubic (40 s for 800 places) and sank every place in town.
+    rng = random.Random(7)
+    places = [
+        _scored(f"p{i}", round(rng.random(), 3), 42.4 + rng.random() * 0.2, 18.5 + rng.random() * 0.2,
+                name=f"Spot{i} Kotor")
+        for i in range(1500)
+    ]
+    ranked = sorted(places, key=unusual_sort_key)
+    t0 = time.monotonic()
+    out = diversify_by_site(ranked)
+    assert time.monotonic() - t0 < 5.0  # ~0.05 s on an idle machine
+    assert sorted(p.id for p in out) == sorted(p.id for p in ranked)
+    # unrelated places are not pushed around by the shared word
+    far_apart = [p for p in out[:5]]
+    assert [p.id for p in far_apart] == [p.id for p in ranked[:5]]
+
+
+def test_a_long_railway_is_still_one_namesake_group():
+    line = [_scored(f"seg{i}", 0.74, 42.40 + i * 0.004, 18.5, name="Dalmatinerbahn") for i in range(30)]
+    other = _scored("g", 0.5, 43.0, 19.0, name="Cave of Winds")
+    out = [p.id for p in diversify_by_site(sorted([*line, other], key=unusual_sort_key))]
+    assert out.index("g") <= 2  # 0.74 * 0.5 (namesake floor) = 0.37 < 0.5: the cave beats the second segment

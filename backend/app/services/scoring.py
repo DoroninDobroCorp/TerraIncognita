@@ -26,13 +26,13 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.models.place import Place, PlaceCategory, PlaceSource
 from app.services import names
 from app.sources.osm_tags import OsmInterpretation, interpret_tags, parse_year
-from app.utils.geo import haversine_distance_m
 
 C = PlaceCategory
 
@@ -62,6 +62,7 @@ CATEGORY_WEIGHTS: dict[PlaceCategory, float] = {
     C.HOTEL_NOTABLE: 0.06,
 }
 DEFAULT_BASE = 0.12  # nothing is known about what it is
+_MAX_NAMESAKE_TOKEN_FREQUENCY = 60  # a name word used by more places than this is an area word
 _REASON_MIN_WEIGHT = 0.40  # categories rarer than this are explained to the user
 
 CATEGORY_REASONS: dict[PlaceCategory, str] = {
@@ -89,6 +90,11 @@ _INDUSTRY_FEATURES = frozenset({
     "man_made=water_tower", "man_made=silo", "man_made=chimney", "man_made=windmill",
     "man_made=watermill", "man_made=kiln", "historic=lime_kiln", "historic=kiln",
     "historic=charcoal_pile",
+})
+# Military sites that are still in use: not a hidden gem, and often not a safe or legal visit.
+_ACTIVE_MILITARY = frozenset({
+    "base", "barracks", "airfield", "naval_base", "training_area", "checkpoint", "ammunition",
+    "launchpad", "nuclear_explosion_site", "range", "danger_area", "office",
 })
 _WIKI_META_KEYS = ("wikipedia_url", "wikipedia_title", "wikipedia")
 
@@ -219,6 +225,9 @@ PENALTIES: tuple[Penalty, ...] = (
     Penalty(_sitelinks_label, 0.90, lambda c: 5 <= (c.sitelinks or 0) < 10),
     Penalty("has a Wikipedia article", 0.92,
             lambda c: c.has_wikipedia and (c.sitelinks or 0) < 5),
+    Penalty("active military site", 0.60,
+            lambda c: c.tags.get("military") in _ACTIVE_MILITARY
+            and not (c.info and c.info.lifecycles)),
     Penalty("marked as a tourist attraction", 0.80, lambda c: c.tags.get("tourism") == "attraction"),
     Penalty("museum (a managed visitor attraction)", 0.55,
             lambda c: c.tags.get("tourism") == "museum" or C.MUSEUM in c.cats),
@@ -375,18 +384,22 @@ def diversify_by_site(
     def cell_of(i: int) -> tuple[int, int]:
         return (int(xs[i] // cell), int(ys[i] // cell))
 
-    name_tokens = [
+    # Words shared by dozens of names are area words ("Kotor", a street), not identities: they
+    # would make every place in town a namesake of every other (and the search quadratic).
+    all_tokens = [
         names.distinctive_tokens(p.name) if not p.metadata.get("name_generated") else frozenset()
         for p in ranked
+    ]
+    document_frequency = Counter(token for tokens in all_tokens for token in tokens)
+    name_tokens = [
+        frozenset(t for t in tokens if document_frequency[t] <= _MAX_NAMESAKE_TOKEN_FREQUENCY)
+        for tokens in all_tokens
     ]
     grid: dict[tuple[int, int], list[int]] = {}
     by_token: dict[str, list[int]] = {}  # distinctive name token → selected places carrying it
 
     def close(i: int, j: int, limit: float) -> bool:
-        return haversine_distance_m(
-            ranked[i].coordinates.lat, ranked[i].coordinates.lng,
-            ranked[j].coordinates.lat, ranked[j].coordinates.lng,
-        ) <= limit
+        return math.hypot(xs[i] - xs[j], ys[i] - ys[j]) <= limit
 
     def crowding(i: int) -> tuple[int, int]:
         """(selected neighbours within the site radius, selected namesakes elsewhere in the region)"""
@@ -398,8 +411,8 @@ def diversify_by_site(
         siblings = {j for token in name_tokens[i] for j in by_token.get(token, ())} - near
         namesakes = {
             j for j in siblings
-            if names.token_similarity(name_tokens[i], name_tokens[j]) >= names.STRONG_MATCH
-            and close(i, j, chain_radius_m)
+            if close(i, j, chain_radius_m)
+            and names.token_similarity(name_tokens[i], name_tokens[j]) >= names.STRONG_MATCH
         }
         return len(near), len(namesakes)
 
