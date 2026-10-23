@@ -10,7 +10,9 @@ Module organisation (single file for prototype simplicity):
   - Export: export_journal_html
 
 Thread safety: writes use atomic temp-file-then-rename to prevent corruption.
-Concurrency: _write_lock (asyncio.Lock) serialises concurrent mutations.
+Concurrency: single event loop; the mutations run without awaiting between reading and
+writing the in-memory stores, so they are atomic with respect to other coroutines (do not
+put an ``await`` inside a read-modify-write). ``_write_lock`` exists but is not needed.
 """
 
 from __future__ import annotations

@@ -7,7 +7,8 @@ Module organisation:
   - Persistence: JSON-file backed (same pattern as journal)
 
 Thread safety: atomic writes via temp-file-then-rename.
-Concurrency: _write_lock serialises concurrent mutations.
+Concurrency: single event loop; the in-memory mutations run without awaiting, so they are
+atomic with respect to other coroutines (do not put an ``await`` inside a read-modify-write).
 """
 
 from __future__ import annotations
@@ -156,8 +157,9 @@ _EARTH_RADIUS_M = 6_371_000.0
 _M_PER_DEG = _EARTH_RADIUS_M * math.pi / 180.0  # ~111.195 km per degree of latitude
 # Equatorial cell area in km2 (0.111 km x 0.111 km). NOT 0.0111: that is 11 m, 100x too small.
 _CELL_AREA_KM2 = (_CELL_SIZE * _M_PER_DEG / 1000.0) ** 2
-# Longitude steps per side are clamped (near the poles a degree of longitude is tiny).
-_MAX_LNG_STEPS = 200
+# Longitude steps per side are clamped: near the poles a degree of longitude is tiny and an
+# unclamped disc has thousands of cells per row (60 covers a 500 m radius up to ~85 degrees).
+_MAX_LNG_STEPS = 60
 
 
 def _cell_area_km2(lat: float) -> float:
