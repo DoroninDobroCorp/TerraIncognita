@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.offline import (
     CachePlacesRequest,
@@ -19,12 +19,14 @@ from app.models.offline import (
     TileDownloadRequest,
     TileDownloadResponse,
 )
-from app.models.place import Coordinates
-from app.services.offline_manager import offline_manager
+from app.models.place import Coordinates, DiscoverRequest
+from app.services.discovery import discover
+from app.services.offline_manager import StorageLimitError, offline_manager
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["offline"])
+router = APIRouter(tags=["offline"], route_class=SafeValidationRoute)
 
 
 # ------------------------------------------------------------------
@@ -40,13 +42,18 @@ async def download_tiles(req: TileDownloadRequest):
     if req.min_zoom > req.max_zoom:
         raise HTTPException(400, "min_zoom must be ≤ max_zoom")
 
-    region, tile_count, est_mb = await offline_manager.create_region(
-        name=req.name,
-        bbox=req.bbox,
-        tile_source=req.tile_source,
-        min_zoom=req.min_zoom,
-        max_zoom=req.max_zoom,
-    )
+    try:
+        region, tile_count, est_mb = await offline_manager.create_region(
+            name=req.name,
+            bbox=req.bbox,
+            tile_source=req.tile_source,
+            min_zoom=req.min_zoom,
+            max_zoom=req.max_zoom,
+        )
+    except StorageLimitError as exc:
+        raise HTTPException(507, str(exc)) from exc
+    except ValueError as exc:  # e.g. RegionTooLargeError
+        raise HTTPException(400, str(exc)) from exc
     return TileDownloadResponse(
         region=region,
         estimated_tile_count=tile_count,
@@ -96,54 +103,57 @@ async def cache_places(req: CachePlacesRequest):
     """Cache discovered places for a bounding box for offline access."""
     # Route-based caching: cache all places from a planned route
     if req.route_id:
-        cached_count = await offline_manager.cache_route_places(req.route_id)
-        all_cached = await offline_manager.list_cached_places()
-        total_size = sum(
-            offline_manager._place_path(cp.place.id).stat().st_size
-            for cp in all_cached
-            if offline_manager._place_path(cp.place.id).exists()
-        )
+        try:
+            cached_count = await offline_manager.cache_route_places(req.route_id)
+        except StorageLimitError as exc:
+            raise HTTPException(507, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        total_cached, total_size = await offline_manager.cache_stats()
         return CachePlacesResponse(
-            cached_count=cached_count, total_cached=len(all_cached), disk_usage_bytes=total_size
+            cached_count=cached_count, total_cached=total_cached, disk_usage_bytes=total_size
         )
 
     # BBox-based caching: discover places and cache them
     from app.services.offline_manager import _haversine
 
-    center_lat = (req.bbox.min_lat + req.bbox.max_lat) / 2
-    center_lng = (req.bbox.min_lng + req.bbox.max_lng) / 2
-    radius_m = _haversine(req.bbox.min_lat, req.bbox.min_lng,
-                          req.bbox.max_lat, req.bbox.max_lng) / 2
-    radius_km = min(radius_m / 1000, 50.0)
+    bbox = req.bbox
+    center_lat = (bbox.min_lat + bbox.max_lat) / 2
+    center_lng = (bbox.min_lng + bbox.max_lng) / 2
+    radius_m = _haversine(bbox.min_lat, bbox.min_lng, bbox.max_lat, bbox.max_lng) / 2
+    radius_km = max(min(radius_m / 1000, 50.0), 0.1)  # DiscoverRequest needs 0 < r <= 50
 
     try:
-        from app.services.discovery import discover_places_from_sources
-
-        places = await discover_places_from_sources(
+        result = await discover(DiscoverRequest(
             lat=center_lat,
             lng=center_lng,
             radius_km=radius_km,
-            categories=[c.value for c in req.categories] if req.categories else None,
-        )
+            categories=list(req.categories),
+            limit=200,
+            sort_by="confidence",
+        ))
+        # The search circle also covers the corners outside the rectangle the user asked for.
+        places = [
+            p for p in result.places
+            if bbox.min_lat <= p.coordinates.lat <= bbox.max_lat
+            and bbox.min_lng <= p.coordinates.lng <= bbox.max_lng
+        ]
     except Exception:
-        # Graceful degradation: if offline, return what's already cached in the bbox
-        logger.warning("Discovery failed (possibly offline), returning existing cache")
+        # Graceful degradation: if offline, return what's already cached
+        logger.warning("Discovery failed (possibly offline), returning existing cache", exc_info=True)
         places = []
 
-    cached_count = await offline_manager.cache_places(
-        places, has_llm_description=req.include_descriptions
-    )
+    try:
+        # No LLM description is generated here (budget), so never flag one as present.
+        cached_count = await offline_manager.cache_places(places, has_llm_description=False)
+    except StorageLimitError as exc:
+        raise HTTPException(507, str(exc)) from exc
 
-    all_cached = await offline_manager.list_cached_places()
-    total_size = sum(
-        offline_manager._place_path(cp.place.id).stat().st_size
-        for cp in all_cached
-        if offline_manager._place_path(cp.place.id).exists()
-    )
+    total_cached, total_size = await offline_manager.cache_stats()
 
     return CachePlacesResponse(
         cached_count=cached_count,
-        total_cached=len(all_cached),
+        total_cached=total_cached,
         disk_usage_bytes=total_size,
     )
 
@@ -162,10 +172,10 @@ async def get_cached_place(place_id: str):
 
 @router.get("/api/offline/places")
 async def list_cached_places(
-    min_lat: float | None = None,
-    min_lng: float | None = None,
-    max_lat: float | None = None,
-    max_lng: float | None = None,
+    min_lat: float | None = Query(None, ge=-90, le=90),
+    min_lng: float | None = Query(None, ge=-180, le=180),
+    max_lat: float | None = Query(None, ge=-90, le=90),
+    max_lng: float | None = Query(None, ge=-180, le=180),
 ):
     """List all cached places, optionally filtered by bounding box."""
     from app.models.offline import BoundingBox
@@ -265,7 +275,10 @@ async def navigate_to_target(req: OfflineNavRequest):
 
 
 @router.post("/api/offline/navigate/nearest")
-async def navigate_to_nearest(lat: float, lng: float):
+async def navigate_to_nearest(
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+):
     """Find and navigate to the nearest cached place."""
     position = Coordinates(lat=lat, lng=lng)
     nearest = await offline_manager.find_nearest_cached(position)

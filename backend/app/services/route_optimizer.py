@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 
 from app.models.place import Coordinates, Place
 from app.utils.geo import haversine_distance_m
@@ -66,52 +67,69 @@ def nearest_neighbor_order(
     return order
 
 
+# 2-opt works on a full distance matrix: beyond this many stops only the nearest-neighbour
+# order is used (discovery never returns more than 200, so this is a safety net).
+MAX_2OPT_POINTS = 400
+
+
 def two_opt_improve(
     origin: Coordinates,
     waypoints: list[Coordinates],
     destination: Coordinates | None = None,
     max_iterations: int = 100,
+    time_limit_s: float = 2.0,
 ) -> list[int]:
     """Improve waypoint order using 2-opt local search.
 
-    Returns optimized indices into the `waypoints` list.
+    Returns optimized indices into the `waypoints` list. The tour runs origin -> waypoints ->
+    ``destination`` (or back to ``origin`` when there is none).
+
+    Each candidate reversal is judged by the change in the four edges it touches
+    (O(1) on a precomputed distance matrix) instead of re-summing the whole tour (O(n)):
+    120 stops took ~3 s and 200 stops ~15 s, blocking the event loop of the async handler.
+    The search also stops after ``time_limit_s`` and returns the best order found so far.
     """
-    if len(waypoints) <= 2:
-        return list(range(len(waypoints)))
+    n = len(waypoints)
+    if n <= 1:
+        return list(range(n))
 
     # Start with nearest-neighbor solution
     order = nearest_neighbor_order(origin, waypoints, destination)
+    if n > MAX_2OPT_POINTS:
+        return order
 
-    end_point = destination or origin
+    # Node 0 = origin, 1..n = waypoints, n + 1 = end of the tour
+    nodes = [origin, *waypoints, destination or origin]
+    dist = [[0.0] * (n + 2) for _ in range(n + 2)]
+    for a in range(n + 2):
+        for b in range(a + 1, n + 2):
+            dist[a][b] = dist[b][a] = distance_m(nodes[a], nodes[b])
 
-    def route_cost(idx_order: list[int]) -> float:
-        total = distance_m(origin, waypoints[idx_order[0]])
-        for k in range(len(idx_order) - 1):
-            total += distance_m(waypoints[idx_order[k]], waypoints[idx_order[k + 1]])
-        total += distance_m(waypoints[idx_order[-1]], end_point)
-        return total
-
-    best_cost = route_cost(order)
+    tour = [0] + [i + 1 for i in order] + [n + 1]  # positions 1..n are the movable stops
+    deadline = time.monotonic() + time_limit_s
     improved = True
     iterations = 0
 
-    while improved and iterations < max_iterations:
+    while improved and iterations < max_iterations and time.monotonic() < deadline:
         improved = False
         iterations += 1
-        for i in range(len(order) - 1):
-            for j in range(i + 1, len(order)):
-                new_order = order[:i] + order[i : j + 1][::-1] + order[j + 1 :]
-                new_cost = route_cost(new_order)
-                if new_cost < best_cost:
-                    order = new_order
-                    best_cost = new_cost
+        for i in range(1, n):
+            for j in range(i + 1, n + 1):
+                prev_node, next_node = tour[i - 1], tour[j + 1]
+                delta = (
+                    dist[prev_node][tour[j]] + dist[tour[i]][next_node]
+                    - dist[prev_node][tour[i]] - dist[tour[j]][next_node]
+                )
+                if delta < -1e-9:
+                    tour[i : j + 1] = tour[i : j + 1][::-1]
                     improved = True
 
+    result = [node - 1 for node in tour[1 : n + 1]]
     logger.info(
-        "2-opt optimization: %d iterations, final distance: %.0fm",
-        iterations, best_cost,
+        "2-opt optimization: %d points, %d iterations, final distance: %.0fm",
+        n, iterations, sum(dist[tour[k]][tour[k + 1]] for k in range(n + 1)),
     )
-    return order
+    return result
 
 
 def optimize_route(
@@ -129,7 +147,7 @@ def optimize_route(
         return []
 
     if len(places) == 1:
-        return places
+        return list(places)
 
     waypoint_coords = [p.coordinates for p in places]
     end = None if is_circular else destination
@@ -151,12 +169,15 @@ def filter_by_time_budget(
     transport_mode: str,
     is_circular: bool = False,
     visit_time_s: float = 600.0,
+    destination: Coordinates | None = None,
 ) -> list[Place]:
     """Filter places to fit within a time budget.
 
     Greedily adds places from the optimized order until the time
     budget is exhausted. Each place adds its travel time + a fixed
-    visit duration.
+    visit duration. For a circular route the way back to ``origin`` is reserved; for a
+    point-to-point route (``destination`` given) the way on to the destination is — it used
+    to be ignored, so the finished route could take hours longer than requested.
     """
     if not places:
         return []
@@ -174,6 +195,11 @@ def filter_by_time_budget(
             return_d = distance_m(place.coordinates, origin)
             return_t = estimate_duration_s(return_d, transport_mode)
             total_if_added = elapsed + travel_t + visit_time_s + return_t
+        elif destination is not None:
+            onward_d = distance_m(place.coordinates, destination)
+            total_if_added = (
+                elapsed + travel_t + visit_time_s + estimate_duration_s(onward_d, transport_mode)
+            )
         else:
             total_if_added = elapsed + travel_t + visit_time_s
 

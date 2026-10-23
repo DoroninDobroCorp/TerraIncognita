@@ -7,7 +7,8 @@ Module organisation:
   - Persistence: JSON-file backed (same pattern as journal)
 
 Thread safety: atomic writes via temp-file-then-rename.
-Concurrency: _write_lock serialises concurrent mutations.
+Concurrency: single event loop; the in-memory mutations run without awaiting, so they are
+atomic with respect to other coroutines (do not put an ``await`` inside a read-modify-write).
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import uuid
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.config import settings
@@ -40,6 +42,12 @@ from app.models.gamification import (
     XpEventResponse,
 )
 from app.models.journal import PlaceNote, Visit, VisitStatus
+from app.utils.atomic_io import (
+    atomic_write_text,
+    load_json_file,
+    load_model_records,
+    quarantine_corrupt,
+)
 from app.utils.geo import haversine_distance_m as _haversine_m
 
 logger = logging.getLogger(__name__)
@@ -50,7 +58,17 @@ _fog_cells: dict[str, FogCell] = {}  # key: "lat_lng" grid key
 _achievements: dict[str, UserAchievement] = {}  # key: achievement_id
 _xp_events: list[XpEvent] = []
 _total_xp: int = 0
+# De-duplication keys of XP that was already paid ("visit:<place>", "streak:<day>", ...).
+# Kept separately from the (rotating) event log so old rewards cannot be re-farmed.
+_xp_refs: dict[str, None] = {}
+_fog_area_km2: float = 0.0
 _data_dir: Path | None = None
+_loaded = False
+
+# Resource limits: every save rewrites the whole store file.
+MAX_FOG_CELLS = 100_000  # ~1,200 km2 of explored ground
+MAX_XP_EVENTS = 2_000
+MAX_XP_REFS = 100_000
 _write_lock = asyncio.Lock()
 
 
@@ -63,9 +81,7 @@ def _get_data_dir() -> Path:
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, data)
 
 
 def _save_fog() -> None:
@@ -85,41 +101,48 @@ def _save_xp() -> None:
     data = {
         "total_xp": _total_xp,
         "events": [e.model_dump(mode="json") for e in _xp_events],
+        "refs": list(_xp_refs),
     }
     _atomic_write(path, json.dumps(data, default=str, ensure_ascii=False))
 
 
 def _load_store() -> None:
-    global _total_xp
+    """Load persisted data once (first access); unreadable data is backed up, never dropped."""
+    global _total_xp, _loaded, _fog_area_km2
+    if _loaded:
+        return
+    _loaded = True
     data_dir = _get_data_dir()
 
-    fog_path = data_dir / "fog_cells.json"
-    if fog_path.exists() and not _fog_cells:
-        try:
-            raw = json.loads(fog_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _fog_cells[k] = FogCell.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load fog_cells.json, starting fresh")
-
-    ach_path = data_dir / "achievements.json"
-    if ach_path.exists() and not _achievements:
-        try:
-            raw = json.loads(ach_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _achievements[k] = UserAchievement.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load achievements.json, starting fresh")
+    _fog_cells.update(load_model_records(data_dir / "fog_cells.json", FogCell))
+    _fog_area_km2 = sum(_cell_area_km2(c.lat) for c in _fog_cells.values())
+    _achievements.update(load_model_records(data_dir / "achievements.json", UserAchievement))
 
     xp_path = data_dir / "xp_events.json"
-    if xp_path.exists() and not _xp_events:
+    raw = load_json_file(xp_path)
+    if raw is None:
+        return
+    if not isinstance(raw, dict):
+        quarantine_corrupt(xp_path, "top-level JSON value is not an object")
+        return
+    bad = 0
+    for e in raw.get("events", []):
         try:
-            raw = json.loads(xp_path.read_text(encoding="utf-8"))
-            _total_xp = raw.get("total_xp", 0)
-            for e in raw.get("events", []):
-                _xp_events.append(XpEvent.model_validate(e))
+            _xp_events.append(XpEvent.model_validate(e))
         except Exception:
-            logger.warning("Failed to load xp_events.json, starting fresh")
+            bad += 1
+    refs = raw.get("refs", [])
+    if isinstance(refs, list):
+        for r in refs:
+            if isinstance(r, str):
+                _xp_refs[r] = None
+    for e in _xp_events:
+        if e.ref:
+            _xp_refs[e.ref] = None
+    total = raw.get("total_xp", 0)
+    _total_xp = total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else 0
+    if bad or total != _total_xp:
+        quarantine_corrupt(xp_path, f"{bad} invalid event(s) / total_xp={total!r}")
 
 
 def _ensure_loaded() -> None:
@@ -128,13 +151,25 @@ def _ensure_loaded() -> None:
 
 # ── Grid utilities ───────────────────────────────────────────────
 
-# Cell size: ~100m at equator (0.001 degrees ≈ 111m)
+# Cell size: 0.001 degrees = ~111 m of latitude (less of longitude away from the equator)
 _CELL_SIZE = 0.001
-_CELL_AREA_KM2 = 0.0111 * 0.0111  # approx area of one cell in km²
+_EARTH_RADIUS_M = 6_371_000.0
+_M_PER_DEG = _EARTH_RADIUS_M * math.pi / 180.0  # ~111.195 km per degree of latitude
+# Equatorial cell area in km2 (0.111 km x 0.111 km). NOT 0.0111: that is 11 m, 100x too small.
+_CELL_AREA_KM2 = (_CELL_SIZE * _M_PER_DEG / 1000.0) ** 2
+# Longitude steps per side are clamped: near the poles a degree of longitude is tiny and an
+# unclamped disc has thousands of cells per row (60 covers a 500 m radius up to ~85 degrees).
+_MAX_LNG_STEPS = 60
+
+
+def _cell_area_km2(lat: float) -> float:
+    """Area of one grid cell at ``lat`` (cells shrink east-west with cos(lat))."""
+    return _CELL_AREA_KM2 * max(math.cos(math.radians(lat)), 0.0)
 
 
 def _cell_key(lat: float, lng: float) -> str:
-    """Quantize coordinates to grid cell key."""
+    """Quantize coordinates to grid cell key (longitude wrapped to [-180, 180))."""
+    lng = ((lng + 180.0) % 360.0) - 180.0
     grid_lat = round(lat / _CELL_SIZE) * _CELL_SIZE
     grid_lng = round(lng / _CELL_SIZE) * _CELL_SIZE
     return f"{grid_lat:.4f}_{grid_lng:.4f}"
@@ -145,21 +180,50 @@ def _cell_coords(key: str) -> tuple[float, float]:
     return float(parts[0]), float(parts[1])
 
 
+def _row_lng_steps(lat: float, row_lat: float, radius_m: float) -> int:
+    """Cells to each side (east/west) of the centre that are within ``radius_m`` on ``row_lat``.
+
+    Exact inverse of the haversine formula for a fixed latitude row, so the cost is O(1)
+    per row instead of a haversine call per candidate cell. -1 means the row is out of reach.
+    """
+    a_max = math.sin(radius_m / (2 * _EARTH_RADIUS_M)) ** 2
+    a_row = math.sin(math.radians(row_lat - lat) / 2) ** 2
+    if a_row > a_max:
+        return -1
+    denom = math.cos(math.radians(lat)) * math.cos(math.radians(row_lat))
+    if denom <= 1e-12:
+        return _MAX_LNG_STEPS
+    rem = (a_max - a_row) / denom
+    if rem >= 1.0:
+        return _MAX_LNG_STEPS
+    half_span_deg = math.degrees(2 * math.asin(math.sqrt(rem)))
+    return min(int(half_span_deg / _CELL_SIZE + 1e-9), _MAX_LNG_STEPS)
+
+
+def _lat_rows(lat: float, radius_m: float):
+    """Yield (row latitude, east/west steps) for every grid row within reach."""
+    lat_steps = int(radius_m / (_M_PER_DEG * _CELL_SIZE)) + 1
+    for dlat in range(-lat_steps, lat_steps + 1):
+        row_lat = lat + dlat * _CELL_SIZE
+        if not -90.0 <= row_lat <= 90.0:
+            continue
+        n = _row_lng_steps(lat, row_lat, radius_m)
+        if n >= 0:
+            yield row_lat, n
 
 
 def _cells_in_radius(lat: float, lng: float, radius_m: float) -> list[str]:
     """Get all grid cell keys within radius of a point."""
-    # Convert radius to approximate grid steps
-    steps = max(1, int(radius_m / (111.0 * _CELL_SIZE * 1000)) + 1)
     cells = []
-    for dlat in range(-steps, steps + 1):
-        for dlng in range(-steps, steps + 1):
-            clat = lat + dlat * _CELL_SIZE
-            clng = lng + dlng * _CELL_SIZE
-            dist = _haversine_m(lat, lng, clat, clng)
-            if dist <= radius_m:
-                cells.append(_cell_key(clat, clng))
+    for row_lat, n in _lat_rows(lat, radius_m):
+        for dlng in range(-n, n + 1):
+            cells.append(_cell_key(row_lat, lng + dlng * _CELL_SIZE))
     return cells
+
+
+def _count_cells_in_radius(lat: float, radius_m: float) -> int:
+    """Number of cells :func:`_cells_in_radius` would return, without building them."""
+    return sum(2 * n + 1 for _, n in _lat_rows(lat, radius_m))
 
 
 # ── Story 6.1: Fog of War ───────────────────────────────────────
@@ -171,27 +235,35 @@ async def reveal_fog(
     visit_id: str | None = None,
 ) -> FogRevealResponse:
     """Reveal fog of war cells from GPS trail points."""
+    global _fog_area_km2
     _ensure_loaded()
     new_count = 0
 
     async with _write_lock:
         for lat, lng, ts in points:
-            cell_keys = _cells_in_radius(lat, lng, radius_m)
-            for key in cell_keys:
-                if key not in _fog_cells:
-                    clat, clng = _cell_coords(key)
-                    _fog_cells[key] = FogCell(
-                        lat=clat,
-                        lng=clng,
-                        explored_at=ts or datetime.now(UTC),
-                        visit_id=visit_id,
-                    )
-                    new_count += 1
+            if len(_fog_cells) >= MAX_FOG_CELLS:
+                logger.warning("Fog store is full (%d cells); not revealing more", MAX_FOG_CELLS)
+                break
+            for key in _cells_in_radius(lat, lng, radius_m):
+                if key in _fog_cells:
+                    continue
+                if len(_fog_cells) >= MAX_FOG_CELLS:
+                    break
+                clat, clng = _cell_coords(key)
+                _fog_cells[key] = FogCell(
+                    lat=clat,
+                    lng=clng,
+                    explored_at=ts or datetime.now(UTC),
+                    visit_id=visit_id,
+                )
+                _fog_area_km2 += _cell_area_km2(clat)
+                new_count += 1
 
-        _save_fog()
+        if new_count:
+            _save_fog()
 
     total = len(_fog_cells)
-    area = total * _CELL_AREA_KM2
+    area = _fog_area_km2
 
     logger.info("Fog revealed: %d new cells, %d total (%.3f km²)", new_count, total, area)
     return FogRevealResponse(
@@ -205,11 +277,10 @@ async def get_fog_status() -> FogOfWarState:
     """Get current fog of war state."""
     _ensure_loaded()
     total = len(_fog_cells)
-    area = total * _CELL_AREA_KM2
 
     return FogOfWarState(
         total_explored_cells=total,
-        total_explored_area_km2=round(area, 4),
+        total_explored_area_km2=round(_fog_area_km2, 4),
         gps_trail=list(_fog_cells.values())[-100:],  # last 100 cells
     )
 
@@ -221,8 +292,9 @@ async def get_fog_region(
     _ensure_loaded()
     radius_m = radius_km * 1000
 
-    # Estimate total cells in the region
-    total_cells = len(_cells_in_radius(lat, lng, radius_m))
+    # Total cells in the region (counted row by row; building 800k keys for a 50 km radius
+    # blocked the event loop for seconds)
+    total_cells = _count_cells_in_radius(lat, radius_m)
 
     # Count explored cells in region
     explored = 0
@@ -231,7 +303,7 @@ async def get_fog_region(
         if dist <= radius_m:
             explored += 1
 
-    coverage = (explored / total_cells * 100) if total_cells > 0 else 0.0
+    coverage = min(explored / total_cells * 100, 100.0) if total_cells > 0 else 0.0
     return FogRegionStats(
         region_name=region_name,
         total_cells=total_cells,
@@ -556,6 +628,18 @@ ACHIEVEMENTS: list[AchievementDefinition] = [
 _ACHIEVEMENT_MAP: dict[str, AchievementDefinition] = {a.id: a for a in ACHIEVEMENTS}
 
 
+def _local_hour(visit: Visit) -> int:
+    """Hour of day at the visit's location (UTC shifted by the longitude's mean solar time).
+
+    ``visited_at`` is stamped in UTC; judging "between midnight and 5 AM" on the UTC hour
+    unlocks Night Owl for the wrong people. No time-zone database is needed for a
+    15-degrees-per-hour approximation.
+    """
+    when = visit.visited_at
+    when = when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+    return (when + timedelta(hours=visit.coordinates.lng / 15.0)).hour
+
+
 async def check_achievements(
     visits: list[Visit],
     notes: list[PlaceNote],
@@ -569,41 +653,37 @@ async def check_achievements(
 
     # Compute current stats
     visited = [v for v in visits if v.status == VisitStatus.VISITED]
-    total_visits = len(visited)
-    fog_area = len(_fog_cells) * _CELL_AREA_KM2
+    # Places, not check-ins: ten check-ins at one place are one place.
+    total_visits = len({v.place_id for v in visited})
+    fog_area = _fog_area_km2
 
-    # Category counts from tags in notes
-    category_counts: Counter[str] = Counter()
+    # Category counts from note tags, counted once per *place* (ten notes on one place that
+    # are all tagged "abandoned" are one abandoned place)
+    category_places: dict[str, set[str]] = {}
     for note in notes:
         for tag in note.tags:
-            category_counts[tag.lower()] += 1
+            category_places.setdefault(tag.lower(), set()).add(note.place_id)
+    category_counts: Counter[str] = Counter({t: len(p) for t, p in category_places.items()})
 
     # Count notes with photos
     notes_with_photos = sum(1 for n in notes if n.photos)
 
-    # Time-based checks
-    night_visits = sum(
-        1 for v in visited if 0 <= v.visited_at.hour < 5
-    )
-    early_visits = sum(
-        1 for v in visited if 5 <= v.visited_at.hour < 6
-    )
+    # Time-based checks, in the explorer's local (mean solar) time
+    night_visits = sum(1 for v in visited if 0 <= _local_hour(v) < 5)
+    early_visits = sum(1 for v in visited if 5 <= _local_hour(v) < 6)
 
     # Unique categories
-    unique_cats: set[str] = set()
-    for note in notes:
-        for tag in note.tags:
-            unique_cats.add(tag.lower())
+    unique_cats: set[str] = set(category_places)
 
     # Unique trips
     unique_trips = {v.trip_id for v in visited if v.trip_id}
 
-    # Places in same trip (region proxy)
-    trip_place_counts: Counter[str] = Counter()
+    # Distinct places in the same trip (region proxy)
+    trip_places: dict[str, set[str]] = {}
     for v in visited:
         if v.trip_id:
-            trip_place_counts[v.trip_id] += 1
-    max_region_places = max(trip_place_counts.values()) if trip_place_counts else 0
+            trip_places.setdefault(v.trip_id, set()).add(v.place_id)
+    max_region_places = max((len(p) for p in trip_places.values()), default=0)
 
     # Map condition types to current values
     condition_values: dict[str, float] = {
@@ -629,6 +709,8 @@ async def check_achievements(
         "category_military": category_counts.get("military", 0),
     }
 
+    progress_changed = False
+    unlocked_defs: list[AchievementDefinition] = []
     async with _write_lock:
         for ach_def in ACHIEVEMENTS:
             current = condition_values.get(ach_def.condition_type, 0)
@@ -644,7 +726,7 @@ async def check_achievements(
                     completed=True,
                     notified=False,
                 )
-                total_xp_earned += ach_def.xp_reward
+                unlocked_defs.append(ach_def)
                 newly_unlocked.append(AchievementProgress(
                     definition=ach_def,
                     current_value=current,
@@ -653,19 +735,32 @@ async def check_achievements(
                     completed=True,
                     unlocked_at=now,
                 ))
-            elif not completed and not existing:
-                _achievements[ach_def.id] = UserAchievement(
-                    achievement_id=ach_def.id,
-                    progress=min(current / ach_def.condition_value, 0.99) if ach_def.condition_value > 0 else 0,
-                    completed=False,
+            elif not completed:
+                progress = (
+                    min(current / ach_def.condition_value, 0.99) if ach_def.condition_value > 0 else 0
                 )
+                if not existing:
+                    _achievements[ach_def.id] = UserAchievement(
+                        achievement_id=ach_def.id, progress=progress, completed=False,
+                    )
+                    progress_changed = True
+                elif existing.progress != progress:
+                    # Progress used to be written once (first check) and never refreshed.
+                    existing.progress = progress
+                    progress_changed = True
 
-        if newly_unlocked:
+        if newly_unlocked or progress_changed:
             _save_achievements()
 
-    # Award XP for newly unlocked achievements
-    if total_xp_earned > 0:
-        await _award_xp(total_xp_earned, "achievement_unlock", "Achievement rewards")
+    # Award XP for newly unlocked achievements: one history entry per achievement, each paid
+    # at most once ever (if the achievement store is lost or skipped as corrupt, everything
+    # unlocks again but the rewards are not repaid)
+    for ach_def in unlocked_defs:
+        if await _award_xp(
+            ach_def.xp_reward, "achievement_unlock", f"Achievement: {ach_def.name}",
+            ref=f"achievement:{ach_def.id}",
+        ):
+            total_xp_earned += ach_def.xp_reward
 
     return NewAchievementsResponse(
         new_achievements=newly_unlocked,
@@ -680,7 +775,27 @@ async def get_achievements() -> tuple[list[AchievementProgress], int, int]:
 
     for ach_def in ACHIEVEMENTS:
         user_ach = _achievements.get(ach_def.id)
-        if user_ach and user_ach.completed:
+        if ach_def.hidden and not (user_ach and user_ach.completed):
+            # Hidden until unlocked, even after progress records exist for every achievement
+            result.append(AchievementProgress(
+                definition=AchievementDefinition(
+                    id=ach_def.id,
+                    name="???",
+                    description="Hidden achievement — keep exploring!",
+                    icon="🔒",
+                    category=ach_def.category,
+                    tier=ach_def.tier,
+                    condition_type=ach_def.condition_type,
+                    condition_value=ach_def.condition_value,
+                    xp_reward=ach_def.xp_reward,
+                    hidden=True,
+                ),
+                current_value=0,
+                target_value=ach_def.condition_value,
+                progress_percent=0,
+                completed=False,
+            ))
+        elif user_ach and user_ach.completed:
             result.append(AchievementProgress(
                 definition=ach_def,
                 current_value=ach_def.condition_value,
@@ -809,20 +924,41 @@ XP_REWARDS = {
 _RARE_CATEGORIES = {"abandoned", "underground", "cave", "military", "ruins"}
 
 
-async def _award_xp(xp: int, source: str, description: str, visit_id: str | None = None) -> None:
-    """Internal: award XP and save."""
+async def _award_xp(
+    xp: int,
+    source: str,
+    description: str,
+    visit_id: str | None = None,
+    ref: str | None = None,
+) -> bool:
+    """Internal: award XP and save. Returns False when ``ref`` was already paid.
+
+    ``ref`` is an idempotency key ("visit:<place_id>", "streak:<day>", "note_text:<id>"):
+    the same reward can never be granted twice by repeating a request.
+    """
     global _total_xp
+    _ensure_loaded()  # never append to (and then rewrite) a store that was not read yet
+    if ref is not None and ref in _xp_refs:
+        return False
     event = XpEvent(
         id=f"xp_{uuid.uuid4().hex[:12]}",
         source=source,
         xp=xp,
         description=description,
         visit_id=visit_id,
+        ref=ref,
     )
     _total_xp += xp
     _xp_events.append(event)
+    if len(_xp_events) > MAX_XP_EVENTS:  # the log rotates, _total_xp does not
+        del _xp_events[: len(_xp_events) - MAX_XP_EVENTS]
+    if ref is not None:
+        _xp_refs[ref] = None
+        while len(_xp_refs) > MAX_XP_REFS:
+            del _xp_refs[next(iter(_xp_refs))]
     _save_xp()
     logger.info("Awarded %d XP for %s (total: %d)", xp, source, _total_xp)
+    return True
 
 
 async def award_visit_xp(
@@ -836,30 +972,37 @@ async def award_visit_xp(
     total_earned = 0
     old_level, _ = _get_level(_total_xp)
 
-    # Base visit XP
+    # Base visit XP: once per place, however often the place is checked in
     base_xp = XP_REWARDS["visit_new"]
     if is_rare_category:
         base_xp = XP_REWARDS["visit_rare"]
-    total_earned += base_xp
-    await _award_xp(base_xp, "visit", f"Visited {visit.place_name or visit.place_id}", visit.id)
+    if await _award_xp(
+        base_xp, "visit", f"Visited {visit.place_name or visit.place_id}", visit.id,
+        ref=f"visit:{visit.place_id}",
+    ):
+        total_earned += base_xp
 
-    # Note bonuses
+    # Note bonuses: once per note
     for note in notes:
-        if note.text:
-            await _award_xp(XP_REWARDS["note_with_text"], "note_text", "Note with text", visit.id)
-            total_earned += XP_REWARDS["note_with_text"]
-        if note.photos:
-            await _award_xp(XP_REWARDS["note_with_photo"], "note_photo", "Note with photo", visit.id)
-            total_earned += XP_REWARDS["note_with_photo"]
-        if note.rating.average > 0:
-            await _award_xp(XP_REWARDS["note_with_rating"], "note_rating", "Note with rating", visit.id)
-            total_earned += XP_REWARDS["note_with_rating"]
+        for flag, key, source, text in (
+            (bool(note.text), "note_with_text", "note_text", "Note with text"),
+            (bool(note.photos), "note_with_photo", "note_photo", "Note with photo"),
+            (note.rating.average > 0, "note_with_rating", "note_rating", "Note with rating"),
+        ):
+            if flag and await _award_xp(
+                XP_REWARDS[key], source, text, visit.id, ref=f"{source}:{note.id}"
+            ):
+                total_earned += XP_REWARDS[key]
 
-    # Streak bonus
+    # Streak bonus: once per day (it used to be paid again on every single check-in)
     if streak_days > 1:
         streak_xp = min(streak_days, 30) * XP_REWARDS["streak_bonus"]
-        await _award_xp(streak_xp, "streak", f"{streak_days}-day streak bonus", visit.id)
-        total_earned += streak_xp
+        today = datetime.now(UTC).date().isoformat()
+        if await _award_xp(
+            streak_xp, "streak", f"{streak_days}-day streak bonus", visit.id,
+            ref=f"streak:{today}",
+        ):
+            total_earned += streak_xp
 
     new_level, new_info = _get_level(_total_xp)
     leveled_up = new_level != old_level
@@ -895,7 +1038,7 @@ async def get_explorer_profile() -> ExplorerProfile:
         progress = round(current_progress / level_range * 100, 1) if level_range > 0 else 100.0
 
     achievements_unlocked = sum(1 for a in _achievements.values() if a.completed)
-    fog_area = len(_fog_cells) * _CELL_AREA_KM2
+    fog_area = _fog_area_km2
 
     return ExplorerProfile(
         total_xp=_total_xp,
@@ -913,7 +1056,9 @@ async def get_explorer_profile() -> ExplorerProfile:
 async def get_xp_history(limit: int = 50, offset: int = 0) -> tuple[list[XpEvent], int]:
     """Get XP event history."""
     _ensure_loaded()
-    events = sorted(_xp_events, key=lambda e: e.created_at, reverse=True)
+    # The log is append-only, so reversing it is "newest first" even when timestamps tie
+    # (sorting by created_at returned equal timestamps oldest first).
+    events = list(reversed(_xp_events))
     total = len(events)
     return events[offset : offset + limit], total
 
@@ -922,7 +1067,7 @@ async def get_leaderboard() -> list[LeaderboardEntry]:
     """Get leaderboard (single user for now)."""
     _ensure_loaded()
     level, _ = _get_level(_total_xp)
-    fog_area = len(_fog_cells) * _CELL_AREA_KM2
+    fog_area = _fog_area_km2
     achievements_count = sum(1 for a in _achievements.values() if a.completed)
 
     return [
@@ -988,10 +1133,13 @@ async def on_visit_created(
 
 def _reset_store() -> None:
     """Reset in-memory stores (for testing only)."""
-    global _data_dir, _total_xp
+    global _data_dir, _total_xp, _loaded, _fog_area_km2
+    _loaded = False
     _fog_cells.clear()
     _achievements.clear()
     _xp_events.clear()
+    _xp_refs.clear()
     _total_xp = 0
+    _fog_area_km2 = 0.0
     import tempfile
     _data_dir = Path(tempfile.mkdtemp())

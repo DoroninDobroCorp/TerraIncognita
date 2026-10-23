@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.gamification import (
     AchievementListResponse,
@@ -16,8 +16,9 @@ from app.models.gamification import (
     XpHistoryResponse,
 )
 from app.services import gamification as gam_service
+from app.utils.safe_route import SafeValidationRoute
 
-router = APIRouter(prefix="/api", tags=["gamification"])
+router = APIRouter(prefix="/api", tags=["gamification"], route_class=SafeValidationRoute)
 
 
 # ── Story 6.1: Fog of War ───────────────────────────────────────
@@ -47,17 +48,22 @@ async def get_fog_region(req: FogRegionRequest) -> FogRegionStats:
 
 @router.get("/fog/cells")
 async def get_fog_cells(
-    lat: float, lng: float, radius_km: float = 5.0
+    lat: float,
+    lng: float,
+    radius_km: float = 5.0,
+    limit: int = Query(5000, ge=1, le=20000),
 ) -> dict:
-    """Get explored cells within an area (for map rendering)."""
+    """Get explored cells within an area (for map rendering), at most ``limit`` of them."""
     if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
         raise HTTPException(status_code=422, detail="Invalid coordinates")
     if not (0 < radius_km <= 50):
         raise HTTPException(status_code=422, detail="radius_km must be between 0 and 50")
     cells = await gam_service.get_explored_cells_in_area(lat, lng, radius_km)
+    shown = cells[:limit]
     return {
-        "cells": [{"lat": c.lat, "lng": c.lng, "explored_at": c.explored_at} for c in cells],
+        "cells": [{"lat": c.lat, "lng": c.lng, "explored_at": c.explored_at} for c in shown],
         "total": len(cells),
+        "truncated": len(cells) > len(shown),
     }
 
 
@@ -86,7 +92,9 @@ async def get_profile() -> ExplorerProfileResponse:
 
 
 @router.get("/explorer/xp-history", response_model=XpHistoryResponse)
-async def get_xp_history(limit: int = 50, offset: int = 0) -> XpHistoryResponse:
+async def get_xp_history(
+    limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)
+) -> XpHistoryResponse:
     """Get XP earning history."""
     events, total = await gam_service.get_xp_history(limit=limit, offset=offset)
     return XpHistoryResponse(events=events, total=total)

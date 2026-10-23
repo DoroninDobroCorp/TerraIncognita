@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.chat import DescriptionRequest, DescriptionResponse
 from app.services.llm_descriptions import generate_description
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["descriptions"])
+router = APIRouter(prefix="/api", tags=["descriptions"], route_class=SafeValidationRoute)
 
 
 @router.post("/describe", response_model=DescriptionResponse)
@@ -32,12 +33,12 @@ async def describe_place(req: DescriptionRequest) -> DescriptionResponse:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as exc:
-        logger.exception("Description generation error for %s", req.place_id)
+        logger.exception("Description generation error for %r", req.place_id)
         raise HTTPException(status_code=500, detail="Description generation failed") from exc
 
     elapsed_ms = (time.monotonic() - t0) * 1000
     logger.info(
-        "POST /api/describe → place=%s, cached=%s in %.0fms",
+        "POST /api/describe → place=%r, cached=%s in %.0fms",
         req.place_id, result.cached, elapsed_ms,
     )
     return result

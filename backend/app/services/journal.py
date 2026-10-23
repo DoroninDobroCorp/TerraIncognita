@@ -10,7 +10,9 @@ Module organisation (single file for prototype simplicity):
   - Export: export_journal_html
 
 Thread safety: writes use atomic temp-file-then-rename to prevent corruption.
-Concurrency: _write_lock (asyncio.Lock) serialises concurrent mutations.
+Concurrency: single event loop; the mutations run without awaiting between reading and
+writing the in-memory stores, so they are atomic with respect to other coroutines (do not
+put an ``await`` inside a read-modify-write). ``_write_lock`` exists but is not needed.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
@@ -40,9 +43,26 @@ from app.models.journal import (
     VisitStatus,
 )
 from app.models.place import Coordinates
+from app.utils.atomic_io import atomic_write_text, load_model_records
 from app.utils.geo import haversine_distance_m as _haversine_m
+from app.utils.sanitize import sanitize_url
 
 logger = logging.getLogger(__name__)
+
+# Every mutation rewrites the whole store file, so the stores must stay small.
+MAX_VISITS = 50_000
+MAX_NOTES = 100_000
+MAX_NOTES_PER_VISIT = 100
+MAX_TRIPS = 2_000
+
+
+class JournalLimitError(ValueError):
+    """A store capacity limit is reached (HTTP 507)."""
+
+
+class TripNotFoundError(ValueError):
+    """The referenced trip does not exist (HTTP 404)."""
+
 
 # ── In-memory store (JSON-file backed for persistence) ───────────
 
@@ -50,6 +70,7 @@ _visits: dict[str, Visit] = {}
 _notes: dict[str, PlaceNote] = {}
 _trips: dict[str, Trip] = {}
 _data_dir: Path | None = None
+_loaded = False
 _write_lock = asyncio.Lock()
 
 
@@ -62,10 +83,8 @@ def _get_data_dir() -> Path:
 
 
 def _atomic_write(path: Path, data: str) -> None:
-    """Write data atomically using temp file + rename to prevent corruption."""
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(data, encoding="utf-8")
-    tmp.replace(path)
+    """Write data atomically (unique temp file + fsync + rename) to prevent corruption."""
+    atomic_write_text(path, data)
 
 
 def _save_visits() -> None:
@@ -87,35 +106,15 @@ def _save_trips() -> None:
 
 
 def _load_store() -> None:
-    """Load persisted data on first access."""
+    """Load persisted data once (first access)."""
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
     data_dir = _get_data_dir()
-
-    visits_path = data_dir / "visits.json"
-    if visits_path.exists() and not _visits:
-        try:
-            raw = json.loads(visits_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _visits[k] = Visit.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load visits.json, starting fresh")
-
-    notes_path = data_dir / "notes.json"
-    if notes_path.exists() and not _notes:
-        try:
-            raw = json.loads(notes_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _notes[k] = PlaceNote.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load notes.json, starting fresh")
-
-    trips_path = data_dir / "trips.json"
-    if trips_path.exists() and not _trips:
-        try:
-            raw = json.loads(trips_path.read_text(encoding="utf-8"))
-            for k, v in raw.items():
-                _trips[k] = Trip.model_validate(v)
-        except Exception:
-            logger.warning("Failed to load trips.json, starting fresh")
+    _visits.update(load_model_records(data_dir / "visits.json", Visit))
+    _notes.update(load_model_records(data_dir / "notes.json", PlaceNote))
+    _trips.update(load_model_records(data_dir / "trips.json", Trip))
 
 
 def _ensure_loaded() -> None:
@@ -125,26 +124,36 @@ def _ensure_loaded() -> None:
 # ── Geo utilities ────────────────────────────────────────────────
 
 
+def _utc(value: datetime | None) -> datetime | None:
+    """Naive datetimes (from direct callers) are taken as UTC, aware ones converted to UTC."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def _sanitize_text(text: str, max_length: int = 10000) -> str:
     """Sanitize user-provided text: strip control chars, limit length."""
-    import re
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     return text[:max_length].strip()
 
 
+def _one_line(text: str, max_length: int = 300) -> str:
+    """Single-line label (names, regions): no control characters or line breaks."""
+    return re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f\x7f]", " ", text)).strip()[:max_length]
+
+
 def _sanitize_tag(tag: str) -> str:
-    """Sanitize a tag: lowercase, alphanumeric/hyphens only, limit length."""
-    import re
+    """Sanitize a tag: lowercase, letters (any script)/digits/underscore/hyphen only."""
     tag = tag.strip().lower()
-    tag = re.sub(r"[^a-zA-Zа-яА-ЯёЁ0-9_\-]", "", tag)
+    tag = re.sub(r"[^\w\-]", "", tag)
     return tag[:100]
 
 
 def _sanitize_url(url: str) -> str:
-    """Basic URL validation: allow only http/https/relative paths."""
-    url = url.strip()
-    if url.startswith(("http://", "https://", "/", "./")):
-        return url[:2000]
+    """URL validation: only http(s) URLs and site-relative paths (not protocol-relative)."""
+    safe = sanitize_url(url)
+    if safe and safe.startswith(("http://", "https://", "/", "./")) and not safe.startswith("//"):
+        return safe
     return ""
 
 
@@ -165,12 +174,17 @@ async def create_visit(
 ) -> Visit:
     """Record a visit to a place."""
     _ensure_loaded()
+    if len(_visits) >= MAX_VISITS:
+        raise JournalLimitError(f"Journal is full ({MAX_VISITS} visits)")
+    trip_id = trip_id or None
+    if trip_id is not None and trip_id not in _trips:
+        raise TripNotFoundError(f"Trip {trip_id} not found")
     visit_id = f"visit_{uuid.uuid4().hex[:12]}"
     now = datetime.now(UTC)
     visit = Visit(
         id=visit_id,
         place_id=place_id,
-        place_name=place_name,
+        place_name=_one_line(place_name) if place_name else None,
         status=status,
         coordinates=Coordinates(lat=lat, lng=lng),
         visited_at=now,
@@ -183,14 +197,14 @@ async def create_visit(
     _visits[visit_id] = visit
 
     # Auto-assign to trip if trip_id provided
-    if trip_id and trip_id in _trips:
+    if trip_id:
         if visit_id not in _trips[trip_id].visit_ids:
             _trips[trip_id].visit_ids.append(visit_id)
             _trips[trip_id].updated_at = now
             _save_trips()
 
     _save_visits()
-    logger.info("Created visit %s for place %s", visit_id, place_id)
+    logger.info("Created visit %s for place %r", visit_id, place_id)
 
     # Trigger gamification hook (Epic 6)
     if status == VisitStatus.VISITED:
@@ -247,6 +261,7 @@ async def list_visits(
 
     results.sort(key=lambda v: v.visited_at, reverse=True)
     total = len(results)
+    offset, limit = max(0, offset), max(0, limit)  # negative values would slice from the end
     return results[offset : offset + limit], total
 
 
@@ -261,22 +276,24 @@ async def update_visit(
     visit = _visits.get(visit_id)
     if not visit:
         return None
+    if trip_id and trip_id not in _trips:
+        raise TripNotFoundError(f"Trip {trip_id} not found")
 
     if status is not None:
         visit.status = status
     if duration_minutes is not None:
         visit.duration_minutes = duration_minutes
-    if trip_id is not None:
+    if trip_id is not None:  # "" detaches the visit
         # Remove from old trip
         if visit.trip_id and visit.trip_id in _trips:
             old_trip = _trips[visit.trip_id]
             if visit_id in old_trip.visit_ids:
                 old_trip.visit_ids.remove(visit_id)
         # Add to new trip
-        visit.trip_id = trip_id
-        if trip_id in _trips and visit_id not in _trips[trip_id].visit_ids:
+        visit.trip_id = trip_id or None
+        if trip_id and visit_id not in _trips[trip_id].visit_ids:
             _trips[trip_id].visit_ids.append(visit_id)
-            _save_trips()
+        _save_trips()
 
     visit.updated_at = datetime.now(UTC)
     _save_visits()
@@ -314,22 +331,31 @@ async def check_proximity(
 ) -> ProximityCheckResponse:
     """Check if user is near a previously visited place."""
     _ensure_loaded()
+    nearest: Visit | None = None
+    nearest_dist = float("inf")
     for visit in _visits.values():
         dist = _haversine_m(lat, lng, visit.coordinates.lat, visit.coordinates.lng)
-        if dist <= radius_m:
-            return ProximityCheckResponse(
-                nearby_place_id=visit.place_id,
-                nearby_place_name=visit.place_name,
-                distance_m=round(dist, 1),
-                already_visited=visit.status == VisitStatus.VISITED,
-            )
-    return ProximityCheckResponse()
+        if dist <= radius_m and dist < nearest_dist:  # nearest, not merely the first stored
+            nearest, nearest_dist = visit, dist
+    if nearest is None:
+        return ProximityCheckResponse()
+    return ProximityCheckResponse(
+        nearby_place_id=nearest.place_id,
+        nearby_place_name=nearest.place_name,
+        distance_m=round(nearest_dist, 1),
+        already_visited=nearest.status == VisitStatus.VISITED,
+    )
 
 
 async def get_visited_place_ids() -> list[str]:
     """Return list of place IDs with status VISITED (for exclude_visited)."""
     _ensure_loaded()
-    return [v.place_id for v in _visits.values() if v.status == VisitStatus.VISITED]
+    # unique, most recent check-in first (repeat visits used to repeat the id)
+    visited = sorted(
+        (v for v in _visits.values() if v.status == VisitStatus.VISITED),
+        key=lambda v: v.visited_at, reverse=True,
+    )
+    return list(dict.fromkeys(v.place_id for v in visited))
 
 
 async def check_dwell(
@@ -375,6 +401,10 @@ async def create_note(
     visit = _visits.get(visit_id)
     if not visit:
         return None
+    if len(_notes) >= MAX_NOTES:
+        raise JournalLimitError(f"Journal is full ({MAX_NOTES} notes)")
+    if sum(1 for n in _notes.values() if n.visit_id == visit_id) >= MAX_NOTES_PER_VISIT:
+        raise JournalLimitError(f"A visit can have at most {MAX_NOTES_PER_VISIT} notes")
 
     note_id = f"note_{uuid.uuid4().hex[:12]}"
     now = datetime.now(UTC)
@@ -596,14 +626,16 @@ async def create_trip(
 ) -> Trip:
     """Create a new trip."""
     _ensure_loaded()
+    if len(_trips) >= MAX_TRIPS:
+        raise JournalLimitError(f"Journal is full ({MAX_TRIPS} trips)")
     trip_id = f"trip_{uuid.uuid4().hex[:12]}"
     now = datetime.now(UTC)
     trip = Trip(
         id=trip_id,
-        name=name,
-        region=region,
-        start_date=start_date,
-        end_date=end_date,
+        name=_one_line(name, 200) or "Trip",
+        region=_one_line(region, 200) if region else None,
+        start_date=_utc(start_date),
+        end_date=_utc(end_date),
         created_at=now,
         updated_at=now,
     )
@@ -622,6 +654,7 @@ async def list_trips(limit: int = 50, offset: int = 0) -> tuple[list[Trip], int]
     _ensure_loaded()
     results = sorted(_trips.values(), key=lambda t: t.created_at, reverse=True)
     total = len(results)
+    offset, limit = max(0, offset), max(0, limit)
     return results[offset : offset + limit], total
 
 
@@ -637,13 +670,13 @@ async def update_trip(
     if not trip:
         return None
     if name is not None:
-        trip.name = name
+        trip.name = _one_line(name, 200) or trip.name
     if region is not None:
-        trip.region = region
+        trip.region = _one_line(region, 200) or None
     if start_date is not None:
-        trip.start_date = start_date
+        trip.start_date = _utc(start_date)
     if end_date is not None:
-        trip.end_date = end_date
+        trip.end_date = _utc(end_date)
     trip.updated_at = datetime.now(UTC)
     _save_trips()
     return trip
@@ -676,6 +709,7 @@ async def auto_group_visits(
     trip = _trips.get(trip_id)
     if not trip:
         return None
+    start_date, end_date = _utc(start_date), _utc(end_date)
 
     for visit in _visits.values():
         if not (start_date <= visit.visited_at <= end_date):
@@ -687,9 +721,15 @@ async def auto_group_visits(
             ) / 1000.0
             if dist_km > region_radius_km:
                 continue
+        if visit.trip_id and visit.trip_id != trip_id and visit.trip_id in _trips:
+            # A visit belongs to one trip: take it out of the old one (it used to stay in
+            # both visit_ids lists, so it was counted and exported twice).
+            old = _trips[visit.trip_id]
+            if visit.id in old.visit_ids:
+                old.visit_ids.remove(visit.id)
         if visit.id not in trip.visit_ids:
             trip.visit_ids.append(visit.id)
-            visit.trip_id = trip_id
+        visit.trip_id = trip_id
 
     trip.start_date = start_date
     trip.end_date = end_date
@@ -765,7 +805,7 @@ async def export_trip(trip_id: str, fmt: str = "markdown") -> tuple[str, str] | 
         return None
 
     trip = summary.trip
-    safe_name = trip.name.replace(" ", "_")
+    safe_name = _safe_filename(trip.name)
 
     if fmt == "json":
         content = summary.model_dump_json(indent=2)
@@ -775,9 +815,9 @@ async def export_trip(trip_id: str, fmt: str = "markdown") -> tuple[str, str] | 
         filename = f"{safe_name}.html"
     else:
         lines = [
-            f"# 🌍 {trip.name}",
+            f"# 🌍 {_md_text(trip.name)}",
             "",
-            f"**Region:** {trip.region or 'N/A'}",
+            f"**Region:** {_md_text(trip.region or 'N/A')}",
             f"**Dates:** {trip.start_date or 'N/A'} — {trip.end_date or 'N/A'}",
             f"**Places visited:** {summary.total_places}",
             f"**Distance:** {summary.total_distance_km} km",
@@ -787,18 +827,21 @@ async def export_trip(trip_id: str, fmt: str = "markdown") -> tuple[str, str] | 
         if summary.best_rated_places:
             lines.append("## ⭐ Best Places")
             for name in summary.best_rated_places:
-                lines.append(f"- {name}")
+                lines.append(f"- {_md_text(name)}")
             lines.append("")
 
         visits = [_visits[vid] for vid in trip.visit_ids if vid in _visits]
         if visits:
             lines.append("## 📍 Places")
             for v in sorted(visits, key=lambda x: x.visited_at):
-                lines.append(f"- **{v.place_name or v.place_id}** — {v.visited_at.strftime('%Y-%m-%d %H:%M')}")
+                label = _md_text(v.place_name or v.place_id)
+                lines.append(f"- **{label}** — {v.visited_at.strftime('%Y-%m-%d %H:%M')}")
                 notes = [n for n in _notes.values() if n.visit_id == v.id]
                 for note in notes:
                     if note.text:
-                        lines.append(f"  > {note.text}")
+                        # every line of a multi-line note stays inside the quote
+                        for text_line in note.text.splitlines() or [""]:
+                            lines.append(f"  > {_md_text(text_line)}")
                     if note.rating.average > 0:
                         stars = "⭐" * round(note.rating.average)
                         lines.append(f"  Rating: {stars} ({note.rating.average}/5)")
@@ -808,6 +851,25 @@ async def export_trip(trip_id: str, fmt: str = "markdown") -> tuple[str, str] | 
         filename = f"{safe_name}.md"
 
     return content, filename
+
+
+def _safe_filename(name: str) -> str:
+    """File-name stem from a trip name: letters/digits/``._-`` only, never a path or hidden file."""
+    stem = re.sub(r"[^\w.\-]+", "_", name.strip())
+    stem = re.sub(r"\.{2,}", ".", stem).strip("._")
+    return stem[:80] or "trip"
+
+
+def _md_text(text: str) -> str:
+    """Neutralise Markdown/HTML that could create links, images or raw HTML in a viewer."""
+    return (
+        text.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("`", "\\`")
+    )
 
 
 def _export_html(trip: Trip, summary: TripSummary) -> str:
@@ -887,7 +949,8 @@ def _html_escape(text: str) -> str:
 
 def _reset_store() -> None:
     """Reset in-memory stores (for testing only)."""
-    global _data_dir
+    global _data_dir, _loaded
+    _loaded = False
     _visits.clear()
     _notes.clear()
     _trips.clear()

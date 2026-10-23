@@ -8,13 +8,24 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 
 from app.models.chat import ChatRequest, ChatResponse, ParsedIntent
 from app.models.place import DiscoverRequest, Place, PlaceCategory
 from app.services.discovery import discover
 from app.services.llm_client import chat_completion
-from app.utils.sanitize import sanitize_for_log, sanitize_user_input
+from app.utils.sanitize import (
+    UNTRUSTED_DATA_NOTICE,
+    fence_untrusted,
+    sanitize_for_log,
+    sanitize_label,
+    sanitize_user_input,
+)
+
+MAX_RESPONSE_CHARS = 4_000
+_DISTANCE_PREFERENCES = {"nearby", "walkable", "any"}
+_TIMES_OF_DAY = {"morning", "afternoon", "evening", "night", "any"}
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +68,7 @@ Mood/atmosphere mappings:
 - "family-friendly/safe" → park, museum, landmark, viewpoint, monument
 - "foodie/gourmet" → restaurant_notable, landmark
 - "luxury/unique stay" → hotel_notable, architecture
-"""
+""" + UNTRUSTED_DATA_NOTICE
 
 INTENT_EXTRACTION_PROMPT = """\
 Parse the user's message into a JSON search intent. Respond ONLY with valid JSON, \
@@ -82,13 +93,14 @@ museum, architecture, monument, park, restaurant_notable, hotel_notable
 - restaurant_notable / hotel_notable: ONLY when user explicitly asks about \
 exceptional dining or unique accommodation, never for generic food/hotel queries
 - Detect the language of the user's message
-"""
+""" + UNTRUSTED_DATA_NOTICE
 
 RESPONSE_PROMPT = """\
-The user asked: "{query}"
+The user asked:
+{query_block}
 
 Found {count} places matching their intent. Here are the top results:
-{places_summary}
+{places_block}
 
 Write an engaging, conversational response in {language}:
 1. Briefly acknowledge what they're looking for
@@ -149,17 +161,96 @@ async def process_chat(req: ChatRequest) -> ChatResponse:
     )
 
 
+# Keyword stems (matched at the start of a word) -> categories, for when the LLM is unavailable
+_MOOD_MAP: dict[str, list[PlaceCategory]] = {
+    "заброш": [PlaceCategory.ABANDONED],
+    "abandon": [PlaceCategory.ABANDONED],
+    "подземн": [PlaceCategory.UNDERGROUND],
+    "underground": [PlaceCategory.UNDERGROUND],
+    "tunnel": [PlaceCategory.UNDERGROUND],
+    "тоннел": [PlaceCategory.UNDERGROUND],
+    "руин": [PlaceCategory.RUINS],
+    "ruin": [PlaceCategory.RUINS],
+    "сталкер": [PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL],
+    "stalker": [PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL],
+    "жутк": [PlaceCategory.ABANDONED, PlaceCategory.UNDERGROUND],
+    "creepy": [PlaceCategory.ABANDONED, PlaceCategory.UNDERGROUND],
+    "романтич": [PlaceCategory.VIEWPOINT, PlaceCategory.NATURE_HIDDEN],
+    "romantic": [PlaceCategory.VIEWPOINT, PlaceCategory.NATURE_HIDDEN],
+    "пещер": [PlaceCategory.CAVE],
+    "cave": [PlaceCategory.CAVE],
+    "воен": [PlaceCategory.MILITARY],
+    "military": [PlaceCategory.MILITARY],
+    "bunker": [PlaceCategory.MILITARY],
+    "бункер": [PlaceCategory.MILITARY],
+    "вид": [PlaceCategory.VIEWPOINT],
+    "view": [PlaceCategory.VIEWPOINT],
+    "музей": [PlaceCategory.MUSEUM],
+    "museum": [PlaceCategory.MUSEUM],
+    "церк": [PlaceCategory.RELIGIOUS],
+    "church": [PlaceCategory.RELIGIOUS],
+    "храм": [PlaceCategory.RELIGIOUS],
+    "вод": [PlaceCategory.WATER],
+    "water": [PlaceCategory.WATER],
+    "граффити": [PlaceCategory.STREET_ART],
+    "graffiti": [PlaceCategory.STREET_ART],
+    "street art": [PlaceCategory.STREET_ART],
+    "ресторан": [PlaceCategory.RESTAURANT_NOTABLE],
+    "restaurant": [PlaceCategory.RESTAURANT_NOTABLE],
+    "кухн": [PlaceCategory.RESTAURANT_NOTABLE],
+    "еда": [PlaceCategory.RESTAURANT_NOTABLE],
+    "foodie": [PlaceCategory.RESTAURANT_NOTABLE],
+    "gourmet": [PlaceCategory.RESTAURANT_NOTABLE],
+    "michelin": [PlaceCategory.RESTAURANT_NOTABLE],
+    "мишлен": [PlaceCategory.RESTAURANT_NOTABLE],
+    "отель": [PlaceCategory.HOTEL_NOTABLE],
+    "hotel": [PlaceCategory.HOTEL_NOTABLE],
+    "гостиниц": [PlaceCategory.HOTEL_NOTABLE],
+}
+
+
+def _history_messages(history: list | None, limit: int) -> list[dict[str, str]]:
+    """Client-supplied chat history as LLM messages.
+
+    The history is not trusted: contents are sanitised and bounded like the question itself,
+    and a conversation must start with a user turn (slicing ``history[-6:]`` could start with
+    an assistant turn, which the API rejects, silently pushing every multi-turn chat onto the
+    rule-based fallback).
+    """
+    messages: list[dict[str, str]] = []
+    for h in (history or [])[-limit:]:
+        content = sanitize_user_input(h.content, max_length=2000)
+        if content:
+            messages.append({"role": h.role, "content": content})
+    while messages and messages[0]["role"] != "user":
+        messages.pop(0)
+    return messages
+
+
+def _clean_str_list(value: object, max_items: int, max_len: int) -> list[str]:
+    """LLM output -> short list of clean strings (anything else is dropped)."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            label = sanitize_label(item, max_len)
+            if label and label not in out:
+                out.append(label)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _clean_choice(value: object, allowed: set[str]) -> str | None:
+    return value.strip().lower() if isinstance(value, str) and value.strip().lower() in allowed else None
+
+
 async def _extract_intent(
     message: str, history: list | None = None
 ) -> ParsedIntent:
     """Use LLM to parse natural language into structured intent."""
-    messages = []
-
-    # Add conversation history for context
-    if history:
-        for h in history[-6:]:  # Last 6 messages for context
-            messages.append({"role": h.role, "content": h.content})
-
+    messages = _history_messages(history, 6)  # last 6 messages for context
     messages.append({"role": "user", "content": message})
 
     try:
@@ -176,22 +267,29 @@ async def _extract_intent(
             json_str = json_str.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
         data = json.loads(json_str)
+        if not isinstance(data, dict):
+            raise ValueError("intent is not a JSON object")
 
-        # Map category strings to enum values
-        valid_cats = []
-        for cat in data.get("categories", []):
+        # The model output is untrusted too: categories are whitelisted through the enum,
+        # everything else is type-checked, trimmed and bounded (it is echoed to the client).
+        valid_cats: list[PlaceCategory] = []
+        raw_cats = data.get("categories", [])
+        for cat in raw_cats if isinstance(raw_cats, list) else []:
             try:
-                valid_cats.append(PlaceCategory(cat))
+                parsed = PlaceCategory(cat)
             except ValueError:
-                logger.debug("Unknown category from LLM: %s", cat)
+                logger.debug("Unknown category from LLM: %r", cat)
+                continue
+            if parsed not in valid_cats:
+                valid_cats.append(parsed)
 
         return ParsedIntent(
             categories=valid_cats,
-            mood=data.get("mood", []),
-            terrain=data.get("terrain", []),
-            distance_preference=data.get("distance_preference"),
-            time_of_day=data.get("time_of_day"),
-            keywords=data.get("keywords", []),
+            mood=_clean_str_list(data.get("mood"), 10, 50),
+            terrain=_clean_str_list(data.get("terrain"), 10, 50),
+            distance_preference=_clean_choice(data.get("distance_preference"), _DISTANCE_PREFERENCES),
+            time_of_day=_clean_choice(data.get("time_of_day"), _TIMES_OF_DAY),
+            keywords=_clean_str_list(data.get("keywords"), 10, 50),
             original_query=message,
         )
     except (json.JSONDecodeError, KeyError) as e:
@@ -208,55 +306,10 @@ def _fallback_intent(message: str) -> ParsedIntent:
     categories: list[PlaceCategory] = []
     mood: list[str] = []
 
-    # Mood-based mapping
-    mood_map: dict[str, list[PlaceCategory]] = {
-        "заброш": [PlaceCategory.ABANDONED],
-        "abandon": [PlaceCategory.ABANDONED],
-        "подземн": [PlaceCategory.UNDERGROUND],
-        "underground": [PlaceCategory.UNDERGROUND],
-        "tunnel": [PlaceCategory.UNDERGROUND],
-        "тоннел": [PlaceCategory.UNDERGROUND],
-        "руин": [PlaceCategory.RUINS],
-        "ruin": [PlaceCategory.RUINS],
-        "сталкер": [PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL],
-        "stalker": [PlaceCategory.ABANDONED, PlaceCategory.INDUSTRIAL],
-        "жутк": [PlaceCategory.ABANDONED, PlaceCategory.UNDERGROUND],
-        "creepy": [PlaceCategory.ABANDONED, PlaceCategory.UNDERGROUND],
-        "романтич": [PlaceCategory.VIEWPOINT, PlaceCategory.NATURE_HIDDEN],
-        "romantic": [PlaceCategory.VIEWPOINT, PlaceCategory.NATURE_HIDDEN],
-        "пещер": [PlaceCategory.CAVE],
-        "cave": [PlaceCategory.CAVE],
-        "воен": [PlaceCategory.MILITARY],
-        "military": [PlaceCategory.MILITARY],
-        "bunker": [PlaceCategory.MILITARY],
-        "бункер": [PlaceCategory.MILITARY],
-        "вид": [PlaceCategory.VIEWPOINT],
-        "view": [PlaceCategory.VIEWPOINT],
-        "музей": [PlaceCategory.MUSEUM],
-        "museum": [PlaceCategory.MUSEUM],
-        "церк": [PlaceCategory.RELIGIOUS],
-        "church": [PlaceCategory.RELIGIOUS],
-        "храм": [PlaceCategory.RELIGIOUS],
-        "вод": [PlaceCategory.WATER],
-        "water": [PlaceCategory.WATER],
-        "граффити": [PlaceCategory.STREET_ART],
-        "graffiti": [PlaceCategory.STREET_ART],
-        "street art": [PlaceCategory.STREET_ART],
-        "ресторан": [PlaceCategory.RESTAURANT_NOTABLE],
-        "restaurant": [PlaceCategory.RESTAURANT_NOTABLE],
-        "кухн": [PlaceCategory.RESTAURANT_NOTABLE],
-        "еда": [PlaceCategory.RESTAURANT_NOTABLE],
-        "foodie": [PlaceCategory.RESTAURANT_NOTABLE],
-        "gourmet": [PlaceCategory.RESTAURANT_NOTABLE],
-        "michelin": [PlaceCategory.RESTAURANT_NOTABLE],
-        "мишлен": [PlaceCategory.RESTAURANT_NOTABLE],
-        "отель": [PlaceCategory.HOTEL_NOTABLE],
-        "hotel": [PlaceCategory.HOTEL_NOTABLE],
-        "гостиниц": [PlaceCategory.HOTEL_NOTABLE],
-    }
-
-    for keyword, cats in mood_map.items():
-        if keyword in text:
+    # Mood-based mapping. A keyword must start a word: plain substring matching sent
+    # "победа" to restaurants ("еда"), "заводской" to water ("вод") and "interview" to viewpoints.
+    for keyword, cats in _MOOD_MAP.items():
+        if re.search(r"(?<!\w)" + re.escape(keyword), text):
             categories.extend(cats)
             mood.append(keyword)
 
@@ -270,7 +323,7 @@ def _fallback_intent(message: str) -> ParsedIntent:
         ]
 
     return ParsedIntent(
-        categories=list(set(categories)),
+        categories=list(dict.fromkeys(categories)),  # de-duplicated, in a stable order
         mood=mood,
         original_query=text,
     )
@@ -290,36 +343,37 @@ async def _generate_response(
         for i, p in enumerate(places[:5], 1):
             cats = ", ".join(c.value for c in p.categories)
             dist = f"{p.distance_m:.0f}m" if p.distance_m else "?"
+            # Place names come from OSM/Wikidata/Atlas Obscura/community: also untrusted text
             lines.append(
-                f"{i}. {p.name or 'Unnamed'} [{cats}] — {dist} away, "
+                f"{i}. {sanitize_label(p.name or 'Unnamed', 200)} [{cats}] — {dist} away, "
                 f"confidence: {p.confidence:.2f}"
             )
         places_summary = "\n".join(lines)
 
     lang_name = {"ru": "Russian", "en": "English"}.get(language, language)
 
-    messages = []
-    if history:
-        for h in history[-4:]:
-            messages.append({"role": h.role, "content": h.content})
-
+    messages = _history_messages(history, 4)
     messages.append({
         "role": "user",
         "content": RESPONSE_PROMPT.format(
-            query=query,
+            query_block=fence_untrusted("user_query", query),
             count=len(places),
-            places_summary=places_summary,
+            places_block=fence_untrusted("place_data", places_summary),
             language=lang_name,
         ),
     })
 
     try:
-        return await chat_completion(
+        text = await chat_completion(
             messages=messages,
             system=SYSTEM_PROMPT,
             temperature=0.7,
             max_tokens=800,
         )
+        answer = sanitize_user_input(text, max_length=MAX_RESPONSE_CHARS)
+        if not answer:  # None (OpenAI `content: null`) or blank
+            raise ValueError("the model returned an empty answer")
+        return answer
     except Exception:
         logger.exception("Failed to generate LLM response, using fallback")
         return _fallback_response(places, language)

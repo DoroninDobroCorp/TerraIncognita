@@ -4,10 +4,31 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
 from app.models.place import Coordinates, PlaceCategory
+from app.utils.sanitize import sanitize_url
+
+
+def _check_photo_urls(urls: list[str]) -> list[str]:
+    """Photo URLs are rendered as <img src>/<a href>: only http(s) or relative paths."""
+    clean = []
+    for url in urls:
+        safe = sanitize_url(url)
+        if safe is None:
+            raise ValueError("photo URLs must be http(s) links or relative paths (max 2000 chars)")
+        clean.append(safe)
+    return clean
+
+
+# Request-side field types (stored models stay permissive so old data always loads)
+PhotoUrls = Annotated[list[str], Field(max_length=10), AfterValidator(_check_photo_urls)]
+ShortText = Annotated[str, StringConstraints(max_length=100)]
+Tags = Annotated[list[ShortText], Field(max_length=20)]
+# "January 2026" style label that the UI prints verbatim -> no markup characters
+VisitDate = Annotated[str, StringConstraints(max_length=50, pattern=r"^[\w .,/\-]*$")]
 
 # ── Story 8.1: User-Submitted Places ────────────────────────────
 
@@ -75,6 +96,8 @@ class Review(BaseModel):
     visit_date: str | None = None  # "January 2026" style recency
     upvotes: list[str] = Field(default_factory=list)
     downvotes: list[str] = Field(default_factory=list)
+    # False for extra tips that did not earn karma (so deleting them does not revoke any)
+    karma_awarded: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -144,8 +167,8 @@ class SubmitPlaceRequest(BaseModel):
     categories: list[PlaceCategory] = Field(default_factory=list)
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    photos: list[str] = Field(default_factory=list, max_length=10)
-    tags: list[str] = Field(default_factory=list, max_length=20)
+    photos: PhotoUrls = Field(default_factory=list)
+    tags: Tags = Field(default_factory=list)
     author_id: str = Field(..., min_length=1, max_length=100)
 
 
@@ -177,8 +200,8 @@ class CreateReviewRequest(BaseModel):
     author_id: str = Field(..., min_length=1, max_length=100)
     review_type: ReviewType = ReviewType.REVIEW
     text: str = Field(..., min_length=1, max_length=5000)
-    photos: list[str] = Field(default_factory=list, max_length=10)
-    visit_date: str | None = Field(None, max_length=50)
+    photos: PhotoUrls = Field(default_factory=list)
+    visit_date: VisitDate | None = None
 
 
 class VoteRequest(BaseModel):
@@ -204,10 +227,13 @@ class PublishRouteRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field("", max_length=5000)
     region: str = Field("", max_length=200)
-    waypoint_place_ids: list[str] = Field(..., min_length=2)
-    distance_km: float = Field(0.0, ge=0)
-    duration_hours: float = Field(0.0, ge=0)
-    tags: list[str] = Field(default_factory=list, max_length=20)
+    waypoint_place_ids: list[Annotated[str, StringConstraints(max_length=200)]] = Field(
+        ..., min_length=2, max_length=100
+    )
+    # allow_inf_nan=False: Infinity passes `ge=0`, is stored, then breaks JSON serialisation
+    distance_km: float = Field(0.0, ge=0, le=100_000, allow_inf_nan=False)
+    duration_hours: float = Field(0.0, ge=0, le=10_000, allow_inf_nan=False)
+    tags: Tags = Field(default_factory=list)
 
 
 class RateRouteRequest(BaseModel):
@@ -255,16 +281,16 @@ class UpdatePlaceRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = Field(None, max_length=2000)
     categories: list[PlaceCategory] | None = None
-    photos: list[str] | None = Field(None, max_length=10)
-    tags: list[str] | None = Field(None, max_length=20)
+    photos: PhotoUrls | None = None
+    tags: Tags | None = None
 
 
 class UpdateReviewRequest(BaseModel):
     """PATCH /api/community/reviews/{id} — update a review."""
 
     text: str | None = Field(None, min_length=1, max_length=5000)
-    photos: list[str] | None = Field(None, max_length=10)
-    visit_date: str | None = Field(None, max_length=50)
+    photos: PhotoUrls | None = None
+    visit_date: VisitDate | None = None
 
 
 class PlaceSummary(BaseModel):

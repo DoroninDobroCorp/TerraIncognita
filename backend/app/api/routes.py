@@ -22,10 +22,11 @@ from app.models.route import (
 )
 from app.services.route_builder import build_explore_route, build_route, reorder_waypoints
 from app.services.route_export import export_gpx, export_kml
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["routes"])
+router = APIRouter(prefix="/api", tags=["routes"], route_class=SafeValidationRoute)
 
 
 @router.post("/route", response_model=RouteResponse)

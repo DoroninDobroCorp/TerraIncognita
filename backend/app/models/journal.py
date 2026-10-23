@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import enum
 from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, StringConstraints, model_validator
 
 from app.models.place import Coordinates
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Naive client datetimes are taken as UTC (comparing naive with the aware ``visited_at``
+    raised TypeError -> HTTP 500); aware ones are converted to UTC."""
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]
+ShortTag = Annotated[str, StringConstraints(max_length=100)]
+PhotoRef = Annotated[str, StringConstraints(max_length=2000)]
+PlaceRef = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+# Minutes spent at a place: finite, non-negative, at most a week
+Minutes = Annotated[float, Field(ge=0, le=10_080, allow_inf_nan=False)]
 
 # ── Story 5.1: Visit Tracking ───────────────────────────────────
 
@@ -152,13 +167,13 @@ class TripSummary(BaseModel):
 class CheckInRequest(BaseModel):
     """POST /api/visits — check in at a place."""
 
-    place_id: str
-    place_name: str | None = None
+    place_id: PlaceRef
+    place_name: str | None = Field(None, max_length=300)
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
     status: VisitStatus = VisitStatus.VISITED
-    duration_minutes: float | None = None
-    trip_id: str | None = None
+    duration_minutes: Minutes | None = None
+    trip_id: str | None = Field(None, max_length=100)
 
 
 class ProximityCheckRequest(BaseModel):
@@ -182,8 +197,8 @@ class VisitUpdateRequest(BaseModel):
     """PATCH /api/visits/{id} — update visit details."""
 
     status: VisitStatus | None = None
-    duration_minutes: float | None = None
-    trip_id: str | None = None
+    duration_minutes: Minutes | None = None
+    trip_id: str | None = Field(None, max_length=100)  # "" detaches the visit from its trip
 
 
 class VisitListResponse(BaseModel):
@@ -196,21 +211,21 @@ class VisitListResponse(BaseModel):
 class NoteCreateRequest(BaseModel):
     """POST /api/visits/{id}/notes — add a note."""
 
-    text: str = ""
+    text: str = Field("", max_length=10_000)
     rating: PlaceRating = Field(default_factory=PlaceRating)
-    tags: list[str] = Field(default_factory=list, max_length=50)
-    photos: list[str] = Field(default_factory=list, max_length=20)
-    voice_transcript: str | None = None
+    tags: list[ShortTag] = Field(default_factory=list, max_length=50)
+    photos: list[PhotoRef] = Field(default_factory=list, max_length=20)
+    voice_transcript: str | None = Field(None, max_length=10_000)
 
 
 class NoteUpdateRequest(BaseModel):
     """PATCH /api/notes/{id} — update a note."""
 
-    text: str | None = None
+    text: str | None = Field(None, max_length=10_000)
     rating: PlaceRating | None = None
-    tags: list[str] | None = None
-    photos: list[str] | None = None
-    voice_transcript: str | None = None
+    tags: list[ShortTag] | None = Field(None, max_length=50)
+    photos: list[PhotoRef] | None = Field(None, max_length=20)
+    voice_transcript: str | None = Field(None, max_length=10_000)
 
 
 class NoteListResponse(BaseModel):
@@ -237,18 +252,18 @@ class TripCreateRequest(BaseModel):
     """POST /api/trips — create a trip."""
 
     name: str = Field(..., min_length=1, max_length=200)
-    region: str | None = None
-    start_date: datetime | None = None
-    end_date: datetime | None = None
+    region: str | None = Field(None, max_length=200)
+    start_date: UtcDatetime | None = None
+    end_date: UtcDatetime | None = None
 
 
 class TripUpdateRequest(BaseModel):
     """PATCH /api/trips/{id} — update a trip."""
 
     name: str | None = Field(None, min_length=1, max_length=200)
-    region: str | None = None
-    start_date: datetime | None = None
-    end_date: datetime | None = None
+    region: str | None = Field(None, max_length=200)
+    start_date: UtcDatetime | None = None
+    end_date: UtcDatetime | None = None
 
 
 class TripListResponse(BaseModel):
@@ -281,21 +296,27 @@ class TripExportResponse(BaseModel):
 class TripAutoGroupRequest(BaseModel):
     """POST /api/trips/{id}/auto-group — auto-group visits into this trip."""
 
-    start_date: datetime
-    end_date: datetime
+    start_date: UtcDatetime
+    end_date: UtcDatetime
     region_lat: float | None = Field(None, ge=-90, le=90)
     region_lng: float | None = Field(None, ge=-180, le=180)
     region_radius_km: float | None = Field(None, gt=0, le=500)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> TripAutoGroupRequest:
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must not be before start_date")
+        return self
 
 
 class DwellCheckRequest(BaseModel):
     """POST /api/visits/dwell-check — check if user dwelled long enough to suggest check-in."""
 
-    place_id: str
-    place_name: str | None = None
+    place_id: PlaceRef
+    place_name: str | None = Field(None, max_length=300)
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    dwell_minutes: float = Field(..., gt=0)
+    dwell_minutes: float = Field(..., gt=0, le=10_080, allow_inf_nan=False)
 
 
 class DwellCheckResponse(BaseModel):

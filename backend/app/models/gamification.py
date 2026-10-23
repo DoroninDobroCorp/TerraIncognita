@@ -77,7 +77,7 @@ class FogRegionRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
     radius_km: float = Field(5.0, gt=0, le=50)
-    region_name: str = "custom"
+    region_name: str = Field("custom", max_length=100)
 
 
 # ── Story 6.2: Achievement System ───────────────────────────────
@@ -198,6 +198,8 @@ class XpEvent(BaseModel):
     description: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     visit_id: str | None = None
+    # Idempotency key of the reward ("visit:<place_id>", "streak:<day>"); None for ad-hoc awards
+    ref: str | None = None
 
 
 class XpEventResponse(BaseModel):

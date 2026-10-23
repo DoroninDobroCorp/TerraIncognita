@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.chat import ChatRequest, ChatResponse
 from app.services.llm_discovery import process_chat
+from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(prefix="/api", tags=["chat"], route_class=SafeValidationRoute)
 
 
 @router.post("/chat", response_model=ChatResponse)

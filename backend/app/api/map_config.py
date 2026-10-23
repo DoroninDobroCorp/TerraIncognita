@@ -75,6 +75,9 @@ _CATEGORY_STYLES = {
     "park": CategoryStyle(icon="🌳", label="Park", color="#2ecc71", group="classic"),
     "restaurant_notable": CategoryStyle(icon="🍽️", label="Outstanding Restaurant", color="#ff6b6b", group="notable"),
     "hotel_notable": CategoryStyle(icon="🏨", label="Outstanding Hotel", color="#a29bfe", group="notable"),
+    # Deep-research categories (the UI derives its category list and 'all' filter from here)
+    "culinary": CategoryStyle(icon="🍴", label="Culinary", color="#e17055", group="notable"),
+    "underwater": CategoryStyle(icon="🤿", label="Underwater", color="#0984e3", group="unusual"),
 }
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.community import (
     CommunityPlaceListResponse,
@@ -25,9 +25,36 @@ from app.models.community import (
     UpdateReviewRequest,
     VoteRequest,
 )
-from app.services.community import get_community_service
+from app.services.community import (
+    CapacityError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    QuotaError,
+    get_community_service,
+)
+from app.utils.safe_route import SafeValidationRoute
 
-router = APIRouter(prefix="/api/community", tags=["community"])
+router = APIRouter(prefix="/api/community", tags=["community"], route_class=SafeValidationRoute)
+
+# Shared paging bounds: negative offsets / limits silently slice from the end of the list
+Limit = Query(50, ge=1, le=200)
+Offset = Query(0, ge=0)
+
+
+def _http_error(exc: ValueError) -> HTTPException:
+    """Map the service's refusal to the matching status code (never a bare 500)."""
+    if isinstance(exc, NotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ForbiddenError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, ConflictError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, QuotaError):
+        return HTTPException(status_code=429, detail=str(exc))
+    if isinstance(exc, CapacityError):
+        return HTTPException(status_code=507, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Story 8.1: User-Submitted Places ────────────────────────────
@@ -37,17 +64,19 @@ router = APIRouter(prefix="/api/community", tags=["community"])
 async def submit_place(req: SubmitPlaceRequest):
     """Submit a new place for community review."""
     svc = get_community_service()
-    place = await svc.submit_place(
-        name=req.name,
-        description=req.description,
-        categories=req.categories,
-        lat=req.lat,
-        lng=req.lng,
-        photos=req.photos,
-        tags=req.tags,
-        author_id=req.author_id,
-    )
-    return place
+    try:
+        return await svc.submit_place(
+            name=req.name,
+            description=req.description,
+            categories=req.categories,
+            lat=req.lat,
+            lng=req.lng,
+            photos=req.photos,
+            tags=req.tags,
+            author_id=req.author_id,
+        )
+    except ValueError as e:
+        raise _http_error(e) from e
 
 
 @router.post("/places/{place_id}/confirm")
@@ -57,15 +86,15 @@ async def confirm_place(place_id: str, req: ConfirmPlaceRequest):
     try:
         return await svc.confirm_place(place_id, req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.get("/places", response_model=CommunityPlaceListResponse)
 async def list_places(
     status: ModerationStatus | None = None,
     author_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Limit,
+    offset: int = Offset,
 ):
     """List community-submitted places."""
     svc = get_community_service()
@@ -90,7 +119,7 @@ async def suggest_osm(place_id: str):
     try:
         return await svc.suggest_osm(place_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.patch("/places/{place_id}")
@@ -102,7 +131,7 @@ async def update_place(place_id: str, req: UpdatePlaceRequest, author_id: str = 
     try:
         return await svc.update_place(place_id, author_id, **req.model_dump(exclude_none=True))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.delete("/places/{place_id}")
@@ -115,7 +144,7 @@ async def delete_place(place_id: str, author_id: str = ""):
         await svc.delete_place(place_id, author_id)
         return {"status": "deleted"}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.get("/places/{place_id}/summary", response_model=PlaceSummary)
@@ -140,23 +169,26 @@ async def get_karma(user_id: str):
 async def create_review(place_id: str, req: CreateReviewRequest):
     """Write a review or tip for a place."""
     svc = get_community_service()
-    return await svc.create_review(
-        place_id=place_id,
-        author_id=req.author_id,
-        text=req.text,
-        review_type=req.review_type,
-        photos=req.photos,
-        visit_date=req.visit_date,
-    )
+    try:
+        return await svc.create_review(
+            place_id=place_id,
+            author_id=req.author_id,
+            text=req.text,
+            review_type=req.review_type,
+            photos=req.photos,
+            visit_date=req.visit_date,
+        )
+    except ValueError as e:
+        raise _http_error(e) from e
 
 
 @router.get("/places/{place_id}/reviews", response_model=ReviewListResponse)
 async def list_reviews(
     place_id: str,
     review_type: ReviewType | None = None,
-    sort_by: str = "score",
-    limit: int = 50,
-    offset: int = 0,
+    sort_by: str = Query("score", pattern="^(score|recent)$"),
+    limit: int = Limit,
+    offset: int = Offset,
 ):
     """List reviews for a place, sorted by helpfulness."""
     svc = get_community_service()
@@ -173,7 +205,7 @@ async def vote_review(review_id: str, req: VoteRequest):
     try:
         return await svc.vote_review(review_id, req.user_id, req.upvote)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.patch("/reviews/{review_id}")
@@ -185,7 +217,7 @@ async def update_review(review_id: str, req: UpdateReviewRequest, author_id: str
     try:
         return await svc.update_review(review_id, author_id, **req.model_dump(exclude_none=True))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.delete("/reviews/{review_id}")
@@ -198,7 +230,7 @@ async def delete_review(review_id: str, author_id: str = ""):
         await svc.delete_review(review_id, author_id)
         return {"status": "deleted"}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.post("/reviews/{review_id}/report-outdated")
@@ -208,7 +240,7 @@ async def report_outdated(review_id: str, req: ReportOutdatedRequest):
     try:
         return await svc.report_outdated(review_id, req.user_id, req.reason)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 # ── Story 8.3: Social Routes ────────────────────────────────────
@@ -218,25 +250,28 @@ async def report_outdated(review_id: str, req: ReportOutdatedRequest):
 async def publish_route(req: PublishRouteRequest):
     """Publish a route for the community."""
     svc = get_community_service()
-    return await svc.publish_route(
-        author_id=req.author_id,
-        title=req.title,
-        description=req.description,
-        region=req.region,
-        waypoint_place_ids=req.waypoint_place_ids,
-        distance_km=req.distance_km,
-        duration_hours=req.duration_hours,
-        tags=req.tags,
-    )
+    try:
+        return await svc.publish_route(
+            author_id=req.author_id,
+            title=req.title,
+            description=req.description,
+            region=req.region,
+            waypoint_place_ids=req.waypoint_place_ids,
+            distance_km=req.distance_km,
+            duration_hours=req.duration_hours,
+            tags=req.tags,
+        )
+    except ValueError as e:
+        raise _http_error(e) from e
 
 
 @router.get("/routes", response_model=PublishedRouteListResponse)
 async def list_routes(
     region: str | None = None,
     author_id: str | None = None,
-    sort_by: str = "rating",
-    limit: int = 50,
-    offset: int = 0,
+    sort_by: str = Query("rating", pattern="^(rating|recent)$"),
+    limit: int = Limit,
+    offset: int = Offset,
 ):
     """List published routes, optionally filtered by region."""
     svc = get_community_service()
@@ -263,7 +298,7 @@ async def rate_route(route_id: str, req: RateRouteRequest):
     try:
         return await svc.rate_route(route_id, req.user_id, req.score, req.comment)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 # ── Follow System ────────────────────────────────────────────────
@@ -276,7 +311,7 @@ async def follow_explorer(req: FollowRequest):
     try:
         return await svc.follow(req.follower_id, req.following_id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.post("/follow/consent")
@@ -286,7 +321,7 @@ async def grant_consent(req: ConsentRequest):
     try:
         return await svc.grant_consent(req)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise _http_error(e) from e
 
 
 @router.delete("/follow/{follower_id}/{following_id}")

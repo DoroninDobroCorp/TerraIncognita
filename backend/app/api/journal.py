@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.journal import (
     CheckInRequest,
@@ -28,8 +28,21 @@ from app.models.journal import (
     VisitUpdateRequest,
 )
 from app.services import journal as journal_service
+from app.services.journal import JournalLimitError, TripNotFoundError
+from app.utils.safe_route import SafeValidationRoute
 
-router = APIRouter(prefix="/api", tags=["journal"])
+router = APIRouter(prefix="/api", tags=["journal"], route_class=SafeValidationRoute)
+
+Limit = Query(50, ge=1, le=200)
+Offset = Query(0, ge=0)
+
+
+def _as_http(exc: ValueError) -> HTTPException:
+    if isinstance(exc, TripNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, JournalLimitError):
+        return HTTPException(status_code=507, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
 
 
 # ── Story 5.1: Visit Tracking ───────────────────────────────────
@@ -67,23 +80,26 @@ async def dwell_check(req: DwellCheckRequest) -> DwellCheckResponse:
 @router.post("/visits", response_model=Visit)
 async def create_visit(req: CheckInRequest) -> Visit:
     """Check in at a place (manual or auto-detected)."""
-    return await journal_service.create_visit(
-        place_id=req.place_id,
-        lat=req.lat,
-        lng=req.lng,
-        place_name=req.place_name,
-        status=req.status,
-        duration_minutes=req.duration_minutes,
-        trip_id=req.trip_id,
-    )
+    try:
+        return await journal_service.create_visit(
+            place_id=req.place_id,
+            lat=req.lat,
+            lng=req.lng,
+            place_name=req.place_name,
+            status=req.status,
+            duration_minutes=req.duration_minutes,
+            trip_id=req.trip_id,
+        )
+    except ValueError as exc:
+        raise _as_http(exc) from exc
 
 
 @router.get("/visits", response_model=VisitListResponse)
 async def list_visits(
     status: VisitStatus | None = None,
     trip_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Limit,
+    offset: int = Offset,
 ) -> VisitListResponse:
     """List visits with optional filters."""
     visits, total = await journal_service.list_visits(
@@ -104,12 +120,15 @@ async def get_visit(visit_id: str) -> Visit:
 @router.patch("/visits/{visit_id}", response_model=Visit)
 async def update_visit(visit_id: str, req: VisitUpdateRequest) -> Visit:
     """Update visit status or details."""
-    visit = await journal_service.update_visit(
-        visit_id=visit_id,
-        status=req.status,
-        duration_minutes=req.duration_minutes,
-        trip_id=req.trip_id,
-    )
+    try:
+        visit = await journal_service.update_visit(
+            visit_id=visit_id,
+            status=req.status,
+            duration_minutes=req.duration_minutes,
+            trip_id=req.trip_id,
+        )
+    except ValueError as exc:
+        raise _as_http(exc) from exc
     if not visit:
         raise HTTPException(status_code=404, detail="Visit not found")
     return visit
@@ -130,14 +149,17 @@ async def delete_visit(visit_id: str) -> dict:
 @router.post("/visits/{visit_id}/notes")
 async def create_note(visit_id: str, req: NoteCreateRequest):
     """Add a note to a visit."""
-    note = await journal_service.create_note(
-        visit_id=visit_id,
-        text=req.text,
-        rating=req.rating,
-        tags=req.tags,
-        photos=req.photos,
-        voice_transcript=req.voice_transcript,
-    )
+    try:
+        note = await journal_service.create_note(
+            visit_id=visit_id,
+            text=req.text,
+            rating=req.rating,
+            tags=req.tags,
+            photos=req.photos,
+            voice_transcript=req.voice_transcript,
+        )
+    except ValueError as exc:
+        raise _as_http(exc) from exc
     if not note:
         raise HTTPException(status_code=404, detail="Visit not found")
     return note
@@ -198,16 +220,19 @@ async def get_heatmap() -> HeatmapResponse:
 @router.post("/trips")
 async def create_trip(req: TripCreateRequest):
     """Create a new trip."""
-    return await journal_service.create_trip(
-        name=req.name,
-        region=req.region,
-        start_date=req.start_date,
-        end_date=req.end_date,
-    )
+    try:
+        return await journal_service.create_trip(
+            name=req.name,
+            region=req.region,
+            start_date=req.start_date,
+            end_date=req.end_date,
+        )
+    except ValueError as exc:
+        raise _as_http(exc) from exc
 
 
 @router.get("/trips", response_model=TripListResponse)
-async def list_trips(limit: int = 50, offset: int = 0) -> TripListResponse:
+async def list_trips(limit: int = Limit, offset: int = Offset) -> TripListResponse:
     """List all trips."""
     trips, total = await journal_service.list_trips(limit=limit, offset=offset)
     return TripListResponse(trips=trips, total=total)
