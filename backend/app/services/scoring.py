@@ -220,7 +220,9 @@ PENALTIES: tuple[Penalty, ...] = (
     Penalty("has a Wikipedia article", 0.92,
             lambda c: c.has_wikipedia and (c.sitelinks or 0) < 5),
     Penalty("marked as a tourist attraction", 0.80, lambda c: c.tags.get("tourism") == "attraction"),
-    Penalty("ticketed / commercial", 0.90,
+    Penalty("museum (a managed visitor attraction)", 0.55,
+            lambda c: c.tags.get("tourism") == "museum" or C.MUSEUM in c.cats),
+    Penalty("ticketed / commercial", 0.85,
             lambda c: c.tags.get("fee") == "yes" or bool(c.tags.get("opening_hours"))
             or bool(c.place.metadata.get("opening_hours"))),
     Penalty("ordinary hilltop", 0.70, lambda c: c.tags.get("natural") == "peak"),
@@ -342,16 +344,23 @@ def diversify_by_site(
     chain_radius_m: float = 20_000.0,
     decay: float = 0.6,
     floor: float = 0.3,
+    name_decay: float = 0.8,
+    name_floor: float = 0.5,
 ) -> list[Place]:
     """Re-rank so that parts of one site do not crowd the top of the list.
 
-    ``ranked`` must already be sorted best-first. A place's effective score is
-    ``unusual_score * max(decay ** k, floor)`` where *k* counts higher-ranked places that belong to the same
-    site: within ``site_radius_m`` (the eleven ruined buildings of one fort, a chain of pillboxes)
-    or sharing a distinctive name within ``chain_radius_m`` (twelve segments of one abandoned
-    railway). Nothing is dropped: neighbours sink (never below ``floor`` of their score, so a
-    ruined neighbour still outranks a museum), and unrelated places keep their relative order.
-    Deterministic (ties fall back to the incoming order).
+    ``ranked`` must already be sorted best-first. A place's effective score is its
+    ``unusual_score`` times a factor for each kind of higher-ranked "sibling":
+
+    * *neighbours* within ``site_radius_m`` (the eleven ruined buildings of one fort, a chain of
+      pillboxes): ``max(decay ** k, floor)``;
+    * *namesakes* within ``chain_radius_m`` sharing a distinctive name (twelve segments of one
+      abandoned railway, several pens of one submarine base): the milder
+      ``max(name_decay ** k, name_floor)``.
+
+    Nothing is dropped: siblings sink (never below the floors, so a ruined neighbour still
+    outranks a museum), and unrelated places keep their relative order. Deterministic (ties
+    fall back to the incoming order).
     """
     n = len(ranked)
     if n < 2:
@@ -366,47 +375,54 @@ def diversify_by_site(
     def cell_of(i: int) -> tuple[int, int]:
         return (int(xs[i] // cell), int(ys[i] // cell))
 
-    name_keys = [
+    name_tokens = [
         names.distinctive_tokens(p.name) if not p.metadata.get("name_generated") else frozenset()
         for p in ranked
     ]
     grid: dict[tuple[int, int], list[int]] = {}
-    by_name: dict[frozenset[str], list[int]] = {}
+    by_token: dict[str, list[int]] = {}  # distinctive name token → selected places carrying it
 
-    def crowding(i: int) -> int:
+    def close(i: int, j: int, limit: float) -> bool:
+        return haversine_distance_m(
+            ranked[i].coordinates.lat, ranked[i].coordinates.lng,
+            ranked[j].coordinates.lat, ranked[j].coordinates.lng,
+        ) <= limit
+
+    def crowding(i: int) -> tuple[int, int]:
+        """(selected neighbours within the site radius, selected namesakes elsewhere in the region)"""
         cx, cy = cell_of(i)
         near: set[int] = set()
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
-                for j in grid.get((cx + dx, cy + dy), ()):
-                    if haversine_distance_m(
-                        ranked[i].coordinates.lat, ranked[i].coordinates.lng,
-                        ranked[j].coordinates.lat, ranked[j].coordinates.lng,
-                    ) <= site_radius_m:
-                        near.add(j)
-        if name_keys[i]:
-            for j in by_name.get(name_keys[i], ()):
-                if haversine_distance_m(
-                    ranked[i].coordinates.lat, ranked[i].coordinates.lng,
-                    ranked[j].coordinates.lat, ranked[j].coordinates.lng,
-                ) <= chain_radius_m:
-                    near.add(j)
-        return len(near)
+                near.update(j for j in grid.get((cx + dx, cy + dy), ()) if close(i, j, site_radius_m))
+        siblings = {j for token in name_tokens[i] for j in by_token.get(token, ())} - near
+        namesakes = {
+            j for j in siblings
+            if names.token_similarity(name_tokens[i], name_tokens[j]) >= names.STRONG_MATCH
+            and close(i, j, chain_radius_m)
+        }
+        return len(near), len(namesakes)
 
-    # Lazy greedy selection: a candidate's effective score only ever drops as neighbours are
+    def effective(i: int, crowd: tuple[int, int]) -> float:
+        return (
+            ranked[i].unusual_score
+            * max(decay ** crowd[0], floor)
+            * max(name_decay ** crowd[1], name_floor)
+        )
+
+    # Lazy greedy selection: a candidate's effective score only ever drops as siblings are
     # selected, so a stale heap entry is re-checked on pop and pushed back if it got worse.
-    heap = [(-p.unusual_score, i, 0) for i, p in enumerate(ranked)]
+    heap = [(-p.unusual_score, i, (0, 0)) for i, p in enumerate(ranked)]
     heapq.heapify(heap)
     out: list[Place] = []
     while heap:
-        neg_eff, i, k_seen = heapq.heappop(heap)
-        k = crowding(i)
-        if k != k_seen:
-            eff = ranked[i].unusual_score * max(decay**k, floor)
-            heapq.heappush(heap, (-eff, i, k))
+        _, i, seen = heapq.heappop(heap)
+        crowd = crowding(i)
+        if crowd != seen:
+            heapq.heappush(heap, (-effective(i, crowd), i, crowd))
             continue
         out.append(ranked[i])
         grid.setdefault(cell_of(i), []).append(i)
-        if name_keys[i]:
-            by_name.setdefault(name_keys[i], []).append(i)
+        for token in name_tokens[i]:
+            by_token.setdefault(token, []).append(i)
     return out

@@ -13,6 +13,9 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 
+STRONG_MATCH = 0.75  # token overlap at which two names count as "the same name"
+WEAK_MATCH = 0.40  # …and at which they at least overlap
+
 # Cyrillic → ASCII. Deliberately simple; fuzzy token matching absorbs scheme differences
 # (Serbian "ш" → "sh" vs Latin "š" → "s" still match at ratio > 0.8).
 _CYRILLIC = {
@@ -45,7 +48,7 @@ building house kuca factory fabrika zavod plant mill station stanica stazione ra
 bridge most hotel restaurant cafe bar pub
 memorial monument spomenik pamyatnik
 park garden viewpoint lookout island otok ostrvo complex kompleks site area base barracks
-kasarna military vojni vojna object objekat
+kasarna military vojni vojna object objekat entrance shaft
 """.split())
 
 
@@ -70,9 +73,20 @@ def tokens(name: str | None) -> list[str]:
     return _WORD.findall(fold(name))
 
 
+def _is_generic_word(token: str) -> bool:
+    if token in _GENERIC_WORDS:
+        return True
+    # plurals: "bunkers", "churches"
+    return (token.endswith("s") and token[:-1] in _GENERIC_WORDS) or (
+        token.endswith("es") and token[:-2] in _GENERIC_WORDS
+    )
+
+
 def distinctive_tokens(name: str | None) -> frozenset[str]:
     """Tokens that identify the place (numbers included), without type words and articles."""
-    return frozenset(t for t in tokens(name) if t.isdigit() or (t not in _GENERIC_WORDS and len(t) > 1))
+    return frozenset(
+        t for t in tokens(name) if t.isdigit() or (len(t) > 1 and not _is_generic_word(t))
+    )
 
 
 def is_generic_name(name: str | None) -> bool:

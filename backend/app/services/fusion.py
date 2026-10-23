@@ -31,8 +31,8 @@ from app.utils.geo import haversine_distance_m
 
 logger = logging.getLogger(__name__)
 
-STRONG_NAME_MATCH = 0.75  # token overlap at which two names are "the same name"
-WEAK_NAME_MATCH = 0.40  # …and at which they at least overlap
+STRONG_NAME_MATCH = names.STRONG_MATCH
+WEAK_NAME_MATCH = names.WEAK_MATCH
 SAME_POINT_M = 3.0  # coordinates this close are one object, whatever the names say
 WIKIDATA_MATCH_M = 500.0  # same Wikidata id: coordinates of big objects can disagree this much
 _MAX_REASONS = 5
@@ -55,7 +55,7 @@ _COORDINATE_RANK: dict[PlaceSource, int] = {
 @dataclass
 class _Entry:
     place: Place
-    tokens: frozenset[str]  # distinctive name tokens; empty when unnamed / generic
+    variants: list[frozenset[str]]  # distinctive tokens of each known name; empty = unnamed / generic
     sources: frozenset[PlaceSource]
     wikidata_id: str | None
     x: float = 0.0
@@ -71,10 +71,33 @@ def _wikidata_id(p: Place) -> str | None:
     return None
 
 
+_NAME_METADATA_KEYS = ("name_en", "name_ru", "name_local")
+
+
+def _name_variants(p: Place) -> list[frozenset[str]]:
+    """Distinctive tokens of the name and its known translations / alternates.
+
+    A place called "Вход в катакомбы" (name:en "Catacombs entrance") must still match Atlas
+    Obscura's "Odesa Catacombs"; generated names ("Abandoned building") identify nothing.
+    """
+    if p.metadata.get("name_generated"):
+        return []
+    candidates: list[Any] = [p.name, *(p.metadata.get(k) for k in _NAME_METADATA_KEYS)]
+    alternates = p.metadata.get("alt_names")
+    if isinstance(alternates, list):
+        candidates += alternates[:6]
+    sets = (names.distinctive_tokens(c) for c in candidates if isinstance(c, str))
+    return list(dict.fromkeys(t for t in sets if t))
+
+
 def _make_entry(p: Place) -> _Entry:
-    generated = bool(p.metadata.get("name_generated"))
-    tokens = frozenset() if generated else names.distinctive_tokens(p.name)
-    return _Entry(p, tokens, frozenset({p.source, *p.sources}), _wikidata_id(p))
+    return _Entry(p, _name_variants(p), frozenset({p.source, *p.sources}), _wikidata_id(p))
+
+
+def _name_similarity(a: _Entry, b: _Entry) -> float:
+    return max(
+        (names.token_similarity(x, y) for x in a.variants for y in b.variants), default=0.0
+    )
 
 
 def _categories_compatible(a: Place, b: Place) -> bool:
@@ -97,8 +120,8 @@ def _same_place(a: _Entry, b: _Entry, threshold: float, name_range: float) -> bo
     if d > far:
         return False
 
-    if a.tokens and b.tokens:
-        sim = names.token_similarity(a.tokens, b.tokens)
+    if a.variants and b.variants:
+        sim = _name_similarity(a, b)
         if sim >= STRONG_NAME_MATCH:
             return True
         if d > threshold:

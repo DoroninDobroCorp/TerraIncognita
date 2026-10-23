@@ -44,6 +44,8 @@ def test_tokens_split_on_punctuation_and_keep_unicode_words():
     ("Bunker 7", {"7"}),
     ("St. Nicholas Church", {"nicholas"}),
     ("Заброшенный завод", {"zabroshenniy"}),
+    ("Yugoslav Bunkers", {"yugoslav"}),   # plurals of type words are still type words
+    ("Churches of Kotor", {"kotor"}),
     ("X", set()),  # single letters carry no identity
     (None, set()),
 ])

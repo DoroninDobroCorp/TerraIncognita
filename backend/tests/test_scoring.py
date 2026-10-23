@@ -324,8 +324,8 @@ def test_diversify_keeps_unrelated_places_in_score_order():
 def test_diversify_groups_a_named_chain_over_kilometres():
     # twelve segments of one abandoned railway, ~800 m apart (9 km in all), vs. two unrelated gems
     line = [_scored(f"seg{i}", 0.75, 42.40 + i * 0.007, 18.5, name="Dalmatinerbahn") for i in range(12)]
-    gems = [_scored("g1", 0.60, 43.0, 19.0, name="Cave of Winds"),
-            _scored("g2", 0.58, 43.1, 19.1, name="Hidden Bunker Zeta")]
+    gems = [_scored("g1", 0.70, 43.0, 19.0, name="Cave of Winds"),
+            _scored("g2", 0.66, 43.1, 19.1, name="Hidden Bunker Zeta")]
     ranked = sorted([*line, *gems], key=unusual_sort_key)
     top3 = {p.id for p in diversify_by_site(ranked)[:3]}
     assert "g1" in top3 and "g2" in top3
@@ -355,3 +355,31 @@ def test_diversify_does_not_mutate_inputs():
     before = [(p.id, p.unusual_score) for p in ranked]
     diversify_by_site(ranked)
     assert [(p.id, p.unusual_score) for p in ranked] == before
+
+
+def test_namesakes_sink_less_than_neighbours():
+    leader = _scored("a", 0.8, 42.4, 18.5, name="Fort Zeta")
+    namesake = _scored("b", 0.8, 42.5, 18.6, name="Zeta Fort")        # 13 km away, same name
+    neighbour = _scored("c", 0.8, 42.4003, 18.5, name="Something Else")  # 33 m away
+    stranger = _scored("d", 0.5, 43.5, 19.5, name="Unrelated Gem")
+    out = [p.id for p in diversify_by_site([leader, namesake, neighbour, stranger])]
+    # namesake keeps 0.8 * 0.8 = 0.64, neighbour drops to 0.8 * 0.6 = 0.48 < stranger 0.5
+    assert out == ["a", "b", "d", "c"]
+
+
+def test_partial_name_overlap_still_groups_a_line():
+    segments = [
+        _scored("s1", 0.74, 42.40, 18.50, name="Dalmatinerbahn"),
+        _scored("s2", 0.74, 42.41, 18.51, name="Stari železnički most (Dalmatinerbahn)"),
+    ]
+    other = _scored("g", 0.62, 43.0, 19.0, name="Cave of Winds")
+    assert [p.id for p in diversify_by_site([*segments, other])] == ["s1", "g", "s2"]
+
+
+def test_museums_are_penalised_even_with_a_rare_underlying_category():
+    mine_museum = osm_place({"tourism": "museum", "historic": "mine", "name": "Kopalnia (skansen)",
+                             "fee": "yes", "opening_hours": "Tu-Su 09:00-16:00"})
+    real_mine = osm_place({"historic": "mine", "name": "Stara kopalnia"})
+    a, b = score_place(mine_museum), score_place(real_mine)
+    assert a.score < 0.4 < b.score
+    assert "museum (a managed visitor attraction)" in a.penalties

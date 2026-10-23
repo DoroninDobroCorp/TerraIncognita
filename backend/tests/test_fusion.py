@@ -392,3 +392,38 @@ class TestMergeKeepsEverything:
         generated = make("b", "Bunker", description="d", metadata={"name_generated": True}, north=999)
         n, g = fuse_places([[named, generated]])
         assert g.confidence < n.confidence
+
+
+class TestNameVariants:
+    CAVE = PlaceCategory.CAVE
+
+    def test_translated_name_in_metadata_bridges_scripts(self):
+        osm = make("osm_1", "Вход в катакомбы", categories=[self.CAVE],
+                   metadata={"name_en": "Catacombs entrance"})
+        atlas = make("atlas_1", "Odesa Catacombs", north=9, source=PlaceSource.ATLAS_OBSCURA,
+                     categories=[UND, self.CAVE])
+        assert len(fuse_places([[osm], [atlas]])) == 1
+
+    def test_negative_control_without_the_translation_they_stay_apart(self):
+        osm = make("osm_1", "Вход в катакомбы", categories=[self.CAVE])
+        atlas = make("atlas_1", "Odesa Catacombs", north=9, source=PlaceSource.ATLAS_OBSCURA,
+                     categories=[UND, self.CAVE])
+        assert len(fuse_places([[osm], [atlas]])) == 2
+
+    def test_alt_names_count_too(self):
+        osm = make("osm_1", "Tvrđava", metadata={"alt_names": ["Fort Arza"]})
+        other = make("wiki_1", "Arza Fort", north=60, source=PlaceSource.WIKIDATA)
+        assert len(fuse_places([[osm], [other]])) == 1
+
+    def test_generated_names_are_never_used_for_matching(self):
+        a = make("osm_1", "Abandoned building", metadata={"name_generated": True,
+                                                         "name_en": "Abandoned building"})
+        b = make("osm_2", "Abandoned building", north=20, metadata={"name_generated": True})
+        assert len(fuse_places([[a, b]])) == 2
+
+    def test_merged_place_keeps_every_name(self):
+        osm = make("osm_1", "Вход в катакомбы", metadata={"name_en": "Catacombs entrance"})
+        atlas = make("atlas_1", "Odesa Catacombs", north=2, source=PlaceSource.ATLAS_OBSCURA)
+        [m] = fuse_places([[osm], [atlas]])
+        assert m.metadata["name_en"] == "Catacombs entrance"
+        assert {m.name, *m.metadata["alt_names"]} == {"Вход в катакомбы", "Odesa Catacombs"}
