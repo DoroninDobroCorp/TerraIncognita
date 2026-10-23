@@ -42,7 +42,7 @@ cd backend && pip install -e ".[dev]"      # add ".[openai]" if you use TERRA_LL
 - The LLM token counter lives in `cache/llm_state/usage.json`. Keep the `cache/` volume persistent if you rely
   on the daily cap across restarts.
 - If a store file cannot be read, it is moved aside as `<name>.corrupt-<UTC time>` (or, when only some records
-  are invalid, copied), and the log says so. Look for such files after the first start and keep them until you
+  are invalid, copied once per distinct content as `<name>.corrupt-<UTC time>-<hash>`), and the log says so. Look for such files after the first start and keep them until you
   have checked that nothing you need is in them.
 - `/data` now serves `*.geojson` only. If you relied on fetching other files from it, serve them yourself.
 
@@ -56,7 +56,10 @@ cd backend && pip install -e ".[dev]"      # add ".[openai]" if you use TERRA_LL
   streak bonus once per day. Events recorded before the upgrade carry no such key, so each place you had
   already visited can pay its visit XP one more time on the next check-in.
 - A place that you marked *want to visit* and later change to *visited* now pays XP and reveals fog like a
-  fresh check-in.
+  fresh check-in. Its visit time becomes the moment you marked it, not the day you planned it.
+- Trips: a visit that an old version had moved from one trip to another was still listed in both. On the first start the
+  trip lists are made to agree with each visit's own trip (no data is deleted: the visits stay, only the duplicate
+  listing goes).
 - Two historical layers were removed: Esri "World Topo (Historic)" (it was not a historical map) and
   OpenHistoricalMap (its raster tile host `tile.openhistoricalmap.org` no longer exists). The historical
   overlay is Old World Maps.

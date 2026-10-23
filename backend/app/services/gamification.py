@@ -670,6 +670,9 @@ async def check_achievements(
 
     # Compute current stats
     visited = [v for v in visits if v.status == VisitStatus.VISITED]
+    # Notes on places that were only planned or skipped are not evidence of having been anywhere.
+    visited_ids = {v.id for v in visited}
+    notes = [n for n in notes if n.visit_id in visited_ids]
     # Places, not check-ins: ten check-ins at one place are one place.
     total_visits = len({v.place_id for v in visited})
     fog_area = _fog_area_km2

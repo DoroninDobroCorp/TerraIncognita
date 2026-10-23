@@ -160,7 +160,8 @@ class CachePlacesRequest(BaseModel):
     route_id: str | None = Field(
         None,
         pattern=r"^[A-Za-z0-9_-]{1,64}$",
-        description="Cache all places from a planned route",
+        description="Cache all places of a route saved as data/routes/<id>.json (the app does not write such files "
+        "itself yet; 404 when there is none)",
     )
 
 

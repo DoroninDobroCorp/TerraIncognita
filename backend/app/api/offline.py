@@ -150,10 +150,17 @@ async def cache_places(req: CachePlacesRequest):
 
     # A place's id depends on which sources answered. When a better-ranked source joins a place we
     # cached earlier under another id, that older entry is the same place: replace it.
+    # Ids of Deep Research and Atlas entries derive from the name alone ("Old Mill" in two towns share one), so an
+    # entry is replaced only when it lies where the merged place does.
+    same_place_m = max(settings.dedup_distance_meters, settings.dedup_name_match_distance_meters)
     for place in places:
         for old_id in place.metadata.get("merged_ids", ()):
             try:
-                await offline_manager.delete_cached_place(old_id)
+                old = await offline_manager.get_cached_place(old_id)
+                if old is not None and _haversine(
+                    old.place.coordinates.lat, old.place.coordinates.lng, place.coordinates.lat, place.coordinates.lng
+                ) <= same_place_m:
+                    await offline_manager.delete_cached_place(old_id)
             except ValueError:
                 continue  # not a safe id: it could never have been cached
 

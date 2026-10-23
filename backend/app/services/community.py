@@ -462,6 +462,8 @@ class CommunityService:
                     continue
                 if key in ("name", "description"):
                     val = sanitize_user_input(val)
+                    if key == "name" and not val:
+                        raise ValueError("Place name must not be empty")
                 elif key == "tags":
                     val = [sanitize_user_input(t) for t in val]
                 elif key == "photos":
@@ -673,6 +675,8 @@ class CommunityService:
                     continue
                 if key == "text":
                     val = sanitize_user_input(val)
+                    if not val and review.review_type == ReviewType.REVIEW:
+                        raise ValueError("Review text must not be empty")
                 elif key == "photos":
                     val = _clean_photos(val)
                 elif key == "visit_date":

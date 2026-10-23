@@ -117,10 +117,22 @@ def _load_store() -> None:
     visits = load_model_records(data_dir / "visits.json", Visit)
     notes = load_model_records(data_dir / "notes.json", PlaceNote)
     trips = load_model_records(data_dir / "trips.json", Trip)
+    _repair_trip_links(visits, trips)
     _visits.update(visits)
     _notes.update(notes)
     _trips.update(trips)
     _loaded = True
+
+
+def _repair_trip_links(visits: dict[str, Visit], trips: dict[str, Trip]) -> None:
+    """Make ``Trip.visit_ids`` agree with ``Visit.trip_id`` (each visit belongs to the trip it names).
+
+    Before the regroup fix a visit moved into another trip stayed in the old trip's list as well, so it was
+    counted and exported twice; deleting visits also left ids of visits that no longer exist."""
+    for trip in trips.values():
+        kept = [vid for vid in dict.fromkeys(trip.visit_ids) if vid in visits and visits[vid].trip_id == trip.id]
+        if kept != trip.visit_ids:
+            trip.visit_ids = kept
 
 
 def _ensure_loaded() -> None:
@@ -298,6 +310,8 @@ async def update_visit(
         raise TripNotFoundError(f"Trip {trip_id} not found")
 
     became_visited = status == VisitStatus.VISITED and visit.status != VisitStatus.VISITED
+    if became_visited:
+        visit.visited_at = datetime.now(UTC)  # the stamp of a planned visit says when it was planned
     if status is not None:
         visit.status = status
     if duration_minutes is not None:
@@ -608,10 +622,13 @@ def _compute_surprises(top_n: int = 5) -> list[SurprisePlace]:
         if note.rating.average > 0:
             place_notes[note.place_id].append(note)
 
+    first_visit: dict[str, Visit] = {}
+    for v in _visits.values():
+        first_visit.setdefault(v.place_id, v)
     for place_id, notes in place_notes.items():
         avg_rating = sum(n.rating.average for n in notes) / len(notes)
         # Find visit for expected score (use confidence or default 2.5)
-        visit = next((v for v in _visits.values() if v.place_id == place_id), None)
+        visit = first_visit.get(place_id)
         expected = 2.5  # default expected
         place_name = visit.place_name if visit else None
         delta = abs(avg_rating - expected)
@@ -675,7 +692,7 @@ async def create_trip(
     )
     _trips[trip_id] = trip
     _save_trips()
-    logger.info("Created trip %s: %s", trip_id, name)
+    logger.info("Created trip %s: %r", trip_id, name)
     return trip
 
 

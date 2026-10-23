@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import atexit
+import errno
+import hashlib
 import json
 import logging
 import os
@@ -51,8 +53,11 @@ def atomic_write_text(path: Path, data: str) -> None:
             f.flush()
             try:
                 os.fsync(f.fileno())
-            except OSError:  # pragma: no cover - fsync unsupported on some filesystems
-                pass
+            except OSError as exc:
+                # Only "this filesystem cannot fsync" is ignorable; EIO/ENOSPC/EDQUOT mean the data is not safe,
+                # and replacing the only good copy with it would lose both.
+                if exc.errno not in (errno.EINVAL, errno.ENOTSUP, errno.EROFS):
+                    raise
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -78,6 +83,13 @@ def quarantine_corrupt(path: Path, reason: str, *, keep_original: bool = False) 
     backup = path.with_name(f"{path.name}.corrupt-{stamp}")
     try:
         if keep_original:
+            # A copy is made again on every start (and on every retry of a failed load) while the file stays in
+            # place: one backup per distinct content is enough, not a full copy per attempt.
+            digest = hashlib.sha1(path.read_bytes()).hexdigest()[:12]  # noqa: S324 - a name, not security
+            known = next(iter(path.parent.glob(f"{path.name}.corrupt-*-{digest}")), None)
+            if known is not None:
+                return known
+            backup = path.with_name(f"{path.name}.corrupt-{stamp}-{digest}")
             shutil.copy2(path, backup)
         else:
             os.replace(path, backup)
