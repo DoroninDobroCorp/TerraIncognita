@@ -56,9 +56,7 @@ async def discover(req: DiscoverRequest) -> DiscoverResponse:
 
     # 1. Concurrent source queries. Looked up at call time so tests can swap the singletons.
     sources = (("osm", _osm), ("atlas", _atlas), ("wiki", _wiki), ("deep_research", _deep))
-    outcomes = await asyncio.gather(
-        *(_query_source(name, src, req.lat, req.lng, req.radius_km) for name, src in sources)
-    )
+    outcomes = await _gather_sources(sources, req)
     results = [places for places, _ in outcomes]
     source_status = {name: status for (name, _), (_, status) in zip(sources, outcomes, strict=True)}
 
@@ -146,6 +144,41 @@ async def discover_places_from_sources(
         categories=wanted, limit=settings.max_limit,
     )
     return (await discover(req)).places
+
+
+# Sources that missed the response deadline keep running here so their results land in the
+# disk caches; the next request for the same area is then fast. Strong refs: the loop only
+# keeps weak ones, and a garbage-collected task would be cancelled mid-flight.
+_background_tasks: set[asyncio.Task] = set()
+
+
+async def _gather_sources(sources, req: DiscoverRequest) -> list[tuple[list[Place], str]]:
+    """Query all sources concurrently, but don't let the slowest one hold the answer hostage.
+
+    Waits up to ``discovery_deadline_seconds`` for everyone. If that passes and at least one
+    source has produced places, those are returned and the stragglers are reported as
+    ``timeout`` while they finish in the background. If nothing has produced places yet we
+    keep waiting for the first source that does (or for all of them to give up) — an empty
+    answer helps nobody.
+    """
+    tasks = [
+        asyncio.ensure_future(_query_source(name, src, req.lat, req.lng, req.radius_km))
+        for name, src in sources
+    ]
+    _, pending = await asyncio.wait(tasks, timeout=settings.discovery_deadline_seconds)
+    while pending and not any(t.done() and t.result()[0] for t in tasks):
+        _, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+    outcomes: list[tuple[list[Place], str]] = []
+    for task in tasks:
+        if task in pending:
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+            outcomes.append(([], STATUS_TIMEOUT))
+        else:
+            outcomes.append(task.result())
+    if pending:
+        logger.info("Answering without %d slow source(s); they continue in the background", len(pending))
+    return outcomes
 
 
 async def _query_source(

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     dedup_name_match_distance_meters: float = 150.0
 
     # Discovery pipeline
+    discovery_deadline_seconds: float = 25.0  # answer with what has arrived by then; slow sources keep warming the cache
     discovery_source_timeout_seconds: float = 75.0  # per-source budget; a slow source is reported as "timeout"
 
     # Explorer Journal (Epic 5)
