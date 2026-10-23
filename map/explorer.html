@@ -1250,14 +1250,24 @@ map.on('click', 'unclustered-bg', e => {
   // Show popup
   const catDef = CATEGORIES[props.category] || CATEGORIES.landmark;
   const distText = props.distance > 0 ? `${(props.distance / 1000).toFixed(1)} km away` : '';
+  // Built with DOM APIs: place names come from third-party data and must not be parsed as HTML.
+  const popupEl = document.createElement('div');
+  const addPopupLine = (cls, text) => {
+    const line = document.createElement('div');
+    line.className = cls;
+    line.textContent = text;
+    popupEl.appendChild(line);
+    return line;
+  };
+  addPopupLine('popup-title', props.inFog === true || props.inFog === 'true'
+    ? '❓ Mystery Place' : (catDef.icon + ' ' + props.name));
+  addPopupLine('popup-cat', catDef.label);
+  if (distText) addPopupLine('popup-dist', `📏 ${distText}`);
+  addPopupLine('popup-more', 'Show details →')
+    .addEventListener('click', () => showPlaceCard(props.id));
   new maplibregl.Popup({ offset: 15, maxWidth: '250px' })
     .setLngLat(coords)
-    .setHTML(`
-      <div class="popup-title">${props.inFog === true || props.inFog === 'true' ? '❓ Mystery Place' : (catDef.icon + ' ' + props.name)}</div>
-      <div class="popup-cat">${catDef.label}</div>
-      ${distText ? `<div class="popup-dist">📏 ${distText}</div>` : ''}
-      <div class="popup-more" onclick="showPlaceCard('${props.id}')">Show details →</div>
-    `)
+    .setDOMContent(popupEl)
     .addTo(map);
 });
 

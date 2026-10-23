@@ -265,10 +265,9 @@ _CONNECT_HOSTS = (
 # 'unsafe-inline'. The three legacy pages (explorer/index/debug.html) still carry one inline
 # <script> block each; they are allowed by hash instead. backend/tests/test_map_assets.py
 # recomputes these hashes, so editing one of those blocks fails the test until this list is
-# updated. (explorer.html's popup "Show details" link is an inline onclick in a runtime
-# template and is therefore blocked — it cannot be hash-allowed.)
+# updated.
 _LEGACY_INLINE_SCRIPT_HASHES = (
-    "'sha256-VxhZlUWqYg09e3PuYxidWhNzgtCjF/cHH/emL0bYEmY='",  # map/explorer.html
+    "'sha256-YXOtHXWMnrhorRKpzhDpo5cuU0LWtdUG8Dyi4w3WYrY='",  # map/explorer.html
     "'sha256-KrR/MfVPb3/O9bqsYx0jP7ekZ2bWxAY9I9QYz0ZKpf4='",  # map/index.html
     "'sha256-GvjjD+oQ0458JuVUf5MygZK9je1zL4KR7YQAInG6HGA='",  # map/debug.html
 )
