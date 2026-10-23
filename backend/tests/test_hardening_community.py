@@ -349,3 +349,39 @@ class TestLogForging:
         messages = [r.getMessage() for r in caplog.records if r.name.startswith("app.services.community")]
         assert messages
         assert not [m for m in messages if "\n" in m], messages
+
+
+class TestFollowKeysWithColons:
+    """User ids are free text; 'team:alice' -> 'bob' and 'team' -> 'alice:bob' are different pairs."""
+
+    async def test_colliding_looking_pairs_are_independent(self, svc):
+        first = await svc.follow("team:alice", "bob")
+        second = await svc.follow("team", "alice:bob")
+        assert first.follower_id == "team:alice" and second.follower_id == "team"
+        assert len(await svc.get_following("team")) == 1
+        assert len(await svc.get_following("team:alice")) == 1
+
+    async def test_consent_for_one_pair_does_not_leak_to_the_other(self, svc):
+        from app.models.community import ConsentRequest
+
+        await svc.follow("team:alice", "bob")
+        await svc.follow("team", "alice:bob")
+        await svc.grant_consent(ConsentRequest(user_id="alice:bob", follower_id="team", consent=True))
+        assert (await svc.get_following("team"))[0].consent_given is True
+        assert (await svc.get_following("team:alice"))[0].consent_given is False
+
+    async def test_unfollowing_a_pair_that_does_not_exist_removes_nothing(self, svc):
+        await svc.follow("team:alice", "bob")
+        await svc.unfollow("team", "alice:bob")
+        assert len(await svc.get_following("team:alice")) == 1
+
+    async def test_follows_saved_with_the_old_key_scheme_are_found_after_reload(self, tmp_path):
+        import json
+
+        old = {"a:b": {"follower_id": "a", "following_id": "b", "consent_given": True,
+                       "created_at": "2026-01-01T00:00:00+00:00"}}
+        (tmp_path / "follows.json").write_text(json.dumps(old))
+        svc = CommunityService(data_dir=str(tmp_path))
+        assert (await svc.get_following("a"))[0].consent_given is True
+        await svc.unfollow("a", "b")
+        assert await svc.get_following("a") == []

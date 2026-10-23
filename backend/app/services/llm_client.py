@@ -50,13 +50,25 @@ def _daily_state() -> dict[str, Any]:
     """Today's counters, loading from disk on first use and rolling over at UTC midnight."""
     global _daily
     if not _daily["date"]:
-        try:
-            _daily = json.loads(_daily_usage_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            _daily = {"date": "", "input": 0, "output": 0}
+        _daily = _load_daily_file()
     if _daily.get("date") != _today():
         _daily = {"date": _today(), "input": 0, "output": 0}
     return _daily
+
+
+def _load_daily_file() -> dict[str, Any]:
+    """Counters persisted by an earlier process; anything malformed counts as a fresh start."""
+    fresh: dict[str, Any] = {"date": "", "input": 0, "output": 0}
+    try:
+        data = json.loads(_daily_usage_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return fresh
+    if not isinstance(data, dict) or not isinstance(data.get("date"), str):
+        return fresh
+    counts = (data.get("input"), data.get("output"))
+    if not all(isinstance(c, int) and not isinstance(c, bool) and c >= 0 for c in counts):
+        return fresh
+    return {"date": data["date"], "input": counts[0], "output": counts[1]}
 
 
 def daily_tokens_used() -> int:
@@ -120,7 +132,9 @@ def _get_openai_client():
         import openai
         if not settings.openai_api_key:
             raise ValueError("TERRA_OPENAI_API_KEY is not set")
-        _openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+        _openai_client = openai.AsyncOpenAI(
+            api_key=settings.openai_api_key, timeout=settings.llm_timeout
+        )
     return _openai_client
 
 
@@ -150,13 +164,53 @@ def _record_failure() -> None:
         )
 
 
+# Adaptive thinking is on by default on current Claude models and its tokens count against
+# ``max_tokens``; without headroom a small cap (e.g. 256 for classification) can be spent
+# entirely on thinking and leave no answer. Unused headroom costs nothing.
+_THINKING_HEADROOM_TOKENS = 1024
+
+
+def _anthropic_request(
+    messages: list[dict[str, str]], system: str | None, max_tokens: int | None
+) -> dict[str, Any]:
+    """Keyword arguments for ``messages.create``.
+
+    No sampling parameters: current Claude models reject ``temperature``/``top_p``/``top_k``
+    (and the SDK no longer accepts them), so the ``temperature`` a caller passes to
+    :func:`chat_completion` only applies to the OpenAI path.
+    """
+    kwargs: dict[str, Any] = {
+        "model": settings.llm_model,
+        "max_tokens": (max_tokens or settings.llm_max_tokens) + _THINKING_HEADROOM_TOKENS,
+        "messages": messages,
+    }
+    if system:
+        kwargs["system"] = system
+    if settings.llm_effort:
+        kwargs["output_config"] = {"effort": settings.llm_effort}
+    return kwargs
+
+
+def _response_text(response: Any) -> str:
+    """The answer text: all ``text`` blocks, skipping thinking blocks that may come first."""
+    text = "".join(
+        block.text for block in response.content
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    )
+    if not text.strip():
+        raise ValueError(f"LLM returned no text (stop_reason={getattr(response, 'stop_reason', None)})")
+    return text
+
+
 async def chat_completion(
     messages: list[dict[str, str]],
     system: str | None = None,
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> str:
-    """Send messages to LLM (Anthropic or OpenAI) and return the text response."""
+    """Send messages to LLM (Anthropic or OpenAI) and return the text response.
+
+    ``temperature`` is honoured on the OpenAI path only (see :func:`_anthropic_request`)."""
     _check_circuit_breaker()
     if budget_exhausted():
         raise LLMBudgetError(
@@ -169,15 +223,7 @@ async def chat_completion(
         return await _openai_completion(messages, system, temperature, max_tokens)
 
     client = _get_client()
-    kwargs: dict[str, Any] = {
-        "model": settings.llm_model,
-        "max_tokens": max_tokens or settings.llm_max_tokens,
-        "messages": messages,
-    }
-    if system:
-        kwargs["system"] = system
-    if temperature is not None:
-        kwargs["temperature"] = temperature
+    kwargs = _anthropic_request(messages, system, max_tokens)
 
     try:
         response = await client.messages.create(**kwargs)
@@ -192,7 +238,7 @@ async def chat_completion(
                 _total_input_tokens, _total_output_tokens,
             )
 
-        return response.content[0].text
+        return _response_text(response)
     except anthropic.APIError as e:
         _record_failure()
         logger.error("Anthropic API error: %s", e)

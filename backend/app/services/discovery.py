@@ -16,7 +16,6 @@ from app.models.place import (
     DiscoverRequest,
     DiscoverResponse,
     Place,
-    PlaceCategory,
 )
 from app.services.classifier import classify_places
 from app.services.fusion import fuse_places, recompute_confidence
@@ -121,29 +120,6 @@ async def discover(req: DiscoverRequest) -> DiscoverResponse:
         deep_research_message=dr_message,
         source_status=source_status,
     )
-
-
-async def discover_places_from_sources(
-    lat: float,
-    lng: float,
-    radius_km: float,
-    categories: list[str] | None = None,
-) -> list[Place]:
-    """Convenience wrapper: the discovery pipeline's top places around a point (most confident first).
-
-    Used by offline pre-caching, which passes plain category strings.
-    """
-    wanted: list[PlaceCategory] = []
-    for raw in categories or []:
-        try:
-            wanted.append(PlaceCategory(raw))
-        except ValueError:
-            logger.debug("Ignoring unknown category %r", raw)
-    req = DiscoverRequest(
-        lat=lat, lng=lng, radius_km=min(max(radius_km, 0.1), settings.max_radius_km),
-        categories=wanted, limit=settings.max_limit,
-    )
-    return (await discover(req)).places
 
 
 # Sources that missed the response deadline keep running here so their results land in the

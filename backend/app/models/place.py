@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import settings
+
 
 class PlaceCategory(str, enum.Enum):
     """Categories covering both unusual exploration targets and classic landmarks."""
@@ -114,7 +116,7 @@ class DiscoverRequest(BaseModel):
 
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    radius_km: float = Field(5.0, gt=0, le=50.0)
+    radius_km: float = Field(default_factory=lambda: settings.default_radius_km, gt=0, le=settings.max_radius_km)
     categories: list[PlaceCategory] = Field(default_factory=list)
     exclude_visited: list[str] = Field(default_factory=list, max_length=1000)
     limit: int = Field(50, ge=1, le=200)

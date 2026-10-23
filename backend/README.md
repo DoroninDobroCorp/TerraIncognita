@@ -70,7 +70,8 @@ option. The ones you will touch first:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | — | Optional; enables chat, descriptions, stories, ask-a-place |
-| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on LLM tokens; LLM endpoints answer 503 once spent |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on tokens spent through the LLM client (Deep Research is billed separately); LLM endpoints answer 503 once spent |
+| `TERRA_LLM_MODEL` / `TERRA_LLM_EFFORT` | `claude-sonnet-5-5` / `low` | Claude model and thinking depth (no sampling parameters are sent: current Claude models reject them) |
 | `TERRA_CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `TERRA_TRUSTED_PROXY_HOPS` | `0` | Set to `1` behind nginx so rate limits see real client IPs |
 | `TERRA_DISCOVERY_DEADLINE_SECONDS` | `25` | Answer `/api/discover` after this long if any source has produced places |

@@ -93,3 +93,12 @@ async def test_old_entries_are_evicted_beyond_max_entries(tmp_path):
     assert len(remaining) == 10
     assert await cache.get("k49") == 49  # newest survives
     assert await cache.get("k0") is None  # oldest evicted
+
+
+@pytest.mark.asyncio
+async def test_eviction_works_when_every_write_uses_a_fresh_instance(tmp_path):
+    """place_ask / walk_report / daily_place build a DiskCache per request; the bound must still hold."""
+    DiskCache._writes_by_dir.pop(str(tmp_path), None)
+    for i in range(120):
+        await DiskCache(cache_dir=str(tmp_path), ttl=0, max_entries=10).set(f"k{i}", i)
+    assert len(list(tmp_path.glob("*.json"))) <= 10 + DiskCache._PRUNE_EVERY

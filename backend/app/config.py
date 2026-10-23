@@ -36,13 +36,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_provider: str = "anthropic"  # 'anthropic' or 'openai'
     llm_model: str = "claude-sonnet-5-5"  # cheaper option: claude-haiku-5-5
+    llm_effort: str = "low"  # thinking depth for Claude: low | medium | high | xhigh | max; "" = model default
     openai_model: str = "gpt-4.1-mini"
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.7
-    llm_description_temperature: float = 0.8
     llm_cache_ttl_seconds: int = 604800  # 7 days for generated descriptions; 0 = keep forever
-    llm_daily_token_cap: int = 0  # input+output tokens per UTC day across all LLM calls; 0 = off
-    llm_max_conversation_turns: int = 20
+    llm_daily_token_cap: int = 0  # input+output tokens per UTC day across calls made via services/llm_client (not Deep Research); 0 = off
     llm_timeout: int = 30
 
     # HTTP / security
@@ -56,7 +55,6 @@ class Settings(BaseSettings):
     # API
     default_radius_km: float = 5.0
     max_radius_km: float = 50.0
-    default_limit: int = 50
     max_limit: int = 200
 
     # Deduplication
@@ -75,29 +73,20 @@ class Settings(BaseSettings):
 
     # Gamification (Epic 6)
     gamification_data_dir: str = "data/gamification"
-    fog_cell_size_deg: float = 0.001
-    fog_default_reveal_radius_m: float = 50.0
 
     # Offline Mode (Epic 7)
     offline_data_dir: str = "data/offline"
     offline_max_region_tiles: int = 50000
     offline_max_cached_places: int = 10000
-    offline_sync_retry_max: int = 3
     offline_storage_limit_mb: int = 500  # max offline storage in MB
 
     # Community (Epic 8)
     community_data_dir: str = "data/community"
-    community_moderation_confirmations: int = 3
 
     # Route Builder (Epic 4)
-    route_default_corridor_km: float = 1.0
-    route_max_corridor_km: float = 10.0
-    route_max_waypoints: int = 50
-    route_default_max_duration_hours: float = 4.0
     route_visit_time_minutes: float = 10.0
     route_walking_speed_kmh: float = 5.0
     route_cycling_speed_kmh: float = 15.0
-    route_driving_speed_kmh: float = 40.0
 
     # Daily place, loop routes, ask-the-place
     daily_top_k: int = 5  # the day's pick is chosen among the K best-ranked candidates

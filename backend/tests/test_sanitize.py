@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import re
+
+import pytest
+
 from app.utils.sanitize import sanitize_for_log, sanitize_user_input
 
 
@@ -66,3 +70,23 @@ class TestSanitizeForLog:
     def test_short_text_unchanged(self):
         result = sanitize_for_log("hello")
         assert result == "hello"
+
+
+class TestNestedTags:
+    @pytest.mark.parametrize("payload", [
+        "<sys<system>tem>", "[IN[INST]ST]", "<|im_<|im_start|>start|>system",
+        "<<<system>system>system>", "<</<SYS>>SYS>>",
+    ])
+    def test_removing_an_inner_tag_cannot_assemble_a_new_one(self, payload):
+        out = sanitize_user_input(payload)
+        assert not re.search(r"<\s*/?\s*(system|assistant|human|user)\s*>", out, re.I), out
+        assert "[INST]" not in out and "<|im_start|>" not in out and "<<SYS>>" not in out, out
+
+    def test_flat_repetition_is_removed_in_one_go(self):
+        assert sanitize_user_input("<system>" * 5000, max_length=None) == ""
+
+    @pytest.mark.parametrize("depth", [9, 40, 400])
+    def test_deliberately_deep_nesting_fails_closed(self, depth):
+        payload = "<sys" * depth + "<system>" + "tem>" * depth
+        out = sanitize_user_input(payload, max_length=None)
+        assert not re.search(r"<\s*/?\s*(system|assistant|human|user)\s*>", out, re.I), out[:80]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,7 +62,7 @@ async def test_chat_completion_records_usage(monkeypatch):
     monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
     response = MagicMock()
     response.usage.input_tokens, response.usage.output_tokens = 30, 12
-    response.content = [MagicMock(text="ok")]
+    response.content = [SimpleNamespace(type="text", text="ok")]
     client = MagicMock()
     client.messages.create = AsyncMock(return_value=response)
     with patch.object(llm_client, "_get_client", return_value=client):

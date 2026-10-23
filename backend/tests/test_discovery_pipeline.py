@@ -19,7 +19,7 @@ from app.models.place import (
     PlaceCategory,
     PlaceSource,
 )
-from app.services.discovery import discover, discover_places_from_sources
+from app.services.discovery import discover
 from app.sources.osm import OSMSource
 
 C = PlaceCategory
@@ -216,13 +216,11 @@ class TestDiscoverApi:
         assert data["source_status"] == {}
 
 
-class TestDiscoverPlacesFromSources:
-    async def test_returns_places_and_ignores_unknown_categories(self, sources):
-        sources["osm"].search.return_value = osm_places(
-            {"military": "bunker", "name": "Zlatica"}, {"tourism": "museum", "name": "Museum"})
-        places = await discover_places_from_sources(42.45, 18.53, 5.0, ["military", "not-a-category"])
-        assert [p.name for p in places] == ["Zlatica"]
+class TestDefaultRadius:
+    def test_default_comes_from_settings(self, monkeypatch):
+        monkeypatch.setattr(settings, "default_radius_km", 7.5)
+        assert DiscoverRequest(lat=1, lng=1).radius_km == 7.5
 
-    async def test_clamps_radius(self, sources):
-        await discover_places_from_sources(42.45, 18.53, 500.0)
-        assert sources["osm"].search.call_args[0][2] == settings.max_radius_km
+    def test_explicit_radius_wins(self, monkeypatch):
+        monkeypatch.setattr(settings, "default_radius_km", 7.5)
+        assert DiscoverRequest(lat=1, lng=1, radius_km=2).radius_km == 2

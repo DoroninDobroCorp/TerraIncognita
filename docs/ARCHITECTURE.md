@@ -64,7 +64,7 @@ OSM · Wikidata · Atlas Obscura · Deep Research   (concurrent, each isolated +
 ## LLM layer
 
 `services/llm_client.py` talks to Anthropic (default) or OpenAI, with a circuit breaker, a disk cache for
-generated text, and a persisted **daily token cap** (`TERRA_LLM_DAILY_TOKEN_CAP`). Every LLM feature is optional:
+generated text, and a persisted **daily token cap** (`TERRA_LLM_DAILY_TOKEN_CAP`; Deep Research providers are billed separately and not counted). Requests to Claude carry no sampling parameters (current models reject them) and read the answer from the `text` blocks, so a leading thinking block is harmless; `tests/test_llm_client_request.py` checks the request against the installed SDK's real signature. Every LLM feature is optional:
 no key, open circuit or spent budget means a deterministic fallback or a clear 503. Untrusted text (place
 names, tags, questions) is cleaned and fenced before it reaches a prompt (`utils/sanitize.py`,
 `services/llm_support.py`); model output is validated, never trusted.

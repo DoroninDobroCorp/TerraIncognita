@@ -37,6 +37,9 @@ _ROLE_TAG_RE = re.compile(r"<\s*/?\s*(system|assistant|human|user)\s*>", re.IGNO
 _SPECIAL_TOKEN_RE = re.compile(r"\[/?INST\]|<</?SYS>>|<\|im_(?:start|end)\|>", re.IGNORECASE)
 
 
+_STRUCTURAL_RE = re.compile(r"[<>\[\]|]")
+
+
 def sanitize_user_input(text: str | None, max_length: int | None = DEFAULT_MAX_LENGTH) -> str:
     """Sanitize user input before sending to LLM.
 
@@ -55,9 +58,19 @@ def sanitize_user_input(text: str | None, max_length: int | None = DEFAULT_MAX_L
 
 
 def _neutralize_injection(text: str) -> str:
-    """Remove XML-like role tags and special tokens that could confuse the LLM."""
-    text = _ROLE_TAG_RE.sub("", text)
-    return _SPECIAL_TOKEN_RE.sub("", text)
+    """Remove XML-like role tags and special tokens that could confuse the LLM.
+
+    Repeats until nothing changes: removing the inner tag of ``<sys<system>tem>`` would
+    otherwise leave a fresh ``<system>`` behind. Honest input settles in one or two passes;
+    input still shrinking after a handful is deliberately nested, so the structural
+    characters are dropped instead of looping (bounded work, fail closed).
+    """
+    for _ in range(8):
+        cleaned = _SPECIAL_TOKEN_RE.sub("", _ROLE_TAG_RE.sub("", text))
+        if cleaned == text:
+            return text
+        text = cleaned
+    return _STRUCTURAL_RE.sub("", text)
 
 
 def sanitize_label(text: Any, max_length: int = 200) -> str:

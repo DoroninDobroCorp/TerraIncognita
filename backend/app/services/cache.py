@@ -18,6 +18,9 @@ class DiskCache:
     """Simple file-system cache. Each entry is a JSON file with metadata."""
 
     _PRUNE_EVERY = 50  # writes between size checks
+    # Per directory, not per instance: several callers build a short-lived DiskCache per
+    # request, and a per-instance counter would never reach the pruning threshold.
+    _writes_by_dir: dict[str, int] = {}
 
     def __init__(
         self,
@@ -33,7 +36,6 @@ class DiskCache:
         self._dir = Path(cache_dir or settings.cache_dir)
         self._ttl = settings.cache_ttl_seconds if ttl is None else ttl
         self._max_entries = settings.cache_max_entries if max_entries is None else max_entries
-        self._writes = 0
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
@@ -60,8 +62,9 @@ class DiskCache:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
         tmp.replace(path)  # atomic: readers never see a half-written entry
-        self._writes += 1
-        if self._max_entries and self._writes % self._PRUNE_EVERY == 0:
+        key_dir = str(self._dir)
+        DiskCache._writes_by_dir[key_dir] = DiskCache._writes_by_dir.get(key_dir, 0) + 1
+        if self._max_entries and DiskCache._writes_by_dir[key_dir] % self._PRUNE_EVERY == 0:
             self._prune()
 
     def _prune(self) -> None:

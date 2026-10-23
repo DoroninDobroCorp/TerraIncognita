@@ -107,6 +107,11 @@ def _same_user(a: str, b: str) -> bool:
     return a.strip().casefold() == b.strip().casefold()
 
 
+def _follow_key(follower_id: str, following_id: str) -> str:
+    """Unambiguous index key: ids are free text and may themselves contain ':'."""
+    return f"{len(follower_id)}:{follower_id}:{following_id}"
+
+
 def _norm_name(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).casefold().split())
 
@@ -159,7 +164,11 @@ class CommunityService:
         self._reviews = self._load_store("reviews.json", Review)
         self._routes = self._load_store("routes.json", PublishedRoute)
         self._karma = self._load_store("karma.json", ContributorKarma)
-        self._follows = self._load_store("follows.json", ExplorerFollow)
+        self._follows = {
+            # re-key records written with the old "a:b" scheme, whose keys could collide
+            _follow_key(d["follower_id"], d["following_id"]): d
+            for d in self._load_store("follows.json", ExplorerFollow).values()
+        }
         quotas = load_json_file(self._data_dir / "quotas.json")
         today = self._today()
         if isinstance(quotas, dict):
@@ -808,7 +817,7 @@ class CommunityService:
             if _same_user(follower_id, following_id):
                 raise ValueError("Cannot follow yourself")
 
-            follow_key = f"{follower_id}:{following_id}"
+            follow_key = _follow_key(follower_id, following_id)
             existing = self._follows.get(follow_key)
             if existing:
                 # Idempotent: re-requesting must not wipe a consent that was already granted.
@@ -828,7 +837,7 @@ class CommunityService:
         """Grant or revoke consent for a follower to see your discoveries."""
         async with self._write_lock:
             self._ensure_loaded()
-            follow_key = f"{req.follower_id}:{req.user_id}"
+            follow_key = _follow_key(req.follower_id, req.user_id)
             if follow_key not in self._follows:
                 raise NotFoundError("Follow relationship not found")
 
@@ -842,7 +851,7 @@ class CommunityService:
         """Remove a follow relationship."""
         async with self._write_lock:
             self._ensure_loaded()
-            follow_key = f"{follower_id}:{following_id}"
+            follow_key = _follow_key(follower_id, following_id)
             if follow_key in self._follows:
                 del self._follows[follow_key]
                 self._save_follows()
