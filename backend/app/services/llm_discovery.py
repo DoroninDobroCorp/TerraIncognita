@@ -370,9 +370,10 @@ async def _generate_response(
             temperature=0.7,
             max_tokens=800,
         )
-        return sanitize_user_input(text, max_length=MAX_RESPONSE_CHARS) or _fallback_response(
-            places, language
-        )
+        answer = sanitize_user_input(text, max_length=MAX_RESPONSE_CHARS)
+        if not answer:  # None (OpenAI `content: null`) or blank
+            raise ValueError("the model returned an empty answer")
+        return answer
     except Exception:
         logger.exception("Failed to generate LLM response, using fallback")
         return _fallback_response(places, language)

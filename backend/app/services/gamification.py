@@ -1056,7 +1056,9 @@ async def get_explorer_profile() -> ExplorerProfile:
 async def get_xp_history(limit: int = 50, offset: int = 0) -> tuple[list[XpEvent], int]:
     """Get XP event history."""
     _ensure_loaded()
-    events = sorted(_xp_events, key=lambda e: e.created_at, reverse=True)
+    # The log is append-only, so reversing it is "newest first" even when timestamps tie
+    # (sorting by created_at returned equal timestamps oldest first).
+    events = list(reversed(_xp_events))
     total = len(events)
     return events[offset : offset + limit], total
 

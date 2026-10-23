@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from app.models.place import Place
+from app.services import llm_client
 from app.services.llm_client import cached_completion
 from app.utils.geo import haversine_distance_m
 from app.utils.sanitize import (
@@ -99,6 +100,17 @@ def _digest(*parts: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+async def _usable(story: object, cache_key: str) -> str:
+    """A blank/None answer is an error, and must not stay cached for the next 7 days."""
+    if isinstance(story, str) and story.strip():
+        return story
+    try:
+        await llm_client._description_cache.invalidate(cache_key)
+    except Exception:
+        logger.warning("Could not invalidate cache entry %s", cache_key, exc_info=True)
+    raise ValueError("the model returned an empty story")
+
+
 async def generate_place_story(
     place: Place,
     language: str = "ru",
@@ -132,6 +144,7 @@ async def generate_place_story(
             temperature=0.85,
             max_tokens=1200,
         )
+        story = await _usable(story, cache_key)
         return {
             "story": story,
             "place_id": place.id,
@@ -197,6 +210,7 @@ async def generate_route_story(
             temperature=0.85,
             max_tokens=2000,
         )
+        story = await _usable(story, cache_key)
         return {
             "story": story,
             "place_ids": place_ids,

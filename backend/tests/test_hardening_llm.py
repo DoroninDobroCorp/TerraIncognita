@@ -393,3 +393,40 @@ class TestRecommendations:
         r = client.post("/api/recommend", json={
             "lat": 1, "lng": 1, "context": {"k": "v" * 20_000}})
         assert r.status_code == 422
+
+
+class TestBlankOrMissingModelOutput:
+    """An empty answer was cached for 7 days (llm_client caches whatever comes back) and a
+    None answer (OpenAI `content: null`) became the text "None" or a 500."""
+
+    @pytest.mark.parametrize("answer", ["", "   \n", None])
+    async def test_blank_description_falls_back_and_is_not_kept_in_the_cache(self, answer):
+        with patch.object(llm_client, "chat_completion", new_callable=AsyncMock, return_value=answer):
+            result = await generate_description(_desc_req())
+        assert result.ai_generated is False
+        assert result.description
+        # nothing blank left behind for the next 7 days
+        with patch.object(llm_client, "chat_completion", new_callable=AsyncMock,
+                          return_value="DESCRIPTION:\nreal text\n\nPRACTICAL:\nbring water") as mock:
+            result = await generate_description(_desc_req())
+        assert mock.await_count == 1
+        assert result.ai_generated is True and "real text" in result.description
+
+    @pytest.mark.parametrize("answer", ["", "  ", None])
+    async def test_blank_story_falls_back(self, answer):
+        with patch.object(llm_client, "chat_completion", new_callable=AsyncMock, return_value=answer):
+            single = await generate_place_story(_place("p1", "Fort"), "en")
+            route = await generate_route_story([_place("p1", "A"), _place("p2", "B")], "en")
+        assert single["ai_generated"] is False and single["story"].strip()
+        assert route["ai_generated"] is False and route["story"].strip()
+
+    @pytest.mark.parametrize("answer", [None, "", "   "])
+    async def test_chat_answer_that_is_blank_uses_the_fallback_text(self, answer):
+        with patch("app.services.llm_discovery.chat_completion", new_callable=AsyncMock,
+                   return_value=answer):
+            text = await _generate_response("q", [_place()], "en")
+        assert text and text != "None"
+        assert "Found 1 places" in text
+
+    def test_sanitize_treats_none_as_empty(self):
+        assert sanitize_user_input(None) == ""

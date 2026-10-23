@@ -281,3 +281,19 @@ class TestGamificationApi:
             "place_id": "p", "lat": 1, "lng": 1, "visited_at": "2999-01-01T00:00:00Z"})
         assert r.status_code == 200
         assert datetime.fromisoformat(r.json()["visited_at"]) < datetime.now(UTC) + timedelta(minutes=1)
+
+
+class TestXpHistoryOrder:
+    async def test_newest_first_even_when_timestamps_tie(self):
+        """Sorting by created_at kept insertion order for equal timestamps (oldest first)."""
+        from app.models.gamification import XpEvent
+
+        same = datetime(2026, 1, 1, tzinfo=UTC)
+        await gam._award_xp(1, "t", "first")
+        gam._xp_events.clear()
+        gam._xp_events.extend(
+            XpEvent(id=f"x{i}", source="t", xp=i, description=f"e{i}", created_at=same) for i in range(4)
+        )
+        events, total = await gam.get_xp_history(limit=10)
+        assert [e.id for e in events] == ["x3", "x2", "x1", "x0"]
+        assert total == 4

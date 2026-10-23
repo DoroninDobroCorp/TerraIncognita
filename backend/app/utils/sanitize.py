@@ -37,7 +37,7 @@ _ROLE_TAG_RE = re.compile(r"<\s*/?\s*(system|assistant|human|user)\s*>", re.IGNO
 _SPECIAL_TOKEN_RE = re.compile(r"\[/?INST\]|<</?SYS>>|<\|im_(?:start|end)\|>", re.IGNORECASE)
 
 
-def sanitize_user_input(text: str, max_length: int | None = DEFAULT_MAX_LENGTH) -> str:
+def sanitize_user_input(text: str | None, max_length: int | None = DEFAULT_MAX_LENGTH) -> str:
     """Sanitize user input before sending to LLM.
 
     - Strips control and invisible characters (keeps newlines, tabs)
@@ -47,7 +47,7 @@ def sanitize_user_input(text: str, max_length: int | None = DEFAULT_MAX_LENGTH) 
     - Does NOT remove other prompt-injection phrases (they are neutralised by the
       delimiting in the prompts and the system prompt), but never lets tags through
     """
-    text = _CONTROL_RE.sub("", str(text))
+    text = _CONTROL_RE.sub("", "" if text is None else str(text))
     text = _neutralize_injection(text)
     if max_length is not None:
         text = text[:max_length]

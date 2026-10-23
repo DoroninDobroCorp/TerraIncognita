@@ -78,6 +78,14 @@ def _cache_key(req: DescriptionRequest, fields: dict[str, str]) -> str:
     return f"desc:{req.place_id}:{req.language}:{digest}"
 
 
+async def _forget(cache_key: str) -> None:
+    """Drop an unusable (blank) answer that cached_completion already stored for days."""
+    try:
+        await llm_client._description_cache.invalidate(cache_key)
+    except Exception:
+        logger.warning("Could not invalidate cache entry %s", cache_key, exc_info=True)
+
+
 async def _is_cached(cache_key: str) -> bool:
     try:
         return await llm_client._description_cache.get(cache_key) is not None
@@ -118,7 +126,10 @@ async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
             max_tokens=800,
         )
 
-        description, practical = _parse_description_response(raw)
+        description, practical = _parse_description_response(raw if isinstance(raw, str) else "")
+        if not description:
+            await _forget(cache_key)
+            raise ValueError("the model returned an empty description")
 
         return DescriptionResponse(
             place_id=req.place_id,
