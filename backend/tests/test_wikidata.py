@@ -88,9 +88,10 @@ class TestWikidata:
         # No Wikipedia → more unusual → higher confidence
         assert places[1].confidence == 0.7
 
-    def test_name_set_to_none_when_equals_qid(self):
+    def test_label_equal_to_qid_is_replaced_by_a_generated_name(self):
         places = self.source._parse_results(_SPARQL_RESPONSE)
-        assert places[2].name is None
+        assert places[2].name and places[2].name != places[2].metadata["wikidata_id"]
+        assert places[2].metadata["name_generated"] is True
 
     def test_metadata_contains_wikidata_id(self):
         places = self.source._parse_results(_SPARQL_RESPONSE)
@@ -224,3 +225,34 @@ class TestWikidataSearch:
         httpx_mock.add_exception(httpx.ReadTimeout("slow"))
         with pytest.raises(httpx.ReadTimeout):
             await wd.search(42.45, 18.53, 5.0)
+
+
+class TestUnlabelledItems:
+    def _binding(self, label: str, description: str | None):
+        b = {
+            "item": {"value": "http://www.wikidata.org/entity/Q27569554"},
+            "itemLabel": {"value": label},
+            "coord": {"value": "Point(18.5 42.4)"},
+            "type": {"value": "http://www.wikidata.org/entity/Q35509"},  # cave
+        }
+        if description:
+            b["itemDescription"] = {"value": description}
+        return b
+
+    def test_bare_qid_label_becomes_an_honest_generated_name(self):
+        src = WikidataSource()
+        place = src._parse_results({"results": {"bindings": [self._binding("Q27569554", "cave in Herceg Novi")]}})[0]
+        assert place.name == "Cave in Herceg Novi"
+        assert place.metadata["name_generated"] is True
+
+    def test_falls_back_to_the_category_without_a_description(self):
+        src = WikidataSource()
+        place = src._parse_results({"results": {"bindings": [self._binding("Q27569554", None)]}})[0]
+        assert place.name and place.name != "Q27569554"
+        assert place.metadata["name_generated"] is True
+
+    def test_real_labels_are_untouched(self):
+        src = WikidataSource()
+        place = src._parse_results({"results": {"bindings": [self._binding("Golubinja Pećina", "cave")]}})[0]
+        assert place.name == "Golubinja Pećina"
+        assert "name_generated" not in place.metadata

@@ -77,6 +77,16 @@ LIMIT 1500
 """
 
 
+def _generated_name(description: str | None, categories: list[PlaceCategory]) -> str:
+    """Honest display name for an unlabelled item: its own description ("cave in Herceg Novi")
+    or, failing that, its category ("Cave"). Flagged ``name_generated`` so ranking and
+    fusion treat the place as unnamed."""
+    if description and description.strip():
+        text = description.strip()
+        return text[0].upper() + text[1:]
+    return categories[0].value.replace("_", " ").capitalize() if categories else "Unnamed place"
+
+
 class WikidataSource(BaseSource):
     """Discovers geo-located historical/hidden objects from Wikidata."""
 
@@ -149,12 +159,18 @@ class WikidataSource(BaseSource):
             # Prefer less-popular items (those without Wikipedia articles score higher for unusualness)
             confidence = 0.6 if wiki_url else 0.7
 
+            # Wikidata answers with the bare Q-id when an item has no label in our languages.
+            name = name if name != qid else None
+            name_generated = name is None
+            if name_generated:
+                name = _generated_name(description, categories)
+
             places.append(
                 Place(
                     id=f"wiki_{qid}",
                     source=PlaceSource.WIKIDATA,
                     sources=[PlaceSource.WIKIDATA],
-                    name=name if name != qid else None,
+                    name=name,
                     description=description,
                     categories=categories,
                     coordinates=Coordinates(lat=lat, lng=lng),
@@ -163,6 +179,7 @@ class WikidataSource(BaseSource):
                         "wikidata_id": qid,
                         "wikipedia_url": wiki_url,
                         "type_qid": type_qid,
+                        **({"name_generated": True} if name_generated else {}),
                         # How many Wikipedia language editions cover it: a mainstream-ness signal.
                         **({"sitelinks": sitelinks} if sitelinks is not None else {}),
                     },
