@@ -66,18 +66,16 @@ def _rank_key(place: Place) -> tuple[float, str]:
     """Sort key for 'best candidate first' (ascending). THE place to retune the taste.
 
     Rewards unusual places, then ones with enough material for a good card: description,
-    photos, a Wikipedia link. ``unusual_score`` / ``wikipedia`` only exist on newer Place
-    models, so they are read defensively.
+    photos, a Wikipedia link.
     """
-    unusual_score = getattr(place, "unusual_score", 0.0)
-    unusual_score = min(max(unusual_score, 0.0), 1.0) if isinstance(unusual_score, int | float) else 0.0
+    unusual_score = min(max(place.unusual_score, 0.0), 1.0)
     score = (
         2.0 * unusual_score
         + (1.0 if place.is_unusual else 0.0)
         + place.confidence
         + 0.4 * min(len(place.description or ""), 400) / 400
         + (0.3 if place.photos else 0.0)
-        + (0.3 if getattr(place, "wikipedia", None) else 0.0)
+        + (0.3 if place.wikipedia else 0.0)
     )
     return (-round(score, 6), place.id)  # the id makes ties (and so the whole pick) stable
 

@@ -54,6 +54,7 @@ RATE_RULES: tuple[RateRule, ...] = (
         "discovery", limit=60, methods=_POST,
         exact=frozenset({"/api/discover", "/api/route", "/api/route/explore", "/api/route/loop"}),
     ),
+    RateRule("enrichment", limit=30, methods=_POST, exact=frozenset({"/api/place/enrich"})),
     RateRule("journal", limit=120, prefixes=("/api/visits", "/api/trips")),
     RateRule(
         "gamification", limit=60,

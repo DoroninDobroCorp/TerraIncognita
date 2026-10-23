@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import re
+
+import httpx
 import pytest
 
+from app.config import settings
 from app.models.place import PlaceCategory, PlaceSource
+from app.services.cache import DiskCache
+from app.sources import wikidata as wikidata_module
 from app.sources.wikidata import WikidataSource
+from app.utils import http_client
 
 _SPARQL_RESPONSE = {
     "results": {
@@ -29,7 +36,7 @@ _SPARQL_RESPONSE = {
                 "item": {"value": "http://www.wikidata.org/entity/Q11111"},
                 "itemLabel": {"value": "Q11111"},
                 "coord": {"value": "Point(18.51 42.43)"},
-                "type": {"value": "http://www.wikidata.org/entity/Q82117"},
+                "type": {"value": "http://www.wikidata.org/entity/Q109607"},  # ruins
             },
         ]
     }
@@ -121,3 +128,99 @@ class TestWikidata:
         lat, lng = WikidataSource._parse_point("Point(18.53 42.45)")
         assert lat == pytest.approx(42.45)
         assert lng == pytest.approx(18.53)
+
+
+# ── Verified type ids, sitelinks, failure semantics ──────────────────────────
+
+
+def _binding(qid: str, type_qid: str, label: str = "Thing", **extra) -> dict:
+    return {
+        "item": {"value": f"http://www.wikidata.org/entity/{qid}"},
+        "itemLabel": {"value": label},
+        "coord": {"value": "Point(18.5 42.4)"},
+        "type": {"value": f"http://www.wikidata.org/entity/{type_qid}"},
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(("type_qid", "label", "expected"), [
+    ("Q109607", "ruins", {PlaceCategory.RUINS}),
+    ("Q91122", "bunker", {PlaceCategory.MILITARY, PlaceCategory.UNDERGROUND}),
+    ("Q389959", "air-raid shelter", {PlaceCategory.MILITARY, PlaceCategory.UNDERGROUND}),
+    ("Q106765618", "abandoned building", {PlaceCategory.ABANDONED}),
+    ("Q4663385", "former railway station", {PlaceCategory.ABANDONED, PlaceCategory.TRANSPORT}),
+    ("Q74047", "ghost town", {PlaceCategory.ABANDONED}),
+    ("Q820477", "mine", {PlaceCategory.INDUSTRIAL, PlaceCategory.UNDERGROUND}),
+    ("Q44377", "tunnel", {PlaceCategory.UNDERGROUND}),
+    ("Q1785071", "fort", {PlaceCategory.MILITARY, PlaceCategory.LANDMARK}),
+    ("Q852190", "shipwreck", {PlaceCategory.UNDERWATER}),
+    ("Q274153", "water tower", {PlaceCategory.INDUSTRIAL}),
+    ("Q34038", "waterfall", {PlaceCategory.WATER, PlaceCategory.NATURE_HIDDEN}),
+    ("Q39715", "lighthouse", {PlaceCategory.LANDMARK}),
+    ("Q82117", "city gate", {PlaceCategory.ARCHITECTURE}),
+    ("Q12518", "tower", {PlaceCategory.ARCHITECTURE}),
+])
+def test_type_ids_map_to_what_they_are(type_qid, label, expected):
+    """Each Q-id was checked against Wikidata's own label (the old table had wrong ones)."""
+    place = WikidataSource()._parse_results({"results": {"bindings": [_binding("Q1", type_qid)]}})[0]
+    assert expected <= set(place.categories), label
+
+
+def test_wrongly_mapped_type_ids_are_gone():
+    # Q863813 is a university, Q191992 a headland, Q39614 a cemetery, Q12518 is not underground.
+    for bad in ("Q863813", "Q191992", "Q39614"):
+        assert bad not in wikidata_module._TYPE_MAP
+    assert PlaceCategory.UNDERGROUND not in wikidata_module._TYPE_MAP["Q12518"]
+
+
+def test_sitelink_count_is_exposed_for_scoring():
+    data = {"results": {"bindings": [
+        _binding("Q1", "Q23413", sitelinks={"value": "57"}),
+        _binding("Q2", "Q23413", sitelinks={"value": "0"}),
+        _binding("Q3", "Q23413"),
+        _binding("Q4", "Q23413", sitelinks={"value": "many"}),
+    ]}}
+    p1, p2, p3, p4 = WikidataSource()._parse_results(data)
+    assert p1.metadata["sitelinks"] == 57 and p2.metadata["sitelinks"] == 0
+    assert "sitelinks" not in p3.metadata and "sitelinks" not in p4.metadata
+
+
+def test_sparql_asks_for_sitelinks_and_every_known_type():
+    query = wikidata_module._SPARQL_TEMPLATE.format(
+        south=1, west=2, north=3, east=4,
+        type_values=" ".join(f"wd:{q}" for q in wikidata_module._TYPE_MAP))
+    assert "wikibase:sitelinks ?sitelinks" in query
+    assert all(f"wd:{q}" in query for q in wikidata_module._TYPE_MAP)
+    assert 'Point(2 1)' in query and 'Point(4 3)' in query
+
+
+@pytest.fixture
+async def wd(tmp_path, monkeypatch):
+    monkeypatch.setattr(wikidata_module, "disk_cache", DiskCache(cache_dir=str(tmp_path), ttl=3600))
+    http_client._client = None
+    yield WikidataSource()
+    await http_client.close_http_client()
+
+
+class TestWikidataSearch:
+    async def test_success_is_cached_and_polite(self, wd, httpx_mock):
+        httpx_mock.add_response(url=re.compile(r"https://query\.wikidata\.org/sparql.*"),
+                                json=_SPARQL_RESPONSE)
+        first = await wd.search(42.45, 18.53, 5.0)
+        second = await wd.search(42.45, 18.53, 5.0)
+        assert len(first) == 3 and [p.id for p in second] == [p.id for p in first]
+        [request] = httpx_mock.get_requests()
+        assert request.headers["user-agent"] == settings.wikimedia_user_agent
+        assert request.headers["accept"] == "application/sparql-results+json"
+
+    async def test_outage_raises_and_is_not_cached_as_empty(self, wd, httpx_mock):
+        httpx_mock.add_response(status_code=504)
+        with pytest.raises(httpx.HTTPStatusError):
+            await wd.search(42.45, 18.53, 5.0)
+        httpx_mock.add_response(json=_SPARQL_RESPONSE)
+        assert len(await wd.search(42.45, 18.53, 5.0)) == 3  # recovered: nothing stale was cached
+
+    async def test_timeout_raises(self, wd, httpx_mock):
+        httpx_mock.add_exception(httpx.ReadTimeout("slow"))
+        with pytest.raises(httpx.ReadTimeout):
+            await wd.search(42.45, 18.53, 5.0)

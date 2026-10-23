@@ -1,0 +1,146 @@
+{
+ "name": "industrial_city",
+ "description": "Post-industrial Upper-Silesia-style town: abandoned mill, power plant, colliery shaft, water tower, air-raid shelter and a goods-yard swarm, among cathedral, museums (one a restored mine), hotels, memorials and viewpoints.",
+ "provenance": "Synthetic. Tag patterns follow real OSM mapping of industrial towns in southern Poland; names, coordinates and ids (>= 9200000000) are invented.",
+ "center": [50.2649, 19.0238],
+ "radius_km": 3.5,
+ "elements": [
+  {"type": "way", "id": 9200000001, "center": {"lat": 50.2702899, "lon": 19.0181789}, "tags": {"abandoned": "yes", "building": "industrial", "industrial": "textile", "name": "Przędzalnia Kowalskiego", "description": "Abandoned 19th-century spinning mill, brick, partly roofless", "start_date": "1889", "image": "https://commons.wikimedia.org/wiki/File:Przedzalnia_Kowalskiego.jpg"}},
+  {"type": "way", "id": 9200000002, "center": {"lat": 50.2586118, "lon": 19.0308264}, "tags": {"disused:power": "plant", "building": "industrial", "name": "Elektrociepłownia Zachód", "start_date": "1927", "description": "Closed coal-fired heat and power plant with turbine hall"}},
+  {"type": "node", "id": 9200000003, "lat": 50.2783747, "lon": 19.0364475, "tags": {"man_made": "mineshaft", "historic": "mine_shaft", "name": "Szyb Wilhelm", "start_date": "1860", "access": "no"}},
+  {"type": "node", "id": 9200000004, "lat": 50.2675949, "lon": 19.0420687, "tags": {"man_made": "chimney", "disused": "yes", "name": "Komin Huty Eugeniusz", "height": "85"}},
+  {"type": "way", "id": 9200000005, "center": {"lat": 50.2541203, "lon": 19.0125577}, "tags": {"man_made": "water_tower", "disused": "yes", "name": "Wieża ciśnień Rokitnica", "start_date": "1906"}},
+  {"type": "node", "id": 9200000006, "lat": 50.2657983, "lon": 19.0216921, "tags": {"military": "bunker", "bunker_type": "air_raid_shelter", "name": "Schron przeciwlotniczy Dworcowa", "start_date": "1940", "access": "private"}},
+  {"type": "way", "id": 9200000007, "center": {"lat": 50.2622051, "lon": 19.0490951}, "tags": {"railway": "abandoned", "tunnel": "yes", "name": "Tunel kolejowy Piaskowy"}},
+  {"type": "node", "id": 9200000008, "lat": 50.2469338, "lon": 19.0266106, "tags": {"disused:railway": "station", "name": "Stacja Towarowa Zachód", "railway": "halt"}},
+  {"type": "way", "id": 9200000009, "center": {"lat": 50.2729848, "lon": 19.0027208}, "tags": {"abandoned:amenity": "hospital", "building": "yes", "name": "Szpital Kolejowy (dawny)", "start_date": "1912", "description": "Former railway hospital, empty since 2003"}},
+  {"type": "way", "id": 9200000010, "center": {"lat": 50.2604084, "lon": 19.0195842}, "tags": {"disused": "yes", "industrial": "brewery", "building": "industrial", "name": "Browar Obywatelski"}},
+  {"type": "way", "id": 9200000011, "center": {"lat": 50.2846628, "lon": 19.0153683}, "tags": {"ruins": "yes", "historic": "manor", "name": "Pałac Hrabiów Reichenbach", "start_date": "1790"}},
+  {"type": "way", "id": 9200000012, "center": {"lat": 50.2801713, "lon": 19.0476898}, "tags": {"abandoned": "yes", "building": "church", "name": "Kościół poewangelicki"}},
+  {"type": "node", "id": 9200000013, "lat": 50.2873578, "lon": 19.0308264, "tags": {"historic": "mine", "man_made": "adit", "name": "Sztolnia Dolna", "access": "private"}},
+  {"type": "way", "id": 9200000014, "center": {"lat": 50.2487304, "lon": 18.9970996}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000015, "center": {"lat": 50.2490448, "lon": 18.9970996}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000016, "center": {"lat": 50.2493592, "lon": 18.9970996}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000017, "center": {"lat": 50.2496736, "lon": 18.9970996}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000018, "center": {"lat": 50.249988, "lon": 18.9970996}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000019, "center": {"lat": 50.2487304, "lon": 18.9976618}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000020, "center": {"lat": 50.2490448, "lon": 18.9976618}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000021, "center": {"lat": 50.2493592, "lon": 18.9976618}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000022, "center": {"lat": 50.2496736, "lon": 18.9976618}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000023, "center": {"lat": 50.249988, "lon": 18.9976618}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000024, "center": {"lat": 50.2487304, "lon": 18.9982239}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000025, "center": {"lat": 50.2490448, "lon": 18.9982239}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000026, "center": {"lat": 50.2493592, "lon": 18.9982239}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000027, "center": {"lat": 50.2496736, "lon": 18.9982239}, "tags": {"abandoned": "yes", "building": "warehouse"}},
+  {"type": "way", "id": 9200000028, "center": {"lat": 50.2747814, "lon": 19.0252053}, "tags": {"abandoned": "yes", "building": "industrial"}},
+  {"type": "way", "id": 9200000029, "center": {"lat": 50.2568152, "lon": 19.0448792}, "tags": {"abandoned": "yes", "building": "industrial"}},
+  {"type": "way", "id": 9200000030, "center": {"lat": 50.2891544, "lon": 18.9999102}, "tags": {"abandoned": "yes", "building": "industrial"}},
+  {"type": "way", "id": 9200000031, "center": {"lat": 50.2653492, "lon": 19.0240811}, "tags": {"building": "cathedral", "name": "Katedra Św. Jana", "wikipedia": "pl:Katedra Świętego Jana", "wikidata": "Q9200001", "heritage": "2"}},
+  {"type": "way", "id": 9200000032, "center": {"lat": 50.2656186, "lon": 19.0246432}, "tags": {"tourism": "museum", "name": "Muzeum Miasta", "wikidata": "Q9200002", "wikipedia": "pl:Muzeum Miasta"}},
+  {"type": "way", "id": 9200000033, "center": {"lat": 50.2595101, "lon": 19.033637}, "tags": {"tourism": "museum", "name": "Muzeum Kolejnictwa", "opening_hours": "Tu-Su 10:00-17:00", "fee": "yes"}},
+  {"type": "way", "id": 9200000034, "center": {"lat": 50.2666966, "lon": 19.0223947}, "tags": {"tourism": "museum", "name": "Muzeum Sztuki Nowoczesnej", "website": "https://example.pl"}},
+  {"type": "way", "id": 9200000035, "center": {"lat": 50.2918493, "lon": 19.0589321}, "tags": {"tourism": "museum", "historic": "mine", "name": "Kopalnia Guido (skansen)", "fee": "yes", "opening_hours": "Tu-Su 09:00-16:00", "wikipedia": "pl:Kopalnia Guido", "wikidata": "Q9200003"}},
+  {"type": "way", "id": 9200000036, "center": {"lat": 50.265978, "lon": 19.0232379}, "tags": {"tourism": "hotel", "stars": "5", "name": "Hotel Grand Silesia", "wikipedia": "pl:Hotel Grand Silesia"}},
+  {"type": "node", "id": 9200000037, "lat": 50.2657085, "lon": 19.0239405, "tags": {"amenity": "restaurant", "name": "Restauracja Pod Orłem", "wikipedia": "pl:Pod Orłem"}},
+  {"type": "node", "id": 9200000038, "lat": 50.2655288, "lon": 19.0233784, "tags": {"amenity": "restaurant", "name": "Karczma Śląska", "heritage": "3"}},
+  {"type": "node", "id": 9200000039, "lat": 50.2652593, "lon": 19.0252053, "tags": {"historic": "memorial", "name": "Pomnik Powstańców Śląskich", "memorial": "statue"}},
+  {"type": "node", "id": 9200000040, "lat": 50.2662475, "lon": 19.0260485, "tags": {"historic": "memorial", "name": "Pomnik Górnika", "memorial": "statue"}},
+  {"type": "node", "id": 9200000041, "lat": 50.2641814, "lon": 19.0243621, "tags": {"historic": "memorial", "name": "Tablica pamiątkowa", "memorial": "plaque"}},
+  {"type": "node", "id": 9200000042, "lat": 50.2650797, "lon": 19.0229568, "tags": {"historic": "monument", "name": "Pomnik Kopernika"}},
+  {"type": "node", "id": 9200000043, "lat": 50.2720865, "lon": 19.0350423, "tags": {"tourism": "viewpoint"}},
+  {"type": "node", "id": 9200000044, "lat": 50.2586118, "lon": 19.013963, "tags": {"tourism": "viewpoint"}},
+  {"type": "node", "id": 9200000045, "lat": 50.2774764, "lon": 19.0280158, "tags": {"tourism": "viewpoint", "name": "Punkt widokowy na hałdę"}},
+  {"type": "node", "id": 9200000046, "lat": 50.2651695, "lon": 19.0238, "tags": {"tourism": "attraction", "name": "Rynek", "wikidata": "Q9200004"}},
+  {"type": "node", "id": 9200000047, "lat": 50.2819679, "lon": 19.0392581, "tags": {"natural": "peak", "name": "Góra Parkowa", "ele": "280"}},
+  {"type": "node", "id": 9200000048, "lat": 50.2631034, "lon": 19.0280158, "tags": {"tourism": "artwork", "artwork_type": "mural", "name": "Mural Szyb Maria"}},
+  {"type": "node", "id": 9200000049, "lat": 50.2684932, "lon": 19.013963, "tags": {"tourism": "artwork", "artwork_type": "mural"}}
+ ],
+ "extra_sources": {
+ "atlas": [
+  {
+   "id": "9200",
+   "title": "Wilhelm Shaft Winding Tower",
+   "subtitle": "Abandoned colliery headframe",
+   "lat": 50.278425,
+   "lng": 19.036448,
+   "categories": [
+    "industrial",
+    "abandoned"
+   ],
+   "tags": [],
+   "photo": "https://example.com/wilhelm.jpg",
+   "url": "/places/wilhelm-shaft"
+  }
+ ],
+ "wikidata": [
+  {
+   "item": {
+    "value": "http://www.wikidata.org/entity/Q9200001"
+   },
+   "itemLabel": {
+    "value": "St. John's Cathedral"
+   },
+   "coord": {
+    "value": "Point(19.02393 50.26495)"
+   },
+   "type": {
+    "value": "http://www.wikidata.org/entity/Q16970"
+   },
+   "sitelinks": {
+    "value": "52"
+   },
+   "sitelink": {
+    "value": "https://en.wikipedia.org/wiki/St._John%27s_Cathedral"
+   }
+  }
+ ]
+},
+ "expect": {
+ "gems": [
+  "osm_way_9200000001",
+  "osm_way_9200000002",
+  "osm_node_9200000003",
+  "osm_node_9200000004",
+  "osm_way_9200000005",
+  "osm_node_9200000006",
+  "osm_way_9200000007",
+  "osm_node_9200000008",
+  "osm_way_9200000009",
+  "osm_way_9200000010",
+  "osm_way_9200000011",
+  "osm_way_9200000012",
+  "osm_node_9200000013"
+ ],
+ "clutter": [
+  "osm_way_9200000031",
+  "osm_way_9200000032",
+  "osm_way_9200000033",
+  "osm_way_9200000034",
+  "osm_way_9200000035",
+  "osm_way_9200000036",
+  "osm_node_9200000037",
+  "osm_node_9200000038",
+  "osm_node_9200000039",
+  "osm_node_9200000040",
+  "osm_node_9200000041",
+  "osm_node_9200000042",
+  "osm_node_9200000043",
+  "osm_node_9200000044",
+  "osm_node_9200000045",
+  "osm_node_9200000046",
+  "osm_node_9200000047"
+ ],
+ "top_n": 16,
+ "top3_distinct_sites": true,
+ "also_merged": [
+  [
+   "osm_node_9200000003",
+   "atlas_9200"
+  ],
+  [
+   "osm_way_9200000031",
+   "wiki_Q9200001"
+  ]
+ ]
+}
+}

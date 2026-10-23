@@ -8,48 +8,77 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from app.models.place import Place, PlaceCategory
 
 logger = logging.getLogger(__name__)
 
 # ── Rule-based keyword → category mapping ──────────────────────────
+#
+# Matching is word-based, never raw substring: ``park`` must not fire on "parking", ``dam`` on
+# "Adam", ``arch`` on "search". A keyword ending in ``*`` is a stem ("abandon*" → abandoned,
+# abandonment); any other keyword matches the whole word, optionally pluralised.
+# Cyrillic and a few Latin-script Slavic/Romance/Germanic stems are included so places that only
+# carry a local-language name or description still get classified.
 
 _KEYWORD_RULES: list[tuple[list[str], list[PlaceCategory]]] = [
     # Unusual
-    (["abandon", "derelict", "disused", "vacant", "deserted"],
+    (["abandon*", "derelict*", "disused", "vacant", "deserted", "ghost town",
+      "заброшен*", "покинут*", "закинут*", "напуштен*", "napušten*", "napusten*",
+      "verlassen*", "abandonn*", "abandonad*", "abbandonat*", "opuszczon*"],
      [PlaceCategory.ABANDONED]),
-    (["ruin", "ruined", "collapsed"],
+    (["ruin*", "collapsed", "руин*", "развалин*", "руїн*", "ruševin*", "rusevin*", "ruiny",
+      "ruine*"],
      [PlaceCategory.RUINS]),
-    (["tunnel", "underground", "subway", "metro", "catacombs", "subterranean"],
+    (["tunnel*", "underground", "subway", "metro", "catacomb*", "subterranean",
+      "тоннел*", "туннел*", "тунел*", "подземн*", "підземн*", "катакомб*", "tunel*", "podzemn*"],
      [PlaceCategory.UNDERGROUND]),
-    (["cave", "grotto", "cavern", "karst"],
+    (["cave", "grotto*", "cavern*", "karst*", "пещер*", "печер*", "špilj*", "spilj*", "pećin*",
+      "pecin*", "jaskini*", "höhle", "grotte"],
      [PlaceCategory.CAVE, PlaceCategory.UNDERGROUND]),
-    (["bunker", "pillbox", "shelter", "military", "barracks", "fortification"],
+    (["bunker*", "pillbox*", "air raid shelter", "air-raid shelter", "bomb shelter",
+      "military", "barracks", "fortification*", "бункер*", "казарм*", "военн*", "военный",
+      "військов*", "schron*", "kasarn*", "vojn*"],
      [PlaceCategory.MILITARY]),
-    (["factory", "industrial", "warehouse", "silo", "mill", "plant", "chimney"],
+    (["factory", "factories", "industrial", "warehouse*", "silo*", "mill", "plant", "chimney*",
+      "завод*", "фабрик*", "склад", "elevator*"],
      [PlaceCategory.INDUSTRIAL]),
-    (["graffiti", "street art", "mural", "stencil"],
+    (["mine", "mineshaft", "colliery", "adit", "шахт*", "рудник*", "копальн*", "rudnik*"],
+     [PlaceCategory.INDUSTRIAL, PlaceCategory.UNDERGROUND]),
+    (["quarry", "карьер*", "каменолом*", "kamenolom*"],
+     [PlaceCategory.INDUSTRIAL]),
+    (["graffiti", "street art", "street-art", "mural*", "stencil*", "граффити", "мурал*",
+      "стрит-арт"],
      [PlaceCategory.STREET_ART]),
-    (["viewpoint", "lookout", "panorama", "observation"],
+    (["viewpoint*", "lookout*", "panorama*", "observation", "смотров*", "панорам*",
+      "vidikovac*", "razgledn*"],
      [PlaceCategory.VIEWPOINT]),
-    (["rail", "train", "locomotive", "station", "depot", "tram"],
+    (["rail", "railway*", "train", "locomotive*", "station", "depot", "tram",
+      "вокзал*", "паровоз*", "локомотив*", "депо", "železnič*", "zeleznic*"],
      [PlaceCategory.TRANSPORT]),
-    (["waterfall", "spring", "dam", "aqueduct", "reservoir"],
+    (["waterfall*", "spring", "dam", "aqueduct*", "reservoir*", "водопад*", "родник*",
+      "плотин*", "водохранилищ*", "vodopad*", "izvor*"],
      [PlaceCategory.WATER]),
     (["hidden", "secret", "secluded", "off-trail"],
      [PlaceCategory.NATURE_HIDDEN]),
 
     # Classic
-    (["castle", "palace", "fortress", "citadel"],
+    (["castle*", "palace*", "fortress*", "citadel*", "замок", "замк*", "дворец", "дворц*",
+      "крепост*", "тврђав*", "цитадел*", "twierdz*", "tvrđav*", "tvrdjav*", "tvrdav*"],
      [PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE]),
-    (["church", "cathedral", "chapel", "mosque", "synagogue", "temple", "monastery"],
+    (["fort", "форт"],
+     [PlaceCategory.LANDMARK, PlaceCategory.MILITARY]),
+    (["church*", "cathedral*", "chapel*", "mosque*", "synagogue*", "temple*", "monastery",
+      "monasteries", "церк*", "церков*", "собор*", "храм*", "монастыр*", "мечет*", "синагог*",
+      "crkv*", "manastir*", "kostel*"],
      [PlaceCategory.RELIGIOUS]),
-    (["museum", "gallery", "exhibition"],
+    (["museum*", "gallery", "exhibition", "музей*", "галере*", "muzej*"],
      [PlaceCategory.MUSEUM]),
-    (["monument", "memorial", "statue", "obelisk"],
+    (["monument*", "memorial*", "statue*", "obelisk*", "памятник*", "пам'ятник*", "монумент*",
+      "мемориал*", "spomenik*"],
      [PlaceCategory.MONUMENT]),
-    (["park", "garden", "botanical"],
+    (["park", "garden*", "botanical", "парк*", "ботанич*"],
      [PlaceCategory.PARK]),
     (["bridge", "lighthouse", "tower", "gate", "arch"],
      [PlaceCategory.ARCHITECTURE]),
@@ -60,13 +89,33 @@ _KEYWORD_RULES: list[tuple[list[str], list[PlaceCategory]]] = [
      [PlaceCategory.RESTAURANT_NOTABLE, PlaceCategory.HOTEL_NOTABLE]),
 
     # Deep research categories
-    (["shipwreck", "wreck", "diving", "snorkeling", "amphora", "underwater",
+    (["shipwreck*", "wreck", "diving", "snorkeling", "amphora*", "underwater",
       "submerged", "seabed"],
      [PlaceCategory.UNDERWATER]),
     (["restaurant", "cuisine", "dish", "wine", "beer", "tasting", "culinary",
       "food", "tavern", "konoba"],
      [PlaceCategory.CULINARY]),
 ]
+
+
+def _keyword_pattern(keyword: str) -> re.Pattern[str]:
+    kw = keyword.lower()
+    if kw.endswith("*"):
+        return re.compile(rf"(?<!\w){re.escape(kw[:-1])}\w*")
+    return re.compile(rf"(?<!\w){re.escape(kw)}(?:s|es)?(?!\w)")
+
+
+_COMPILED_RULES: list[tuple[list[re.Pattern[str]], list[PlaceCategory]]] = [
+    ([_keyword_pattern(k) for k in keywords], cats) for keywords, cats in _KEYWORD_RULES
+]
+
+# OSM keys whose values say what a thing *is* (names, addresses, sources are noise here).
+_CLASSIFY_KEYS = frozenset({
+    "historic", "military", "man_made", "natural", "railway", "building", "amenity", "tourism",
+    "leisure", "industrial", "landuse", "waterway", "tunnel", "bridge", "aeroway", "power",
+    "place", "castle_type", "bunker_type", "artwork_type", "tower:type", "barrier",
+})
+_LIFECYCLE_RE = re.compile(r"^(abandoned|disused|ruins)(:[a-z_]+)?$")
 
 _LLM_CLASSIFY_PROMPT = """\
 Classify this place into one or more categories. Respond ONLY with valid JSON.
@@ -102,8 +151,8 @@ def classify_place(place: Place) -> Place:
     new_cats: set[PlaceCategory] = set(place.categories)
     cat_confidence: dict[str, float] = dict(place.category_confidence)
 
-    for keywords, cats in _KEYWORD_RULES:
-        matches = sum(1 for kw in keywords if kw in text)
+    for patterns, cats in _COMPILED_RULES:
+        matches = sum(1 for pattern in patterns if pattern.search(text))
         if matches > 0:
             conf = min(0.5 + matches * 0.15, 1.0)
             for c in cats:
@@ -194,14 +243,19 @@ async def classify_places_with_llm(places: list[Place]) -> list[Place]:
 
 
 def _searchable_text(place: Place) -> str:
-    """Build a lowercase text blob from all available place info."""
+    """Build a lowercase text blob from the place's name, description and *meaningful* tags."""
     parts: list[str] = []
     if place.name:
         parts.append(place.name)
     if place.description:
         parts.append(place.description)
-    parts.extend(place.tags)
+    for tag in place.tags:
+        key, sep, value = tag.partition("=")
+        if sep and key not in _CLASSIFY_KEYS and not _LIFECYCLE_RE.match(key):
+            continue  # "addr:street=Park Avenue" must not make a place a park
+        parts.append(f"{key} {value}" if sep else tag)
     if "osm_tags" in place.metadata:
         for k, v in place.metadata["osm_tags"].items():
-            parts.append(f"{k} {v}")
+            if k in _CLASSIFY_KEYS or _LIFECYCLE_RE.match(k):
+                parts.append(f"{k} {v}")
     return " ".join(parts).lower()

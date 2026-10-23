@@ -6,8 +6,10 @@ Maps their categories to PlaceCategory and deduplicates with other sources.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import time
 
 import httpx
 
@@ -45,10 +47,22 @@ _CATEGORY_MAP: dict[str, list[PlaceCategory]] = {
 }
 
 
+class AtlasObscuraError(RuntimeError):
+    """Atlas Obscura could not be queried (blocked, down, or a back-off is active)."""
+
+
+# After a failure (it is behind bot protection and answers 403 to API clients) stay away this long
+# instead of spending two doomed requests on every discovery.
+_BACKOFF_SECONDS = 600.0
+
+
 class AtlasObscuraSource(BaseSource):
     """Discovers unusual places from Atlas Obscura's public pages."""
 
     source_name = "atlas"
+
+    def __init__(self) -> None:
+        self._retry_after = 0.0  # time.monotonic() before which we do not even try
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         cache_key = f"atlas_{lat:.3f}_{lng:.3f}_{radius_km:.1f}"
@@ -57,7 +71,14 @@ class AtlasObscuraSource(BaseSource):
             logger.debug("Atlas Obscura cache hit")
             return [Place.model_validate(p) for p in cached]
 
-        places = await self._fetch_nearby(lat, lng, radius_km)
+        if time.monotonic() < self._retry_after:
+            raise AtlasObscuraError("backing off after a recent failure")
+        try:
+            places = await self._fetch_nearby(lat, lng, radius_km)
+        except AtlasObscuraError:
+            self._retry_after = time.monotonic() + _BACKOFF_SECONDS
+            raise
+        # Only a real answer is cached: a failure must not look like "nothing nearby" for 24 h.
         await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
         logger.info("Atlas Obscura returned %d places", len(places))
         return places
@@ -72,7 +93,7 @@ class AtlasObscuraSource(BaseSource):
             "limit": "50",
         }
         headers = {
-            "User-Agent": "TerraIncognita/0.1 (personal research project)",
+            "User-Agent": settings.wikimedia_user_agent,
             "Accept": "application/json",
         }
 
@@ -87,9 +108,8 @@ class AtlasObscuraSource(BaseSource):
                 return await self._scrape_fallback(lat, lng, radius_km, client)
             resp.raise_for_status()
             data = resp.json()
-        except httpx.HTTPError as exc:
-            logger.warning("Atlas Obscura unavailable: %s — returning empty", exc)
-            return []
+        except (httpx.HTTPError, ValueError) as exc:
+            raise AtlasObscuraError(f"Atlas Obscura unavailable: {exc}") from exc
 
         return self._parse_api_response(data)
 
@@ -103,7 +123,7 @@ class AtlasObscuraSource(BaseSource):
             f"?lat={lat}&lng={lng}&nearby=1"
         )
         headers = {
-            "User-Agent": "TerraIncognita/0.1 (personal research project)",
+            "User-Agent": settings.wikimedia_user_agent,
             "Accept": "text/html",
         }
         try:
@@ -111,8 +131,7 @@ class AtlasObscuraSource(BaseSource):
             resp.raise_for_status()
             return self._parse_html(resp.text, south, west, north, east)
         except httpx.HTTPError as exc:
-            logger.warning("Atlas Obscura HTML fallback failed: %s", exc)
-            return []
+            raise AtlasObscuraError(f"Atlas Obscura HTML fallback failed: {exc}") from exc
 
     def _parse_api_response(self, data: dict) -> list[Place]:
         places: list[Place] = []
@@ -139,7 +158,10 @@ class AtlasObscuraSource(BaseSource):
                         confidence=0.85,
                         tags=item.get("tags", []),
                         photos=[item["photo"]] if item.get("photo") else [],
-                        metadata={"atlas_url": item.get("url", "")},
+                        metadata={
+                            "atlas_url": item.get("url", ""),
+                            **self._absolute_url(item.get("url")),
+                        },
                     )
                 )
             except (KeyError, ValueError, TypeError) as exc:
@@ -165,7 +187,8 @@ class AtlasObscuraSource(BaseSource):
                 name = m.group(3).strip()
                 places.append(
                     Place(
-                        id=f"atlas_html_{hash(name) & 0xFFFFFFFF:08x}",
+                        # Stable across processes (str hash() is salted per run).
+                        id=f"atlas_html_{hashlib.md5(name.encode()).hexdigest()[:8]}",
                         source=PlaceSource.ATLAS_OBSCURA,
                         sources=[PlaceSource.ATLAS_OBSCURA],
                         name=name,
@@ -177,6 +200,14 @@ class AtlasObscuraSource(BaseSource):
             except (ValueError, TypeError):
                 continue
         return places
+
+    @staticmethod
+    def _absolute_url(url: str | None) -> dict[str, str]:
+        if not url:
+            return {}
+        if url.startswith("/"):
+            url = settings.atlas_obscura_base_url + url
+        return {"source_url": url} if url.startswith("https://") else {}
 
     @staticmethod
     def _map_categories(

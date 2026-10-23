@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     overpass_rate_limit_requests: int = 2
     overpass_rate_limit_window_seconds: int = 10
     overpass_timeout: int = 30
+    # Comma-separated mirrors tried (in order) when the primary Overpass endpoint fails or is overloaded.
+    overpass_fallback_urls: str = "https://overpass.kumi.systems/api/interpreter"
+    overpass_max_elements: int = 5000  # hard cap on elements per query (keeps responses/timeouts sane)
+    # Mainstream landmarks (museums, memorials, viewpoints...) are only queried up to this radius;
+    # larger searches fetch the "hidden places" classes only.
+    overpass_landmark_max_radius_km: float = 15.0
 
     # Atlas Obscura
     atlas_obscura_base_url: str = "https://www.atlasobscura.com"
@@ -55,6 +61,11 @@ class Settings(BaseSettings):
 
     # Deduplication
     dedup_distance_meters: float = 50.0
+    # Places whose (distinctive) names match may be merged this far apart (polygon centre vs pin).
+    dedup_name_match_distance_meters: float = 150.0
+
+    # Discovery pipeline
+    discovery_source_timeout_seconds: float = 75.0  # per-source budget; a slow source is reported as "timeout"
 
     # Explorer Journal (Epic 5)
     journal_data_dir: str = "data/journal"
@@ -103,6 +114,18 @@ class Settings(BaseSettings):
     deep_research_cache_ttl_seconds: int = 2592000  # 30 days
     deep_research_poll_interval: int = 10  # seconds between status polls
     deep_research_max_wait: int = 300  # max seconds to wait for research
+
+    # Wikimedia enrichment (POST /api/place/enrich). Wikimedia asks API clients to send a
+    # descriptive User-Agent with contact info: override with your own via TERRA_WIKIMEDIA_USER_AGENT.
+    wikimedia_user_agent: str = (
+        "TerraIncognita/0.2 (https://github.com/DoroninDobroCorp/TerraIncognita; "
+        "contact: see repository issues) python-httpx"
+    )
+    wikimedia_timeout: int = 10
+    enrichment_rate_limit_requests: int = 10  # outgoing Wikimedia calls per window
+    enrichment_rate_limit_window_seconds: float = 1.0
+    enrichment_commons_radius_m: int = 300  # Commons photo search radius around the place
+    enrichment_max_photos: int = 6
 
     model_config = {"env_file": ".env", "env_prefix": "TERRA_", "extra": "ignore"}
 

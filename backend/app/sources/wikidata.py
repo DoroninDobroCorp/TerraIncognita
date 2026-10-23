@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import logging
 
-import httpx
-
 from app.config import settings
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.cache import disk_cache
@@ -19,31 +17,48 @@ from app.utils.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
-# Wikidata type → PlaceCategory
+# Wikidata type (P31 value) → PlaceCategory. Every Q-id below was checked against wbgetentities
+# (the previous table had several wrong ids: "ruin" was the id of city gates, "bunker" of a
+# university, "abandoned building" of headlands, "lighthouse" of cemeteries).
 _TYPE_MAP: dict[str, list[PlaceCategory]] = {
-    "Q839954": [PlaceCategory.RUINS],                    # archaeological site
-    "Q82117": [PlaceCategory.RUINS],                     # ruin
-    "Q57821": [PlaceCategory.MILITARY, PlaceCategory.LANDMARK],  # fortification
-    "Q23413": [PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE],  # castle
-    "Q16970": [PlaceCategory.RELIGIOUS],                  # church building
-    "Q32815": [PlaceCategory.RELIGIOUS],                  # mosque
-    "Q34627": [PlaceCategory.RELIGIOUS],                  # synagogue
-    "Q33506": [PlaceCategory.MUSEUM],                     # museum
-    "Q4989906": [PlaceCategory.MONUMENT],                 # monument
-    "Q35509": [PlaceCategory.CAVE, PlaceCategory.UNDERGROUND],  # cave
-    "Q863813": [PlaceCategory.MILITARY],                  # bunker
-    "Q12518": [PlaceCategory.UNDERGROUND],                # tower
-    "Q41176": [PlaceCategory.ARCHITECTURE],               # building
-    "Q191992": [PlaceCategory.ABANDONED],                 # abandoned building
-    "Q15893266": [PlaceCategory.LANDMARK],                # former entity
-    "Q12280": [PlaceCategory.LANDMARK],                   # bridge
-    "Q39614": [PlaceCategory.LANDMARK],                   # lighthouse
-    "Q12323": [PlaceCategory.WATER, PlaceCategory.NATURE_HIDDEN],  # waterfall
-    "Q124714": [PlaceCategory.WATER],                     # spring
+    # hidden / forgotten
+    "Q109607": [PlaceCategory.RUINS],                                  # ruins
+    "Q839954": [PlaceCategory.RUINS],                                  # archaeological site
+    "Q106765618": [PlaceCategory.ABANDONED],                           # abandoned building or structure
+    "Q4663385": [PlaceCategory.ABANDONED, PlaceCategory.TRANSPORT],    # former railway station
+    "Q74047": [PlaceCategory.ABANDONED],                               # ghost town
+    "Q91122": [PlaceCategory.MILITARY, PlaceCategory.UNDERGROUND],     # bunker
+    "Q389959": [PlaceCategory.MILITARY, PlaceCategory.UNDERGROUND],    # air-raid shelter
+    "Q20788294": [PlaceCategory.MILITARY, PlaceCategory.UNDERGROUND],  # air-raid shelter adit
+    "Q245016": [PlaceCategory.MILITARY],                               # military base
+    "Q820477": [PlaceCategory.INDUSTRIAL, PlaceCategory.UNDERGROUND],  # mine
+    "Q44377": [PlaceCategory.UNDERGROUND],                             # tunnel
+    "Q35509": [PlaceCategory.CAVE, PlaceCategory.UNDERGROUND],         # cave
+    "Q852190": [PlaceCategory.UNDERWATER],                             # shipwreck
+    "Q274153": [PlaceCategory.INDUSTRIAL, PlaceCategory.ARCHITECTURE],  # water tower
+    "Q38720": [PlaceCategory.INDUSTRIAL, PlaceCategory.ARCHITECTURE],  # windmill
+    "Q12323": [PlaceCategory.WATER],                                   # dam
+    "Q34038": [PlaceCategory.WATER, PlaceCategory.NATURE_HIDDEN],      # waterfall
+    "Q124714": [PlaceCategory.WATER],                                  # spring
+    # fortifications & classic landmarks
+    "Q57821": [PlaceCategory.MILITARY, PlaceCategory.LANDMARK],        # fortification
+    "Q1785071": [PlaceCategory.MILITARY, PlaceCategory.LANDMARK],      # fort
+    "Q23413": [PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE],    # castle
+    "Q82117": [PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE],    # city gate
+    "Q16970": [PlaceCategory.RELIGIOUS],                               # church building
+    "Q32815": [PlaceCategory.RELIGIOUS],                               # mosque
+    "Q34627": [PlaceCategory.RELIGIOUS],                               # synagogue
+    "Q33506": [PlaceCategory.MUSEUM],                                  # museum
+    "Q4989906": [PlaceCategory.MONUMENT],                              # monument
+    "Q12518": [PlaceCategory.ARCHITECTURE],                            # tower
+    "Q41176": [PlaceCategory.ARCHITECTURE],                            # building
+    "Q15893266": [PlaceCategory.LANDMARK],                             # former entity
+    "Q12280": [PlaceCategory.LANDMARK],                                # bridge
+    "Q39715": [PlaceCategory.LANDMARK, PlaceCategory.ARCHITECTURE],    # lighthouse
 }
 
 _SPARQL_TEMPLATE = """
-SELECT DISTINCT ?item ?itemLabel ?itemDescription ?coord ?sitelink ?type WHERE {{
+SELECT DISTINCT ?item ?itemLabel ?itemDescription ?coord ?sitelink ?sitelinks ?type WHERE {{
   SERVICE wikibase:box {{
     ?item wdt:P625 ?coord .
     bd:serviceParam wikibase:cornerWest "Point({west} {south})"^^geo:wktLiteral .
@@ -55,9 +70,10 @@ SELECT DISTINCT ?item ?itemLabel ?itemDescription ?coord ?sitelink ?type WHERE {
     ?sitelink schema:about ?item ;
               schema:isPartOf <https://en.wikipedia.org/> .
   }}
+  OPTIONAL {{ ?item wikibase:sitelinks ?sitelinks . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,ru,de,fr,es" . }}
 }}
-LIMIT 500
+LIMIT 1500
 """
 
 
@@ -90,24 +106,20 @@ class WikidataSource(BaseSource):
         )
 
         headers = {
-            "User-Agent": "TerraIncognita/0.1 (personal research project)",
+            "User-Agent": settings.wikimedia_user_agent,
             "Accept": "application/sparql-results+json",
         }
-        try:
-            client = get_http_client()
-            resp = await client.get(
-                settings.wikidata_sparql_url,
-                params={"query": query},
-                headers=headers,
-                timeout=settings.wikidata_timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except httpx.HTTPError as exc:
-            logger.warning("Wikidata SPARQL failed: %s", exc)
-            return []
-
-        return self._parse_results(data)
+        # Failures propagate (discovery reports the source as "error"); returning [] here would
+        # get an outage cached for a day as "no places nearby".
+        client = get_http_client()
+        resp = await client.get(
+            settings.wikidata_sparql_url,
+            params={"query": query},
+            headers=headers,
+            timeout=settings.wikidata_timeout,
+        )
+        resp.raise_for_status()
+        return self._parse_results(resp.json())
 
     def _parse_results(self, data: dict) -> list[Place]:
         seen: set[str] = set()
@@ -132,6 +144,7 @@ class WikidataSource(BaseSource):
             name = binding.get("itemLabel", {}).get("value")
             description = binding.get("itemDescription", {}).get("value")
             wiki_url = binding.get("sitelink", {}).get("value")
+            sitelinks = self._parse_count(binding.get("sitelinks", {}).get("value"))
 
             # Prefer less-popular items (those without Wikipedia articles score higher for unusualness)
             confidence = 0.6 if wiki_url else 0.7
@@ -150,10 +163,19 @@ class WikidataSource(BaseSource):
                         "wikidata_id": qid,
                         "wikipedia_url": wiki_url,
                         "type_qid": type_qid,
+                        # How many Wikipedia language editions cover it: a mainstream-ness signal.
+                        **({"sitelinks": sitelinks} if sitelinks is not None else {}),
                     },
                 )
             )
         return places
+
+    @staticmethod
+    def _parse_count(value: str | None) -> int | None:
+        try:
+            return max(int(value), 0) if value is not None else None
+        except ValueError:
+            return None
 
     @staticmethod
     def _parse_point(wkt: str) -> tuple[float | None, float | None]:

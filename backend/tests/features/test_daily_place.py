@@ -88,8 +88,8 @@ class TestRankKey:
         assert _rank_key(scored) < _rank_key(plain)
         assert _rank_key(wiki) < _rank_key(plain)
 
-    def test_works_on_a_place_without_the_new_fields(self):
-        assert not hasattr(mk("a"), "unusual_score")
+    def test_works_on_a_place_with_default_scoring_fields(self):
+        assert mk("a").unusual_score == 0.0
         assert isinstance(_rank_key(mk("a")), tuple)
 
     def test_absurd_unusual_score_is_clamped(self):
