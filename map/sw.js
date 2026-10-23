@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const SHELL_VERSION = 'v4';
+const SHELL_VERSION = 'v5';
 const SHELL_CACHE = `ti-shell-${SHELL_VERSION}`;
 const STATIC_CACHE = `ti-static-${SHELL_VERSION}`;
 const API_CACHE = `ti-api-${SHELL_VERSION}`;

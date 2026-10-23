@@ -56,7 +56,7 @@ function renderCollections(list) {
 async function loadCollections() {
   if (features.collections === false || !TI.net.ok) return;
   try {
-    const d = await api(`/api/collections?lat=${state.userLat.toFixed(4)}&lng=${state.userLng.toFixed(4)}&radius_km=50`, { retries: 1 });
+    const d = await api(`/api/collections?lat=${state.userLat.toFixed(4)}&lng=${state.userLng.toFixed(4)}&radius_km=50`, { retries: 0, timeout: 45000 });
     renderCollections(d.collections || []);
   } catch (e) { featureUnavailable('collections', e); }
 }

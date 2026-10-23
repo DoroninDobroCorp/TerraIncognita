@@ -103,7 +103,8 @@ const FEATURE_PATHS = {
 };
 
 function applyFeatureVisibility() {
-  $$('[data-feature]').forEach(el => { el.hidden = features[el.dataset.feature] === false; });
+  // Only ever HIDE: elements that start hidden (cards waiting for data) are shown by their own renderers.
+  $$('[data-feature]').forEach(el => { if (features[el.dataset.feature] === false) el.hidden = true; });
   const ask = $('card-ask'); // lives in the place card, whose visibility also depends on fog
   if (ask && features.ask === false) ask.hidden = true;
 }

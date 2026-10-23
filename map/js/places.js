@@ -42,6 +42,13 @@ function showFallbackPlaces() {
   }
 }
 
+/** Newer backends report per-source outcomes ("ok" | "empty" | "error" | "timeout"); say so when results are partial. */
+function warnAboutSlowSources(status) {
+  if (!status || typeof status !== 'object') return;
+  const bad = Object.entries(status).filter(([, v]) => v === 'timeout' || v === 'error').map(([k]) => SOURCE_NAMES[k] || k);
+  if (bad.length) toast(`⚠️ ${bad.join(', ')} did not answer — results may be incomplete`, 'warning', 6000);
+}
+
 // Fetch places (guarded against concurrent calls)
 let fetchBusy = false;
 async function fetchPlaces() {
@@ -52,14 +59,15 @@ async function fetchPlaces() {
     if (!TI.net.ok) throw new Error('offline');
     let data;
     try {
-      data = await api('/api/discover', {method:'POST', timeout: 25000, body: discoverBody()});
+      data = await api('/api/discover', {method:'POST', timeout: 45000, body: discoverBody()});
     } catch (e) {
       if (e.status !== 422 || features.unusual === false || !String(e.message).includes('sort_by')) throw e;
       features.unusual = false; // older backend: sort_by "unusual" is not accepted, fall back for good
-      data = await api('/api/discover', {method:'POST', timeout: 25000, body: discoverBody()});
+      data = await api('/api/discover', {method:'POST', timeout: 45000, body: discoverBody()});
     }
     state.places = data.places || []; applyFilters();
     saveLastPlaces(state.places);
+    warnAboutSlowSources(data.source_status);
     loadDaily();
   } catch(e) { showFallbackPlaces(); }
   showMapLoading(false);
@@ -92,7 +100,7 @@ function applyFilters() {
 }
 
 // ── Place card ──
-const SOURCE_NAMES = {osm:'OpenStreetMap',atlas:'Atlas Obscura',wiki:'Wikidata',community:'Community'};
+const SOURCE_NAMES = {osm:'OpenStreetMap',atlas:'Atlas Obscura',wiki:'Wikidata',community:'Community',deep_research:'AI research'};
 
 function showPlaceCard(placeId) {
   const place = state.places.find(p=>p.id===placeId); if(!place)return;

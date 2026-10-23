@@ -21,7 +21,7 @@ async function buildRoute() {
   analytics.track('route_build', { mode: $('route-mode').value });
   try {
     const data = await api('/api/route',{method:'POST',timeout:60000,body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
-    setCurrentRoute(data.route || data, { summary: data.summary });
+    setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links });
     toast('Route built!','success');
   } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
@@ -34,7 +34,7 @@ async function exploreRoute() {
   analytics.track('route_explore');
   try {
     const data = await api('/api/route/explore',{method:'POST',timeout:45000,body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
-    setCurrentRoute(data.route || data, { summary: data.summary });
+    setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links });
     toast('Circular walk generated!','success');
   } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
@@ -51,14 +51,14 @@ async function buildLoop() {
   toast('Building your loop...','info');
   analytics.track('route_loop', { mode: loopMode() });
   try {
-    const data = await api('/api/route/loop', { method: 'POST', retries: 0, timeout: 30000, body: {
+    const data = await api('/api/route/loop', { method: 'POST', retries: 0, timeout: 90000, body: {
       lat: center.lat, lng: center.lng,
       duration_hours: clamp(parseFloat($('loop-hours').value) || 2, 0.5, 12),
       mode: loopMode(),
       categories: selectedCats('loop-cats'),
       max_stops: clamp(parseInt($('loop-stops').value) || 5, 2, 8),
     } });
-    setCurrentRoute(data.route || data, { label: '🔁 Loop route', summary: data.summary });
+    setCurrentRoute(data.route || data, { label: '🔁 Loop route', summary: data.summary, links: data.navigation_links });
     toast('Loop ready!','success');
   } catch (e) {
     if (featureUnavailable('loop', e)) { toast('This server cannot build loop routes yet','warning'); selectTab($('tab-r-build')); }
@@ -73,7 +73,21 @@ function setCurrentRoute(route, opts = {}) {
   if (showRouteResult(route, opts)) drawRouteOnMap(route);
 }
 
-function showRouteResult(route, { label = null, summary = null } = {}) {
+/** "Open in Google Maps / OsmAnd" links the backend builds for every route (navigation_links). */
+const NAV_LINK_LABELS = { google_maps: '🧭 Google Maps', osmand: '📲 OsmAnd', geo: '📍 Maps app' };
+function navLinkUrl(u) {
+  const s = String(u || '');
+  if (/^(geo|osmand):/i.test(s)) return /^[\w:/?&=.,%+\-@#!]*$/.test(s) ? s : '';   // custom schemes open a mapping app; never script
+  return safeUrl(s);
+}
+function renderNavLinks(links) {
+  const box = $('route-links');
+  const items = Object.entries(NAV_LINK_LABELS).map(([k, label]) => ({ label, url: navLinkUrl(links && links[k]) })).filter(i => i.url);
+  box.hidden = items.length === 0;
+  setHtml(box, html`${items.map(i => html`<a class="btn btn-secondary btn-sm" href="${i.url}" target="_blank" rel="noopener noreferrer" data-native>${i.label}</a>`)}`);
+}
+
+function showRouteResult(route, { label = null, summary = null, links = null } = {}) {
   if (!route || !route.total_distance_m) { toast('Invalid route data','error'); return false; }
   $('route-result').hidden = false;
   $('route-title').textContent = label || (route.is_circular?'🔄 Circular Walk':'🛤️ Route');
@@ -82,6 +96,7 @@ function showRouteResult(route, { label = null, summary = null } = {}) {
   const sum = $('route-summary');
   sum.textContent = typeof summary === 'string' ? summary : '';
   sum.hidden = !sum.textContent;
+  renderNavLinks(links);
   const wps = route.waypoints||[];
   setHtml($('route-waypoints'), wps.length ? html`${wps.map((w,i) => html`
     <div class="list-item list-item-compact">
