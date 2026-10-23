@@ -195,6 +195,24 @@ class TestFogGeometry:
             # cell centre may be up to half a cell (~80 m) away from the probe offset point
             assert gam._haversine_m(lat, lng, clat, clng) <= r + 100
 
+    @pytest.mark.parametrize("lat", [-60.0, -12.3, 0.0, 42.45, 55.0, 70.0])
+    @pytest.mark.parametrize("radius", [30.0, 50.0, 250.0, 500.0])
+    def test_row_solution_matches_brute_force_haversine(self, lat, radius):
+        """The analytic per-row column limit must select exactly the cells whose offset point
+        is within the radius (what the old O(N^2) haversine scan selected)."""
+        lng = 18.53
+        steps = int(radius / 111.0) + 2
+        wide = int(steps / math.cos(math.radians(lat))) + 2
+        expected = {
+            gam._cell_key(lat + a * 0.001, lng + b * 0.001)
+            for a in range(-steps, steps + 1)
+            for b in range(-wide, wide + 1)
+            if gam._haversine_m(lat, lng, lat + a * 0.001, lng + b * 0.001) <= radius
+        }
+        got = set(gam._cells_in_radius(lat, lng, radius))
+        assert got == expected
+        assert gam._count_cells_in_radius(lat, radius) == len(gam._cells_in_radius(lat, lng, radius))
+
     async def test_explored_area_uses_real_cell_size(self):
         """0.001 deg is ~111 m, not 11 m: a 500 m disc is ~0.8 km2, not 0.008 km2."""
         res = await gam.reveal_fog([(42.45, 18.53, None)], radius_m=500)
