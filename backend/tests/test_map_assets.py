@@ -11,7 +11,9 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import struct
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -130,6 +132,21 @@ def test_every_local_reference_exists(app_page: _Page):
     assert "css/app.css" in refs and "js/main.js" in refs
     for ref in refs:
         assert (MAP_DIR / ref.split("?")[0].split("#")[0]).is_file(), f"app.html references missing file {ref}"
+
+
+def test_every_asset_is_tracked_by_git():
+    """The repo-wide .gitignore has *.png etc.; an ignored icon works locally and breaks the deployed PWA."""
+    root = MAP_DIR.parent
+    if not shutil.which("git") or not (root / ".git").exists():
+        pytest.skip("not a git checkout")
+    wanted = {r.split("?")[0] for r in _local_refs(_parse(APP_HTML))}
+    wanted |= {p.name and f"js/{p.name}" for p in _js_files()}
+    wanted |= set(_sw_list("SHELL_FILES"))
+    manifest = json.loads((MAP_DIR / "manifest.webmanifest").read_text(encoding="utf-8"))
+    wanted |= {i["src"] for i in manifest["icons"]} | {"manifest.webmanifest", "sw.js", "README.md"}
+    for rel in sorted(wanted):
+        done = subprocess.run(["git", "ls-files", "--error-unmatch", f"map/{rel}"], cwd=root, capture_output=True)
+        assert done.returncode == 0, f"map/{rel} is not tracked by git (ignored by .gitignore?) — `git add -f` it"
 
 
 def test_external_resources_carry_sri(app_page: _Page):
