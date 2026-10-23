@@ -1,0 +1,162 @@
+{
+ "name": "ukrainian_port_city",
+ "description": "Cyrillic-named Black Sea port city (name / name:uk / name:ru variants): abandoned hospital and sanatorium complex, air-raid shelter, catacomb entrance, ruined fort and church, among opera house, cathedral, museums, monuments and a five-star hotel.",
+ "provenance": "Synthetic. Tag patterns follow real OSM mapping in Odesa-area cities; names, coordinates and ids (>= 9300000000) are invented.",
+ "center": [46.4825, 30.7233],
+ "radius_km": 4.0,
+ "elements": [
+  {"type": "way", "id": 9300000001, "center": {"lat": 46.4959747, "lon": 30.6972082}, "tags": {"abandoned:amenity": "hospital", "building": "yes", "name": "Заброшенная больница на Фонтане", "name:uk": "Покинута лікарня на Фонтані", "name:ru": "Заброшенная больница на Фонтане", "start_date": "1938"}},
+  {"type": "node", "id": 9300000002, "lat": 46.4851949, "lon": 30.7285184, "tags": {"military": "bunker", "name": "Бомбоубежище №14", "name:uk": "Бомбосховище №14", "start_date": "1941", "access": "no"}},
+  {"type": "node", "id": 9300000003, "lat": 46.4753135, "lon": 30.7389551, "tags": {"natural": "cave_entrance", "access": "no", "name": "Вход в катакомбы", "name:en": "Catacombs entrance"}},
+  {"type": "way", "id": 9300000004, "center": {"lat": 46.4717203, "lon": 30.7154724}, "tags": {"abandoned": "yes", "industrial": "factory", "building": "industrial", "name": "Завод «Продмаш» (заброшенный корпус)", "description": "Заброшенный корпус пищевого машиностроительного завода"}},
+  {"type": "way", "id": 9300000005, "center": {"lat": 46.4905848, "lon": 30.7454781}, "tags": {"man_made": "water_tower", "disused": "yes", "name": "Старая водонапорная башня", "start_date": "1912"}},
+  {"type": "way", "id": 9300000006, "center": {"lat": 46.4627372, "lon": 30.7350413}, "tags": {"historic": "fort", "ruins": "yes", "name": "Южный форт (руины)", "start_date": "1880"}},
+  {"type": "node", "id": 9300000007, "lat": 46.4690253, "lon": 30.6998173, "tags": {"disused:railway": "station", "railway": "halt", "name": "Станция Пересыпь-Товарная"}},
+  {"type": "way", "id": 9300000008, "center": {"lat": 46.4923814, "lon": 30.7272138}, "tags": {"railway": "abandoned", "tunnel": "yes", "name": "Заброшенный железнодорожный тоннель"}},
+  {"type": "way", "id": 9300000009, "center": {"lat": 46.5031612, "lon": 30.7037311}, "tags": {"landuse": "quarry", "disused": "yes", "name": "Заброшенная каменоломня"}},
+  {"type": "way", "id": 9300000010, "center": {"lat": 46.4798051, "lon": 30.6959036}, "tags": {"ruins": "yes", "building": "church", "name": "Развалины кирхи", "start_date": "1895"}},
+  {"type": "node", "id": 9300000011, "lat": 46.4591439, "lon": 30.7272138, "tags": {"historic": "wreck", "name": "Остов баржи"}},
+  {"type": "node", "id": 9300000012, "lat": 46.5004662, "lon": 30.7480873, "tags": {"military": "bunker", "bunker_type": "pillbox"}},
+  {"type": "node", "id": 9300000013, "lat": 46.500601, "lon": 30.7484134, "tags": {"military": "bunker", "bunker_type": "pillbox"}},
+  {"type": "node", "id": 9300000014, "lat": 46.5007357, "lon": 30.7487396, "tags": {"military": "bunker", "bunker_type": "pillbox"}},
+  {"type": "way", "id": 9300000015, "center": {"lat": 46.4955255, "lon": 30.6932944}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000016, "center": {"lat": 46.495795, "lon": 30.6932944}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000017, "center": {"lat": 46.4960645, "lon": 30.6932944}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000018, "center": {"lat": 46.496334, "lon": 30.6932944}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000019, "center": {"lat": 46.4955255, "lon": 30.693751}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000020, "center": {"lat": 46.495795, "lon": 30.693751}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000021, "center": {"lat": 46.4960645, "lon": 30.693751}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000022, "center": {"lat": 46.496334, "lon": 30.693751}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000023, "center": {"lat": 46.4955255, "lon": 30.6942076}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000024, "center": {"lat": 46.495795, "lon": 30.6942076}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000025, "center": {"lat": 46.4960645, "lon": 30.6942076}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000026, "center": {"lat": 46.496334, "lon": 30.6942076}, "tags": {"abandoned": "yes", "building": "yes"}},
+  {"type": "way", "id": 9300000027, "center": {"lat": 46.4842966, "lon": 30.7252569}, "tags": {"tourism": "attraction", "building": "yes", "name": "Одесский оперный театр", "name:en": "Odesa Opera House", "wikipedia": "uk:Одеський національний академічний театр опери та балету", "wikidata": "Q9300001", "opening_hours": "09:00-18:00"}},
+  {"type": "way", "id": 9300000028, "center": {"lat": 46.4860932, "lon": 30.7193862}, "tags": {"building": "cathedral", "name": "Спасо-Преображенский собор", "wikipedia": "ru:Спасо-Преображенский собор (Одесса)", "wikidata": "Q9300002"}},
+  {"type": "way", "id": 9300000029, "center": {"lat": 46.4847458, "lon": 30.7239523}, "tags": {"tourism": "museum", "name": "Одесский археологический музей", "wikipedia": "ru:Одесский археологический музей", "fee": "yes", "opening_hours": "Tu-Su 10:00-17:00"}},
+  {"type": "way", "id": 9300000030, "center": {"lat": 46.4851949, "lon": 30.7248655}, "tags": {"tourism": "museum", "name": "Литературный музей", "website": "https://example.ua"}},
+  {"type": "way", "id": 9300000031, "center": {"lat": 46.4833983, "lon": 30.7206908}, "tags": {"tourism": "museum", "name": "Музей западного и восточного искусства"}},
+  {"type": "node", "id": 9300000032, "lat": 46.4844763, "lon": 30.7266919, "tags": {"historic": "monument", "name": "Памятник Дюку де Ришелье", "wikipedia": "ru:Памятник Дюку де Ришелье", "wikidata": "Q9300003"}},
+  {"type": "node", "id": 9300000033, "lat": 46.483578, "lon": 30.7244741, "tags": {"historic": "memorial", "name": "Памятник Воронцову", "memorial": "statue"}},
+  {"type": "node", "id": 9300000034, "lat": 46.4854644, "lon": 30.7261701, "tags": {"historic": "memorial", "name": "Мемориальная доска Пушкину", "memorial": "plaque"}},
+  {"type": "node", "id": 9300000035, "lat": 46.483039, "lon": 30.7214736, "tags": {"historic": "memorial", "name": "Аллея Славы", "memorial": "stele"}},
+  {"type": "way", "id": 9300000036, "center": {"lat": 46.4839373, "lon": 30.7259092}, "tags": {"tourism": "hotel", "stars": "5", "name": "Отель «Лондонская»", "wikipedia": "ru:Лондонская (гостиница, Одесса)"}},
+  {"type": "node", "id": 9300000037, "lat": 46.4837576, "lon": 30.7256483, "tags": {"amenity": "restaurant", "name": "Ресторан «Дача»", "heritage": "2"}},
+  {"type": "node", "id": 9300000038, "lat": 46.4848356, "lon": 30.7276052, "tags": {"tourism": "attraction", "name": "Потёмкинская лестница", "wikidata": "Q9300004", "wikipedia": "ru:Потёмкинская лестница"}},
+  {"type": "node", "id": 9300000039, "lat": 46.4869916, "lon": 30.7285184, "tags": {"tourism": "viewpoint", "name": "Смотровая площадка Приморского бульвара"}},
+  {"type": "node", "id": 9300000040, "lat": 46.4789068, "lon": 30.7350413, "tags": {"tourism": "viewpoint"}},
+  {"type": "node", "id": 9300000041, "lat": 46.4887882, "lon": 30.7115587, "tags": {"tourism": "viewpoint", "direction": "180"}},
+  {"type": "node", "id": 9300000042, "lat": 46.4735169, "lon": 30.752001, "tags": {"natural": "cliff", "name": "Обрыв у Большого Фонтана"}},
+  {"type": "node", "id": 9300000043, "lat": 46.4833085, "lon": 30.7265615, "tags": {"tourism": "artwork", "artwork_type": "mural", "name": "Мурал «Одесса — мама»"}}
+ ],
+ "extra_sources": {
+ "atlas": [
+  {
+   "id": "9300",
+   "title": "Odesa Catacombs",
+   "subtitle": "Hundreds of kilometres of limestone mine tunnels beneath the city",
+   "lat": 46.475393,
+   "lng": 30.738955,
+   "categories": [
+    "tunnels",
+    "caves"
+   ],
+   "tags": [
+    "abandoned"
+   ],
+   "photo": "https://example.com/catacombs.jpg",
+   "url": "/places/odessa-catacombs"
+  }
+ ],
+ "wikidata": [
+  {
+   "item": {
+    "value": "http://www.wikidata.org/entity/Q9300001"
+   },
+   "itemLabel": {
+    "value": "Odesa Opera and Ballet Theater"
+   },
+   "coord": {
+    "value": "Point(30.7241 46.4846)"
+   },
+   "type": {
+    "value": "http://www.wikidata.org/entity/Q41176"
+   },
+   "sitelinks": {
+    "value": "68"
+   },
+   "sitelink": {
+    "value": "https://en.wikipedia.org/wiki/Odesa_Opera"
+   }
+  },
+  {
+   "item": {
+    "value": "http://www.wikidata.org/entity/Q9300004"
+   },
+   "itemLabel": {
+    "value": "Potemkin Stairs"
+   },
+   "coord": {
+    "value": "Point(30.7274 46.4848)"
+   },
+   "type": {
+    "value": "http://www.wikidata.org/entity/Q4989906"
+   },
+   "sitelinks": {
+    "value": "80"
+   },
+   "sitelink": {
+    "value": "https://en.wikipedia.org/wiki/Potemkin_Stairs"
+   }
+  }
+ ]
+},
+ "expect": {
+ "gems": [
+  "osm_way_9300000001",
+  "osm_node_9300000002",
+  "osm_node_9300000003",
+  "osm_way_9300000004",
+  "osm_way_9300000005",
+  "osm_way_9300000006",
+  "osm_node_9300000007",
+  "osm_way_9300000008",
+  "osm_way_9300000009",
+  "osm_way_9300000010"
+ ],
+ "clutter": [
+  "osm_way_9300000027",
+  "osm_way_9300000028",
+  "osm_way_9300000029",
+  "osm_way_9300000030",
+  "osm_way_9300000031",
+  "osm_node_9300000032",
+  "osm_node_9300000033",
+  "osm_node_9300000034",
+  "osm_node_9300000035",
+  "osm_way_9300000036",
+  "osm_node_9300000037",
+  "osm_node_9300000038",
+  "osm_node_9300000039",
+  "osm_node_9300000040",
+  "osm_node_9300000041",
+  "osm_node_9300000042"
+ ],
+ "top_n": 14,
+ "top3_distinct_sites": true,
+ "also_merged": [
+  [
+   "osm_node_9300000003",
+   "atlas_9300"
+  ],
+  [
+   "osm_way_9300000027",
+   "wiki_Q9300001"
+  ],
+  [
+   "osm_node_9300000038",
+   "wiki_Q9300004"
+  ]
+ ]
+}
+}
