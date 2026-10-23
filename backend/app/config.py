@@ -27,7 +27,9 @@ class Settings(BaseSettings):
 
     # Wikidata
     wikidata_sparql_url: str = "https://query.wikidata.org/sparql"
-    wikidata_timeout: int = 30
+    # Query Service gives up after 60 s itself; a dense city centre takes 20-30 s (Paris, 20 km: 29 s measured), so a
+    # shorter limit would keep the cache warm-up of big cities from ever finishing.
+    wikidata_timeout: int = 60
 
     # Cache
     cache_dir: str = "cache"

@@ -311,3 +311,8 @@ class TestTypeRowsAndTruncation:
         await wikidata_module.disk_cache.set(f"wiki2_{south:.3f}_{west:.3f}_{north:.3f}_{east:.3f}", [])
         httpx_mock.add_response(url=re.compile(r"https://query\.wikidata\.org/sparql.*"), json=_SPARQL_RESPONSE)
         assert len(await wd.search(42.45, 18.53, 5.0)) == 3
+
+
+def test_the_timeout_leaves_room_for_a_dense_city_centre():
+    """Measured against the live service: Vienna (10 km) 7-17 s, Paris (20 km) 29 s; it cuts queries off at 60 s."""
+    assert 45 <= settings.wikidata_timeout <= 60
