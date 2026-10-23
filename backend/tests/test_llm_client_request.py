@@ -126,3 +126,75 @@ class TestOpenAIClient:
             llm_client._get_openai_client()
         assert ctor.call_args.kwargs["timeout"] == 12
         monkeypatch.setattr(llm_client, "_openai_client", None)
+
+
+class TestUnusableReplies:
+    @pytest.mark.parametrize("stop", ["max_tokens", "refusal", "pause_turn", "model_context_window_exceeded"])
+    def test_text_from_an_unfinished_or_refused_reply_is_not_an_answer(self, stop):
+        response = SimpleNamespace(content=[SimpleNamespace(type="text", text="Partial answ")], stop_reason=stop)
+        with pytest.raises(llm_client.LLMResponseError, match=stop):
+            llm_client._response_text(response)
+
+    def test_end_turn_and_stop_sequence_are_fine(self):
+        for stop in ("end_turn", "stop_sequence", "tool_use", None):
+            response = SimpleNamespace(content=[SimpleNamespace(type="text", text="ok")], stop_reason=stop)
+            assert llm_client._response_text(response) == "ok"
+
+    async def test_a_refusal_is_not_cached_and_does_not_open_the_circuit_breaker(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+        monkeypatch.setattr(settings, "llm_provider", "anthropic")
+        monkeypatch.setattr(settings, "llm_daily_token_cap", 0)
+        monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
+        monkeypatch.setattr(llm_client, "_consecutive_failures", 0)
+        monkeypatch.setattr(llm_client, "_daily_usage_path", tmp_path / "u.json")
+        monkeypatch.setattr(llm_client, "_daily", {"date": "", "input": 0, "output": 0})
+        monkeypatch.setattr(llm_client, "_description_cache", llm_client.DiskCache(cache_dir=str(tmp_path / "c"), ttl=0))
+        response = MagicMock()
+        response.usage.input_tokens, response.usage.output_tokens = 5, 5
+        response.content = [SimpleNamespace(type="text", text="I can't help with that")]
+        response.stop_reason = "refusal"
+        client = MagicMock()
+        client.messages.create = MagicMock(side_effect=lambda **_: _awaitable(response))
+        with patch.object(llm_client, "_get_client", return_value=client):
+            for _ in range(5):  # more than the breaker threshold
+                with pytest.raises(llm_client.LLMResponseError):
+                    await llm_client.cached_completion("k", MSGS)
+        assert llm_client._consecutive_failures == 0 and llm_client._circuit_open_until == 0.0
+        assert await llm_client._description_cache.get("k") is None
+        assert client.messages.create.call_count == 5  # nothing was served from a poisoned cache
+
+
+class TestOpenAIReplies:
+    @pytest.mark.parametrize("finish", ["length", "content_filter"])
+    async def test_cut_off_or_filtered_replies_are_failures(self, monkeypatch, finish):
+        monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+        monkeypatch.setattr(settings, "llm_provider", "openai")
+        monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
+        response = MagicMock()
+        response.usage.prompt_tokens, response.usage.completion_tokens = 1, 1
+        response.choices = [SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content="partial"))]
+        oai = MagicMock()
+        oai.chat.completions.create = MagicMock(return_value=_awaitable(response))
+        with patch.object(llm_client, "_get_openai_client", return_value=oai):
+            with pytest.raises(llm_client.LLMResponseError):
+                await llm_client._openai_completion(MSGS)
+
+
+def test_the_usage_counter_is_not_in_the_directory_the_cache_prunes():
+    from app.services.cache import DiskCache
+
+    assert llm_client._daily_usage_path.parent != llm_client.Path(settings.cache_dir)
+    cache = DiskCache(cache_dir=str(llm_client._daily_usage_path.parent.parent), ttl=0, max_entries=1)
+    cache._dir.mkdir(parents=True, exist_ok=True)
+    llm_client._daily_usage_path.parent.mkdir(parents=True, exist_ok=True)
+    sentinel = llm_client._daily_usage_path.parent / "sentinel.json"
+    sentinel.write_text("{}")
+    try:
+        for i in range(3):
+            (cache._dir / f"e{i}.json").write_text("{}")
+        cache._prune()
+        assert sentinel.exists()
+    finally:
+        sentinel.unlink(missing_ok=True)
+        for f in cache._dir.glob("e?.json"):
+            f.unlink()

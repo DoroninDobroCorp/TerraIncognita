@@ -20,6 +20,13 @@ function apiDetail(err) {
   return (err && err.message) || 'unknown error';
 }
 
+/** A user-facing message for a failed call: rate limiting and a spent AI budget get plain words, the rest `fallback`. */
+function friendlyError(err, fallback) {
+  if (err && err.status === 429) return 'Too many requests — wait a minute and try again.';
+  if (err && err.status === 503) return 'The AI guide is unavailable right now (the daily AI budget is used up or no AI key is configured). Try again later.';
+  return fallback;
+}
+
 /**
  * True when the server does not have the endpoint at all (old backend): 405/501, or the router's default
  * 404 {"detail": "Not Found"}. A 404 that carries a message of its own ("no places nearby") is a real answer

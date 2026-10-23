@@ -13,7 +13,7 @@ from typing import Any
 
 from app.models.place import Place
 from app.services import llm_client
-from app.services.llm_client import cached_completion
+from app.services.llm_client import cached_completion, log_llm_failure
 from app.utils.geo import haversine_distance_m
 from app.utils.sanitize import (
     UNTRUSTED_DATA_NOTICE,
@@ -152,8 +152,8 @@ async def generate_place_story(
             "ai_generated": True,
             "language": language,
         }
-    except Exception:
-        logger.exception("Failed to generate story for %r", place.id)
+    except Exception as exc:
+        log_llm_failure(logger, exc, "Failed to generate story for %r", place.id)
         return _fallback_story(place, language)
 
 
@@ -217,8 +217,8 @@ async def generate_route_story(
             "ai_generated": True,
             "language": language,
         }
-    except Exception:
-        logger.exception("Failed to generate route story")
+    except Exception as exc:
+        log_llm_failure(logger, exc, "Failed to generate route story")
         return _fallback_route_story(places, language)
 
 

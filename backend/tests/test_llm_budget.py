@@ -70,11 +70,29 @@ async def test_chat_completion_records_usage(monkeypatch):
     assert llm_client.daily_tokens_used() == 42
 
 
-def test_llm_endpoints_return_503_when_budget_spent():
+def test_a_spent_budget_never_reaches_the_provider(monkeypatch):
+    """Every LLM endpoint either degrades gracefully (fallback text) or answers 503 — none calls Claude."""
+    from app.models.place import DiscoverResponse
+
+    async def no_places(_req):
+        return DiscoverResponse(places=[], total=0, has_more=False)
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+    monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
+    monkeypatch.setattr("app.services.llm_discovery.discover", no_places, raising=False)
+    monkeypatch.setattr("app.services.llm_recommendations.discover", no_places)
     llm_client._record_usage(1000, 0)
-    resp = TestClient(app).post("/api/chat", json={"message": "hello", "lat": 1, "lng": 1})
-    assert resp.status_code == 503
-    assert int(resp.headers["retry-after"]) > 0
+    place = {"place_id": "p1", "place_name": "Old Fort", "lat": 42.4, "lng": 18.7, "place_categories": ["ruins"]}
+    ask = {"place": {"name": "Old Fort", "lat": 42.4, "lng": 18.7, "categories": ["ruins"]},
+           "question": "history?", "language": "en"}
+    client = TestClient(app, raise_server_exceptions=False)
+    with patch.object(llm_client, "_get_client") as get_client:
+        assert client.post("/api/chat", json={"message": "hello", "lat": 1, "lng": 1}).status_code == 200
+        assert client.post("/api/describe", json=place).status_code == 200
+        assert client.post("/api/story", json=place).json()["ai_generated"] is False
+        assert client.post("/api/recommend", json={"lat": 1, "lng": 1}).status_code == 200
+        assert client.post("/api/place/ask", json=ask).status_code == 503
+        get_client.assert_not_called()
 
 
 def test_health_reports_budget():

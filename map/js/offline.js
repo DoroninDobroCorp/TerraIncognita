@@ -58,10 +58,12 @@ async function loadCachedPlaces() {
   } catch { setHtml(list, errorStateHtml('📍', 'Could not load cached places', 'load-cached-places')); }
 }
 async function cachePlaces() {
-  const b=map.getBounds();
+  if (!mapAvailable) { toast('The map is not available — cannot tell which area to cache','warning'); return; }
+  const b = map.getBounds(), sw = b.getSouthWest().wrap(), ne = b.getNorthEast().wrap();
+  if (sw.lng > ne.lng) { toast('Zoom in: the view crosses the date line','warning'); return; }
   try {
     // discovery may take up to its server-side deadline (25 s), longer for cold sources
-    const data = await api('/api/offline/places/cache',{method:'POST',timeout:60000,body:{bbox:{min_lat:b.getSouth(),min_lng:b.getWest(),max_lat:b.getNorth(),max_lng:b.getEast()},include_descriptions:true}});
+    const data = await api('/api/offline/places/cache',{method:'POST',timeout:60000,body:{bbox:{min_lat:sw.lat,min_lng:sw.lng,max_lat:ne.lat,max_lng:ne.lng},include_descriptions:true}});
     toast(`Cached ${data.cached_count} places!`,'success');
   } catch { toast('Cache failed','error'); }
   finally { loadCachedPlaces(); } // also after a timeout: the server may have finished anyway

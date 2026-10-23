@@ -13,7 +13,7 @@ from typing import Any
 
 from app.models.chat import DescriptionRequest, DescriptionResponse
 from app.services import llm_client
-from app.services.llm_client import cached_completion
+from app.services.llm_client import cached_completion, log_llm_failure
 from app.utils.sanitize import (
     UNTRUSTED_DATA_NOTICE,
     fence_untrusted,
@@ -139,8 +139,8 @@ async def generate_description(req: DescriptionRequest) -> DescriptionResponse:
             cached=was_cached,
             language=req.language,
         )
-    except Exception:
-        logger.exception("Failed to generate description for %r", req.place_id)
+    except Exception as exc:
+        log_llm_failure(logger, exc, "Failed to generate description for %r", req.place_id)
         return _fallback_description(req)
 
 

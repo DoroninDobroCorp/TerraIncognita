@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,16 +41,26 @@ def atomic_write_text(path: Path, data: str) -> None:
         raise
 
 
-def quarantine_corrupt(path: Path, reason: str) -> Path | None:
-    """Copy an unreadable store file to ``<name>.corrupt-<utc timestamp>``; returns the copy."""
+class StoreUnreadableError(RuntimeError):
+    """A store file exists but can be neither read nor moved aside: starting from an empty store
+    would let the next save overwrite the only copy, so the service refuses to start instead."""
+
+
+def quarantine_corrupt(path: Path, reason: str) -> Path:
+    """Move an unreadable store file to ``<name>.corrupt-<utc timestamp>`` and return the new path.
+
+    Moved, not copied: a file that cannot be *read* (permissions, I/O error) can often still be
+    renamed, and a rename leaves nothing behind for the next save to overwrite. If even that
+    fails, ``StoreUnreadableError`` stops the load rather than risking the data.
+    """
     path = Path(path)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     backup = path.with_name(f"{path.name}.corrupt-{stamp}")
     try:
-        shutil.copy2(path, backup)
-    except OSError:
-        logger.error("Could not back up unreadable store file %s (%s)", path, reason)
-        return None
+        os.replace(path, backup)
+    except OSError as exc:
+        logger.error("Could not move aside unreadable store file %s (%s): %s", path, reason, exc)
+        raise StoreUnreadableError(f"{path} is unreadable ({reason}) and cannot be preserved") from exc
     logger.error("Store file %s is unreadable (%s); original kept as %s", path, reason, backup)
     return backup
 

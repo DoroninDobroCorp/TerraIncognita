@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
-import pytest
+import os
 
-from app.middleware import limiter
-from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
+# The suite assumes the shipped defaults. A developer's own configuration (TERRA_* variables,
+# backend/.env — README tells newcomers to create one) must not change test outcomes, so it is
+# cleared before anything from `app` is imported and the settings object is reset to defaults.
+for _key in [k for k in os.environ if k.startswith("TERRA_")]:
+    del os.environ[_key]
+
+import pytest  # noqa: E402
+
+from app.config import Settings, settings  # noqa: E402
+
+_defaults = Settings(_env_file=None)
+for _name in Settings.model_fields:
+    setattr(settings, _name, getattr(_defaults, _name))
+
+from app.middleware import limiter  # noqa: E402
+from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +40,21 @@ def _isolated_offline_store(tmp_path_factory, monkeypatch):
         monkeypatch.setattr(offline_manager, attr, path)
     for d in (base / "regions", base / "places", base / "sync_queue"):
         d.mkdir(parents=True, exist_ok=True)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolated_user_data(tmp_path_factory, monkeypatch):
+    """Journal, gamification and community are module-level singletons bound to ``data/…`` at first use.
+    A journal test creates visits, a visit triggers the gamification hook: without this, running
+    ``pytest`` from the server's directory writes XP/fog/visits into the real stores."""
+    from app.services import community as community_module
+    from app.services import gamification, journal
+
+    monkeypatch.setattr(settings, "community_data_dir", str(tmp_path_factory.mktemp("community")))
+    monkeypatch.setattr(community_module, "_community_service", None)
+    journal._reset_store()  # both resets also point their store at a fresh temp directory
+    gamification._reset_store()
     yield
 
 

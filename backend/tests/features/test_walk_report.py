@@ -163,9 +163,11 @@ class TestCachingAndFallback:
         rule = next(r for r in RATE_RULES if r.matches("POST", "/api/story/walk"))
         assert rule.name == "LLM"
 
-    def test_spent_budget_is_503_from_the_middleware(self, llm_ready, tmp_path, monkeypatch):
+    def test_spent_budget_degrades_to_the_plain_summary_not_to_an_error(self, llm_ready, tmp_path, monkeypatch):
+        """The documented behaviour: no LLM (here: budget spent) means a plain summary, not a 503."""
         monkeypatch.setattr(llm_client, "_daily_usage_path", tmp_path / "llm_usage.json")
         monkeypatch.setattr(llm_client, "_daily", {"date": "", "input": 0, "output": 0})
         monkeypatch.setattr(settings, "llm_daily_token_cap", 10)
         llm_client._record_usage(10, 0)
-        assert walk().status_code == 503
+        resp = walk()
+        assert resp.status_code == 200 and resp.json()["ai_generated"] is False

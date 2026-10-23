@@ -241,6 +241,8 @@ class TestDescribeDate:
         ("C19", "dates from the 19th century"),
         ("19th century", "dates from the 19th century"),
         ("C1", "dates from the 1st century"),
+        ("after 1900", "dates from after 1900"),
+        (">1900", "dates from after 1900"),
         ("C12", "dates from the 12th century"),
         ("C22", "dates from the 22nd century"),
         ("before 1800", "dates from before 1800"),
@@ -250,6 +252,6 @@ class TestDescribeDate:
     def test_wording_matches_the_precision_of_the_data(self, raw, expected):
         assert describe_date(raw) == expected
 
-    @pytest.mark.parametrize("raw", ["", "   ", None, "unknown", "yes"])
+    @pytest.mark.parametrize("raw", ["", "   ", None, "unknown", "yes", "C0", "0th century"])
     def test_nothing_to_say_without_a_date(self, raw):
         assert describe_date(raw) is None

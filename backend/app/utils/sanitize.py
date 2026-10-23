@@ -33,7 +33,8 @@ _CONTROL_RE = re.compile(
     "​‎‏‪-‮⁠-⁤⁦-⁩﻿"
     "\U000e0000-\U000e007f]"
 )
-_ROLE_TAG_RE = re.compile(r"<\s*/?\s*(system|assistant|human|user)\s*>", re.IGNORECASE)
+# No two adjacent \s* (the old "<\s*/?\s*name" form backtracked quadratically on "<" + thousands of spaces).
+_ROLE_TAG_RE = re.compile(r"<\s*(?:/\s*)?(?:system|assistant|human|user)\s*>", re.IGNORECASE)
 _SPECIAL_TOKEN_RE = re.compile(r"\[/?INST\]|<</?SYS>>|<\|im_(?:start|end)\|>", re.IGNORECASE)
 
 
@@ -51,9 +52,9 @@ def sanitize_user_input(text: str | None, max_length: int | None = DEFAULT_MAX_L
       delimiting in the prompts and the system prompt), but never lets tags through
     """
     text = _CONTROL_RE.sub("", "" if text is None else str(text))
-    text = _neutralize_injection(text)
     if max_length is not None:
-        text = text[:max_length]
+        text = text[:max_length]  # bound the work below by the caller's limit, not by what the client sent
+    text = _neutralize_injection(text)
     return text.strip()
 
 
@@ -79,7 +80,7 @@ def sanitize_label(text: Any, max_length: int = 200) -> str:
     Names, tags and metadata values go *inside* a line of the prompt; a newline there lets
     the value start a new "instruction" line.
     """
-    text = sanitize_user_input("" if text is None else str(text), max_length=None)
+    text = sanitize_user_input("" if text is None else str(text)[: max_length * 4], max_length=None)
     text = re.sub(r"\s+", " ", text)
     return text[:max_length].strip()
 

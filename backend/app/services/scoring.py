@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from app.models.place import Place, PlaceCategory, PlaceSource
 from app.services import names
 from app.sources.osm_tags import OsmInterpretation, describe_date, interpret_tags, parse_year
+from app.utils.geo import haversine_distance_m
 
 C = PlaceCategory
 
@@ -199,7 +200,7 @@ SIGNALS: tuple[Signal, ...] = (
            lambda c: str(c.place.metadata.get("access") or c.tags.get("access", "")).lower()
            in _RESTRICTED_ACCESS, priority=70),
     # off the beaten track — only worth saying about places that are interesting at all
-    Signal("no Wikipedia article — off the tourist path", 0.06,
+    Signal("not linked to Wikipedia — likely off the tourist path", 0.06,
            lambda c: c.base >= 0.40 and not c.has_wikipedia and not (c.sitelinks or 0),
            priority=90),
     # data richness (silent): documented places beat unknown blobs
@@ -267,7 +268,11 @@ def _context(place: Place) -> _Ctx:
     named = bool(place.name and place.name.strip()) and not place.metadata.get("name_generated")
 
     raw_links = place.metadata.get("sitelinks")
-    sitelinks = int(raw_links) if isinstance(raw_links, int | float) and raw_links >= 0 else None
+    sitelinks = (
+        int(raw_links)
+        if isinstance(raw_links, int | float) and math.isfinite(raw_links) and raw_links >= 0
+        else None
+    )
 
     has_wikipedia = bool(
         place.wikipedia
@@ -346,6 +351,18 @@ def unusual_sort_key(place: Place) -> tuple[float, float, str, str]:
 
 
 # ── Site diversity ─────────────────────────────────────────────
+
+
+def same_site(a: Place, b: Place, radius_m: float = 150.0) -> bool:
+    """Two entries that are almost certainly parts of one site: within ``radius_m`` of each other, or
+    sharing an exact (real, not generated) name such as the segments of one promenade."""
+    if haversine_distance_m(
+        a.coordinates.lat, a.coordinates.lng, b.coordinates.lat, b.coordinates.lng
+    ) <= radius_m:
+        return True
+    if a.metadata.get("name_generated") or b.metadata.get("name_generated"):
+        return False
+    return bool(a.name and b.name) and names.fold(a.name.strip()) == names.fold(b.name.strip())
 
 
 def diversify_by_site(

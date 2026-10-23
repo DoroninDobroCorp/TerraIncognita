@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 
+import httpx
 import pytest
 
 from app.config import settings
@@ -166,3 +167,31 @@ def test_absolute_source_url():
     places = AtlasObscuraSource()._parse_api_response(_API_RESPONSE)
     assert places[0].metadata["atlas_url"] == "/places/submarine-base"
     assert places[0].metadata["source_url"] == "https://www.atlasobscura.com/places/submarine-base"
+
+
+class TestAtlasSingleFlight:
+    async def test_concurrent_identical_searches_share_one_upstream_request(self, ao, httpx_mock):
+        import asyncio
+
+        async def slow(request):
+            await asyncio.sleep(0.05)  # the second search arrives while the first is still waiting
+            return httpx.Response(200, json=_API_RESPONSE)
+
+        httpx_mock.add_callback(slow, url=API, is_reusable=True)
+        a, b = await asyncio.gather(ao.search(42.45, 18.53, 5.0), ao.search(42.45, 18.53, 5.0))
+        assert len(a) == len(b) == 2
+        assert len(httpx_mock.get_requests()) == 1
+
+    async def test_a_failure_reaches_both_waiters_and_backs_off_once(self, ao, httpx_mock):
+        import asyncio
+
+        async def blocked(request):
+            await asyncio.sleep(0.05)
+            return httpx.Response(403)
+
+        httpx_mock.add_callback(blocked, url=API, is_reusable=True)
+        httpx_mock.add_response(url=HTML, status_code=403, is_reusable=True)
+        results = await asyncio.gather(
+            ao.search(42.45, 18.53, 5.0), ao.search(42.45, 18.53, 5.0), return_exceptions=True
+        )
+        assert all(isinstance(r, AtlasObscuraError) for r in results)

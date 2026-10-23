@@ -119,7 +119,7 @@ class DiscoverRequest(BaseModel):
     radius_km: float = Field(default_factory=lambda: settings.default_radius_km, gt=0, le=settings.max_radius_km)
     categories: list[PlaceCategory] = Field(default_factory=list)
     exclude_visited: list[str] = Field(default_factory=list, max_length=1000)
-    limit: int = Field(50, ge=1, le=200)
+    limit: int = Field(50, ge=1, le=settings.max_limit)
     sort_by: str = Field("confidence", pattern=r"^(confidence|distance|name|unusual)$")
     cursor: str | None = None
 

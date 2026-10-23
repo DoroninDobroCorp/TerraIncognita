@@ -4,7 +4,9 @@
 # One-time setup (ReadWritePaths= fails the unit when a path does not exist yet):
 #   useradd --system terra
 #   install -d -o terra -g terra -m 0750 /srv/terra/backend/data /srv/terra/backend/cache
-#   cp backend/.env.example /srv/terra/backend/.env     # optional: the "-" below makes it so
+#   install -m 0640 -o root -g terra backend/.env.example /srv/terra/backend/.env   # optional (the "-" below)
+#   (systemd reads it as root, the app itself reads the same file as user `terra`: group-readable, never world-readable,
+#    because it will hold API keys)
 [Unit]
 Description=Terra Incognita API
 After=network.target

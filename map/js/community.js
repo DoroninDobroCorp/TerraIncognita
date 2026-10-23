@@ -55,7 +55,7 @@ async function submitCommunityPlace() {
   try {
     await api('/api/community/places',{method:'POST',body:{name,description:desc,categories:cats,lat,lng,tags,author_id:getActiveUserId()}});
     toast('Place submitted for moderation!','success'); hideSubmitPlace(); loadCommunityPlaces();
-  } catch(e) { toast('Submission failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; btn.textContent='Submit'; }
+  } catch(e) { toast('Submission failed: '+(apiDetail(e)||'check connection'),'error'); } finally { btn.disabled=false; btn.textContent='Submit'; }
 }
 
 async function loadPlaceReviews(placeId) {

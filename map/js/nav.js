@@ -164,6 +164,7 @@ function shouldReroute(fromLng, fromLat) {
 }
 
 async function startNavigation(place) {
+  if (!mapAvailable || typeof maplibregl === 'undefined') { toast('The map is not available — navigation needs it','warning'); return; }
   navTarget = { lat: place.coordinates.lat, lng: place.coordinates.lng, name: place.name || 'Destination' };
   navRouteCoords = null; navRouteDist = null; navRouteDur = null;
   $('nav-distance').classList.add('visible');

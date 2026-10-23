@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 
+from app.config import settings
 from app.models.place import (
     Coordinates,
     DiscoverRequest,
@@ -56,7 +57,7 @@ async def build_route(req: RouteRequest) -> RouteResponse:
     discover_req = DiscoverRequest(
         lat=midpoint_lat,
         lng=midpoint_lng,
-        radius_km=min(search_radius_km, 50.0),
+        radius_km=min(search_radius_km, settings.max_radius_km),
         categories=req.categories,
         exclude_visited=req.exclude_visited,
         limit=200,

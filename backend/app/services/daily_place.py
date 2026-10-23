@@ -39,6 +39,7 @@ from app.services.llm_support import (
     effective_language,
     trim_to_sentence,
 )
+from app.services.scoring import same_site
 from app.utils.geo import haversine_distance_m
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,14 @@ def pick_daily(candidates: list[Place], day: date, cell: tuple[int, int], top_k:
     """Today's place among ``candidates`` (order-independent; same inputs, same place)."""
     if not candidates:
         raise ValueError("no candidates")
-    top = sorted(candidates, key=_rank_key)[: max(top_k, 1)]
+    top: list[Place] = []
+    for place in sorted(candidates, key=_rank_key):
+        # the shortlist holds distinct sites: three segments of one promenade are not three picks
+        if any(same_site(place, chosen) for chosen in top):
+            continue
+        top.append(place)
+        if len(top) >= max(top_k, 1):
+            break
     return top[(day.toordinal() + _cell_offset(cell)) % len(top)]
 
 
@@ -266,11 +274,12 @@ async def _choose_place(
 ) -> tuple[Place, bool]:
     """(today's place, whether it was chosen from a degraded discovery and must not be cached)."""
     lat, lng = cell_center(cell)
+    degraded = False  # any step: a crippled narrower search may be why a farther place was picked
     for radius in steps:
         result = await discover(DiscoverRequest(
             lat=lat, lng=lng, radius_km=radius, limit=_DISCOVER_LIMIT, sort_by="unusual",
         ))
-        degraded = _degraded(result.source_status)
+        degraded = degraded or _degraded(result.source_status)
         named = [p for p in result.places if p.name and p.name.strip()]
         if named:
             return pick_daily(named, day, cell, settings.daily_top_k), degraded

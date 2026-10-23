@@ -2,6 +2,7 @@
 # Daily snapshot of user data (journal, gamification, community, offline).
 # cron:  17 3 * * *  /srv/terra/deploy/backup.sh
 set -euo pipefail
+umask 077  # the archives hold journal data and GPS trails: owner only
 
 DATA_DIR="${TERRA_DATA_DIR:-/srv/terra/backend/data}"
 BACKUP_DIR="${TERRA_BACKUP_DIR:-/var/backups/terra}"

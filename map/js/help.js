@@ -78,7 +78,7 @@ const HELP = {
       <p>Level up your explorer profile by visiting places and completing challenges!</p>
       <ul>
         <li><strong>XP</strong> — earned by checking in (+10 XP), writing notes (+5 XP), and unlocking achievements (+25-100 XP)</li>
-        <li><strong>Levels</strong> — each level unlocks a new explorer title (Novice → Scout → Pioneer → Legend)</li>
+        <li><strong>Levels</strong> — each level unlocks a new explorer title (Novice → Scout → Explorer → Pathfinder → Trailblazer → Legend)</li>
         <li><strong>Achievements</strong> — 26 badges for milestones. Some are hidden — discover them by exploring!</li>
         <li><strong>Leaderboard</strong> — compete with other explorers for top positions</li>
         <li><strong>Fog Stats</strong> — see exploration percentage per region (city, country)</li>
@@ -94,12 +94,11 @@ const HELP = {
       <p>Share discoveries, write reviews, and connect with fellow explorers.</p>
       <ul>
         <li><strong>Submit Places</strong> — add places you've found. Include name, description, coordinates, and category. Places go through moderation.</li>
-        <li><strong>Reviews</strong> — write reviews with 1-5 star ratings. Vote on others' reviews (👍/👎).</li>
+        <li><strong>Reviews</strong> — write a review for a place. Vote on others' reviews (👍/👎).</li>
         <li><strong>Published Routes</strong> — browse routes shared by the community, with ratings</li>
-        <li><strong>Follow</strong> — follow other explorers to see their latest discoveries</li>
-        <li><strong>Karma</strong> — earn karma by submitting quality places, helpful reviews, and getting upvotes</li>
+                <li><strong>Karma</strong> — earn karma by submitting quality places, helpful reviews, and getting upvotes</li>
       </ul>
-      <div class="help-tip"><strong>Getting started:</strong> Submit your first place to earn your "Contributor" achievement!</div>
+      <div class="help-tip"><strong>Getting started:</strong> Submit your first place — it goes to moderation, and confirmed places earn karma.</div>
     `
   },
   offline: {
@@ -107,8 +106,8 @@ const HELP = {
     body: `
       <p>Download maps and place data for areas without internet — perfect for remote exploration.</p>
       <ul>
-        <li><strong>Download Tiles</strong> — enter a bounding box (min/max lat/lng) and zoom levels to cache map tiles</li>
-        <li><strong>Cached Places</strong> — automatically cache visited place info including AI descriptions</li>
+        <li><strong>Download Tiles</strong> — register an area (bounding box and zoom levels) you plan to use offline and see how big it would be; map tiles you view are cached on this device automatically as you browse</li>
+        <li><strong>Cached Places</strong> — save the places of the current map view on the server (press “Cache Current View”)</li>
         <li><strong>Sync Queue</strong> — check-ins made offline are kept on this device and sent to your journal when you are back online (they are recorded with the time they are synced; notes need a connection)</li>
         <li><strong>Storage</strong> — monitor disk usage for tiles and cached data</li>
       </ul>

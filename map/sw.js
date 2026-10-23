@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const SHELL_VERSION = 'v6';
+const SHELL_VERSION = 'v7';
 const SHELL_CACHE = `ti-shell-${SHELL_VERSION}`;
 const STATIC_CACHE = `ti-static-${SHELL_VERSION}`;
 const API_CACHE = `ti-api-${SHELL_VERSION}`;
@@ -189,6 +189,10 @@ async function networkFirstApi(event) {
       fetch(req),
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), API_NETWORK_TIMEOUT_MS)),
     ]);
+    if (res.status >= 500) {  // server trouble: a cached copy beats an error page
+      const stale = await cache.match(req);
+      if (stale) return stale;
+    }
     const noStore = /no-store/i.test(res.headers.get('cache-control') || '');
     if (res.ok && !noStore) event.waitUntil(cache.put(req, res.clone()).then(() => trimCache(cache, API_CACHE_MAX)));
     return res;

@@ -506,7 +506,8 @@ def parse_year(value: str | None) -> int | None:
     return None
 
 
-_BEFORE_RE = re.compile(r"^\s*(?:before|pre|<)\b|^\s*<", re.IGNORECASE)
+_BEFORE_RE = re.compile(r"^\s*(?:before|pre\b)|^\s*<", re.IGNORECASE)
+_AFTER_RE = re.compile(r"^\s*(?:after|post\b)|^\s*>", re.IGNORECASE)
 
 
 def _ordinal(n: int) -> str:
@@ -526,9 +527,11 @@ def describe_date(value: str | None) -> str | None:
     if m := _YEAR_RE.search(text):
         year = int(m.group(1))
         if 100 <= year <= 2100:
-            return f"dates from {'before ' if _BEFORE_RE.match(text) else ''}{year}"
+            qualifier = "before " if _BEFORE_RE.match(text) else "after " if _AFTER_RE.match(text) else ""
+            return f"dates from {qualifier}{year}"
     if m := _CENTURY_RE.search(text):
-        return f"dates from the {_ordinal(int(m.group(1) or m.group(2)))} century"
+        century = int(m.group(1) or m.group(2))
+        return f"dates from the {_ordinal(century)} century" if century >= 1 else None
     return None
 
 

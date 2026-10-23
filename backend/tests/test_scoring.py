@@ -161,8 +161,8 @@ def test_wikipedia_article_lowers_and_removes_off_path_reason():
     wiki = osm_place({"military": "bunker", "name": "B", "wikipedia": "en:B"})
     a, b = score_place(no_wiki), score_place(wiki)
     assert a.score > b.score
-    assert "no Wikipedia article — off the tourist path" in a.reasons
-    assert "no Wikipedia article — off the tourist path" not in b.reasons
+    assert "not linked to Wikipedia — likely off the tourist path" in a.reasons
+    assert "not linked to Wikipedia — likely off the tourist path" not in b.reasons
 
 
 def test_enriched_wikipedia_field_counts_as_having_an_article():
@@ -173,7 +173,7 @@ def test_enriched_wikipedia_field_counts_as_having_an_article():
 
 
 def test_off_path_reason_is_not_given_to_mundane_places():
-    assert "no Wikipedia article — off the tourist path" not in score_place(
+    assert "not linked to Wikipedia — likely off the tourist path" not in score_place(
         osm_place({"tourism": "museum", "name": "M"})).reasons
 
 
@@ -443,3 +443,56 @@ def test_reasons_do_not_invent_a_year_for_century_dates():
         apply_unusual_scores([place])
         assert phrase in place.unusual_reasons, (raw, place.unusual_reasons)
         assert not any("1850" in r for r in place.unusual_reasons)
+
+
+class TestSameSite:
+    @staticmethod
+    def _p(pid, name, lat=42.45, lng=18.53, generated=False):
+        return Place(
+            id=pid, source=PlaceSource.OSM, name=name, coordinates=Coordinates(lat=lat, lng=lng),
+            metadata={"name_generated": True} if generated else {},
+        )
+
+    def test_neighbours_are_one_site(self):
+        from app.services.scoring import same_site
+
+        assert same_site(self._p("a", "Ruin A"), self._p("b", "Ruin B", lat=42.4505))
+
+    def test_namesakes_far_apart_are_one_site(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Šetalište 5 Danica")
+        b = self._p("b", "setaliste 5 danica", lat=42.455)
+        assert same_site(a, b)
+
+    def test_different_names_far_apart_are_different_sites(self):
+        from app.services.scoring import same_site
+
+        assert not same_site(self._p("a", "Fort Arza"), self._p("b", "Fort Mamula", lat=42.455))
+
+    def test_generated_names_never_make_namesakes(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Abandoned building", generated=True)
+        b = self._p("b", "Abandoned building", lat=42.455, generated=True)
+        assert not same_site(a, b)
+
+
+def test_a_non_finite_sitelink_count_is_ignored_not_an_overflow():
+    for bad in (float("inf"), float("nan"), -1):
+        place = Place(
+            id="x", source=PlaceSource.OSM, name="Old Fort", categories=[PlaceCategory.RUINS],
+            coordinates=Coordinates(lat=1, lng=1), metadata={"sitelinks": bad},
+        )
+        apply_unusual_scores([place])  # must not raise
+        assert 0.0 <= place.unusual_score <= 1.0
+
+
+def test_the_off_the_beaten_track_reason_does_not_claim_there_is_no_article():
+    place = Place(
+        id="x", source=PlaceSource.OSM, name="Old Fort", categories=[PlaceCategory.MILITARY],
+        coordinates=Coordinates(lat=1, lng=1), metadata={"osm_tags": {"historic": "fort"}},
+    )
+    apply_unusual_scores([place])
+    reasons = " ".join(place.unusual_reasons)
+    assert "not linked to Wikipedia" in reasons and "no Wikipedia article" not in reasons

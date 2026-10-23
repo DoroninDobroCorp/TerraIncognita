@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from app.utils.sanitize import sanitize_for_log, sanitize_user_input
+from app.utils.sanitize import sanitize_for_log, sanitize_label, sanitize_user_input
 
 
 class TestSanitizeUserInput:
@@ -90,3 +90,30 @@ class TestNestedTags:
         payload = "<sys" * depth + "<system>" + "tem>" * depth
         out = sanitize_user_input(payload, max_length=None)
         assert not re.search(r"<\s*/?\s*(system|assistant|human|user)\s*>", out, re.I), out[:80]
+
+
+class TestLinearTime:
+    """A '<' followed by thousands of spaces used to cost O(n^2) in the role-tag regex: one request, seconds."""
+
+    @pytest.mark.parametrize("payload", [
+        "<" + " " * 20000, "<" + " " * 20000 + "/", "</" + " " * 20000, "< " * 10000,
+        "<" + " " * 10000 + "system" + " " * 10000,
+    ])
+    def test_hostile_whitespace_is_cleaned_in_linear_time(self, payload):
+        import time
+
+        started = time.perf_counter()
+        sanitize_user_input(payload, max_length=None)
+        sanitize_user_input(payload)
+        assert time.perf_counter() - started < 1.0
+
+    def test_sanitize_label_bounds_its_work_by_the_label_limit(self):
+        import time
+
+        started = time.perf_counter()
+        out = sanitize_label("<" + " " * 500000, max_length=200)
+        assert len(out) <= 200 and time.perf_counter() - started < 1.0
+
+    @pytest.mark.parametrize("tag", ["< / system >", "</ user>", "<  SYSTEM  >", "< /assistant>", "<human>"])
+    def test_spaced_and_cased_tags_are_still_removed(self, tag):
+        assert sanitize_user_input(f"a{tag}b") == "ab"

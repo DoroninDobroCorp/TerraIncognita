@@ -623,3 +623,29 @@ class TestBudgetHardening:
         resp = client.post("/api/route/loop", json={**BODY, "duration_hours": 0.5})
         assert resp.status_code == 422
         assert "at least 50 minutes" in resp.json()["detail"]  # ceil(40 / 0.9) + 5
+
+
+class TestWideningAndSites:
+    async def test_widens_when_the_first_radius_has_places_but_no_affordable_loop(self):
+        # A 900 m north and B 900 m south: two candidates, but a loop through both is ~3.6 km — too long for 1 h.
+        a, b = mk("A", 900, 0, 0.8), mk("B", 900, 180, 0.8)
+        c = mk("C", 1000, 20, 0.8)  # just outside the first search radius; A+C make a ~2.2 km loop
+        with discover_returning([a, b], [a, b, c]) as mock:
+            resp = await build_loop_route(request(duration_hours=1, max_stops=3))
+        radii = [call.args[0].radius_km for call in mock.await_args_list]
+        assert len(radii) == 2 and radii[1] > radii[0]
+        stops = [w.place.name for w in resp.route.waypoints if not w.is_origin and not w.is_destination]
+        assert "Place C" in stops
+
+    async def test_both_searches_rank_by_unusualness(self):
+        with discover_returning([], []) as mock:
+            with pytest.raises(NotEnoughPlacesError):
+                await build_loop_route(request(duration_hours=1))
+        assert {call.args[0].sort_by for call in mock.await_args_list} == {"unusual"}
+
+    def test_segments_of_one_named_site_are_not_three_stops(self):
+        promenade = [mk(f"seg{i}", 600, i * 120, 0.9, name="Šetalište 5 Danica") for i in range(3)]
+        other = mk("other", 700, 60, 0.5)
+        stops = select_stops(START, [*promenade, other], budget(3.0), 4)
+        names = [s.name for s in stops]
+        assert names.count("Šetalište 5 Danica") <= 1 and len(set(names)) == len(names)

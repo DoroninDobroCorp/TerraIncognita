@@ -43,6 +43,7 @@ from app.services.route_builder import (
     _generate_nav_links,
 )
 from app.services.route_optimizer import distance_m, optimize_route
+from app.services.scoring import same_site
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,8 @@ def _candidates(
 
 
 def _too_close(c: _Candidate, chosen: list[Place]) -> bool:
-    return any(distance_m(c.place.coordinates, s.coordinates) < _MIN_STOP_SEPARATION_M for s in chosen)
+    """Next to a chosen stop, or another part of the same named site (segments of one promenade)."""
+    return any(same_site(c.place, s, _MIN_STOP_SEPARATION_M) for s in chosen)
 
 
 def _drop_least_worthwhile(
@@ -350,7 +352,8 @@ async def build_loop_route(req: LoopRouteRequest) -> RouteResponse:
         if len(_candidates(origin, result.places, budget, req.max_stops)) < 2:
             continue  # sparse area: widen once
         stops = select_stops(origin, result.places, budget, req.max_stops)
-        break
+        if stops is not None:
+            break  # else: candidates exist but no affordable loop; the wider radius may have one
     if stops is None:
         raise NotEnoughPlacesError(
             f"Not enough interesting places within reach for a {req.duration_hours:g}-hour "

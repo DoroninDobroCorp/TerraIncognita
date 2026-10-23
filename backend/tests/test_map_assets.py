@@ -686,3 +686,108 @@ def test_slow_requests_get_a_timeout_that_outlives_the_servers_discovery_deadlin
         assert "timeout" in line, f"{filename}: {call} relies on the 10 s default"
         timeout = int(re.search(r"timeout:\s*(\d+)", line).group(1))
         assert timeout >= 45000
+
+
+def test_is_visited_honours_merged_ids():
+    util = (MAP_DIR / "js" / "util.js").read_text(encoding="utf-8")
+    start = util.index("function isVisited(")
+    fn = util[start:util.index("function persistVisited(")]
+    script = "const state = { visitedPlaces: new Set(['wiki_Q123', 'osm_9']) };" + fn + """
+    console.log(JSON.stringify([
+      isVisited({ id: 'osm_9' }),                                              // own id
+      isVisited({ id: 'osm_way_42', metadata: { merged_ids: ['wiki_Q123'] } }), // a folded-in id
+      isVisited({ id: 'osm_way_42', metadata: { merged_ids: ['x', 'y'] } }),
+      isVisited({ id: 'osm_way_42', metadata: {} }), isVisited({ id: 'osm_way_42' }),
+      isVisited({ id: 'osm_way_42', metadata: { merged_ids: null } }),
+    ]));
+    """
+    assert json.loads(_run_node(script)) == [True, True, False, False, False, False]
+
+
+def test_every_visited_check_in_the_ui_goes_through_is_visited():
+    """A raw `visitedPlaces.has(place.id)` misses a place whose id changed when another source joined its cluster."""
+    for f in (MAP_DIR / "js").glob("*.js"):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if f.name == "util.js":  # the helper itself lives there
+                continue
+            assert "visitedPlaces.has(p.id)" not in line and "visitedPlaces.has(place.id)" not in line, f"{f.name}:{n}"
+
+
+def _fn_from(filename: str, name: str) -> str:
+    """Source of `[async ]function name(...) {...}` from map/js/<filename> or map/<filename> (brace-matched)."""
+    path = MAP_DIR / "js" / filename if (MAP_DIR / "js" / filename).exists() else MAP_DIR / filename
+    src = path.read_text(encoding="utf-8")
+    start = src.index(f"function {name}(")
+    start = src.rfind("async ", max(0, start - 6), start) if src[max(0, start - 6):start] == "async " else start
+    depth, i = 0, src.index("{", start)
+    while True:
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        i += 1
+        if depth == 0:
+            return src[start:i]
+
+
+def test_a_checkin_queued_while_a_flush_is_running_is_not_lost():
+    src = _js_snippet("places.js", "// ── Check-ins waiting for a connection ──", "\nregisterActions(")
+    script = """
+    const LS = { pendingVisits: 'q' };
+    let db = [{ place_id: 'a' }, { place_id: 'b' }];
+    const store = { getJSON: (k, d) => JSON.parse(JSON.stringify(db)), setJSON: (k, v) => { db = JSON.parse(JSON.stringify(v)); return true; } };
+    const TI = { net: { ok: true } }, toasts = [], sent = [];
+    let first = true;
+    async function api(path, opts) {
+      sent.push(opts.body.place_id);
+      if (first) { first = false; queueVisit({ place_id: 'LATE' }); }   // a check-in fails while we are mid-flush
+      return {};
+    }
+    const toast = (m) => toasts.push(m), refreshHeatmap = () => {}, loadStreak = () => {};
+    """ + src + """
+    flushPendingVisits().then(() => console.log(JSON.stringify({ sent, left: db.map(v => v.place_id) })));
+    """
+    out = json.loads(_run_node(script))
+    assert out == {"sent": ["a", "b", "LATE"], "left": []}
+
+
+def test_friendly_error_words_for_rate_limits_and_a_spent_budget():
+    script = _js_function("friendlyError") + """
+    console.log(JSON.stringify([friendlyError({ status: 429 }, 'x'), friendlyError({ status: 503 }, 'x'),
+                                friendlyError({ status: 500 }, 'fallback'), friendlyError(null, 'fallback')]));
+    """
+    a, b, c, d = json.loads(_run_node(script))
+    assert "Too many" in a and "AI" in b and c == d == "fallback"
+
+
+def test_user_id_never_contains_a_path_separator():
+    util = (MAP_DIR / "js" / "util.js").read_text(encoding="utf-8")
+    line = next(ln for ln in util.splitlines() if ln.startswith("function getActiveUserId"))
+    script = "const USER_ID = 'explorer-1'; let typed = '';\nconst $ = () => ({ value: typed });\n" + line + """
+    const cases = ['a/b', 'a\\\\b', '  padded  ', '', '/', 'x'.repeat(150)];
+    console.log(JSON.stringify(cases.map(c => { typed = c; return getActiveUserId(); })));
+    """
+    out = json.loads(_run_node(script))
+    assert out[0] == "ab" and out[1] == "ab" and out[2] == "padded"
+    assert out[3] == "explorer-1" and out[4] == "explorer-1" and len(out[5]) == 100
+
+
+def test_the_service_worker_prefers_a_cached_copy_to_a_server_error():
+    sw = _fn_from("sw.js", "networkFirstApi")
+    script = """
+    const API_CACHE = 'c', API_NETWORK_TIMEOUT_MS = 1000, API_CACHE_MAX = 10;
+    const stored = new Map([['GET /api/daily', { cached: true }]]);
+    const cache = { match: async (r) => stored.get(r.key), put: async () => {} };
+    const caches = { open: async () => cache };
+    async function trimCache() {}
+    let status = 200;
+    const fetch = async () => ({ ok: status < 400, status, headers: { get: () => '' }, clone() { return this; }, fresh: true });
+    """ + sw + """
+    const ev = { request: { key: 'GET /api/daily' }, waitUntil() {} };
+    (async () => {
+      const out = [];
+      status = 500; out.push((await networkFirstApi(ev)).cached === true);   // 5xx + cached copy -> cached copy
+      status = 200; out.push((await networkFirstApi(ev)).fresh === true);    // healthy -> fresh answer
+      ev.request.key = 'GET /api/other'; status = 500;
+      out.push((await networkFirstApi(ev)).status === 500);                  // 5xx, nothing cached -> the error itself
+      console.log(JSON.stringify(out));
+    })();
+    """
+    assert json.loads(_run_node(script)) == [True, True, True]

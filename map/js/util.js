@@ -25,7 +25,8 @@ function getUserId() {
   return uid;
 }
 const USER_ID = getUserId();
-function getActiveUserId() { return ($('my-user-id')?.value?.trim()) || USER_ID; }
+// A '/' in an id cannot be addressed in a URL path (servers decode %2F before routing), so it is never used.
+function getActiveUserId() { return (($('my-user-id')?.value || '').replace(/[\\/]/g, '').trim().slice(0, 100)) || USER_ID; }
 
 // ── localStorage migration ──
 (function migrateStorage() {
@@ -43,6 +44,15 @@ function loadPersistedState() {
   const asSet = (v) => new Set(Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
   state.visitedPlaces = asSet(store.getJSON(LS.visited, []));
   state.savedPlaces = asSet(store.getJSON(LS.saved, []));
+}
+/**
+ * Has the explorer been here? A merged place answers to every id folded into it (metadata.merged_ids): the id a
+ * check-in was stored under depends on which sources had answered at the time, the place may now carry another.
+ */
+function isVisited(place) {
+  if (state.visitedPlaces.has(place.id)) return true;
+  const merged = place.metadata && place.metadata.merged_ids;
+  return Array.isArray(merged) && merged.some(id => state.visitedPlaces.has(id));
 }
 function persistVisited() { store.setJSON(LS.visited, [...state.visitedPlaces]); }
 function persistSaved() { store.setJSON(LS.saved, [...state.savedPlaces]); }

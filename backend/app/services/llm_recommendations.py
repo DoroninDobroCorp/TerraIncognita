@@ -17,7 +17,7 @@ from app.models.chat import (
 )
 from app.models.place import DiscoverRequest, Place, PlaceCategory
 from app.services.discovery import discover
-from app.services.llm_client import chat_completion
+from app.services.llm_client import chat_completion, log_llm_failure
 from app.utils.sanitize import UNTRUSTED_DATA_NOTICE, fence_untrusted, sanitize_label
 
 MAX_REASON_CHARS = 300
@@ -113,8 +113,8 @@ async def get_recommendations(req: RecommendationRequest) -> RecommendationRespo
     # Use LLM for personalized ranking
     try:
         ranked = await _llm_ranking(candidates, req)
-    except Exception:
-        logger.exception("LLM ranking failed, falling back to rules")
+    except Exception as exc:
+        log_llm_failure(logger, exc, "LLM ranking failed, falling back to rules")
         ranked = _rule_based_ranking(candidates, req)
         strategy = "diverse"
 

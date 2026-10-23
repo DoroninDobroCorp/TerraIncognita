@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import settings
 from app.models.place_collections import CollectionsResponse
 from app.services.place_collections import build_collections
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["collections"])
 async def get_collections(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
-    radius_km: float = Query(50.0, gt=0, le=50.0),
+    radius_km: float = Query(min(50.0, settings.max_radius_km), gt=0, le=settings.max_radius_km),
 ) -> CollectionsResponse:
     """Per category: places the explorer has visited vs places discoverable in the radius.
 

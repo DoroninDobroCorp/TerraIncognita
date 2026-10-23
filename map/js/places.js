@@ -9,14 +9,14 @@ async function fetchChat(q) {
   try {
     const data = await api('/api/chat', {method:'POST', timeout: 45000, body:{message:q, lat:state.userLat, lng:state.userLng, radius_km:state.radius}});
     if (data.places && data.places.length > 0) { state.places = data.places; applyFilters(); toast(`Found ${data.places.length} places`,'success'); }
-  } catch(e) { toast('Search failed','error'); }
+  } catch(e) { toast(friendlyError(e, 'Search failed'), 'error'); }
   showMapLoading(false);
 }
 
 function discoverBody() {
   return {
     lat:state.userLat, lng:state.userLng, radius_km:state.radius,
-    categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces]:[],
+    categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces].slice(-1000):[], // the API accepts at most 1000 ids
     limit:200, sort_by: features.unusual === false ? 'confidence' : 'unusual' // newest backends rank by unusualness
   };
 }
@@ -98,7 +98,7 @@ function applyFilters() {
     const cats = p.categories || [];
     if (cats.length && !cats.some(c => state.activeCategories.has(c))) return false;
     if ((p.confidence||0) < state.minConfidence/100) return false;
-    if (state.hideVisited && state.visitedPlaces.has(p.id)) return false;
+    if (state.hideVisited && isVisited(p)) return false;
     return true;
   });
   $('place-count').textContent = `${state.filteredPlaces.length} places`;
@@ -141,7 +141,7 @@ async function showPlaceStory() {
     const data = await api('/api/story',{method:'POST',timeout:45000,body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,place_categories:p.categories,language:'ru'}});
     setHtml($('card-desc'), html`<strong>📖 AI Story:</strong><br>${data.story}`);
     toast('Story generated!','success');
-  } catch { toast('Story generation failed','error'); }
+  } catch (e) { toast(friendlyError(e, 'Story generation failed'), 'error'); }
 }
 
 async function checkInSelectedPlace() {
@@ -151,7 +151,7 @@ async function checkInSelectedPlace() {
   const markVisited = () => { state.visitedPlaces.add(p.id); persistVisited(); renderFog(); renderPlaces(); };
   try {
     await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
-    markVisited(); toast('✅ Checked in at '+p.name,'success');
+    markVisited(); toast('✅ Checked in at '+(p.name||'this place'),'success');
     refreshHeatmap(); loadStreak();
   } catch {
     // Offline or the server is down: remember the check-in and replay it when the connection is back.
@@ -175,8 +175,8 @@ async function flushPendingVisits() {
   flushingVisits = true;
   let synced = 0;
   try {
-    let queue = store.getJSON(LS.pendingVisits, []);
-    while (queue.length) {
+    // The queue is re-read from storage after every request: queueVisit() may have appended while we waited.
+    for (let queue = store.getJSON(LS.pendingVisits, []); queue.length; queue = store.getJSON(LS.pendingVisits, [])) {
       try {
         await api('/api/visits', { method: 'POST', retries: 0, body: queue[0] });
         synced++;
@@ -184,8 +184,7 @@ async function flushPendingVisits() {
         const permanent = e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
         if (!permanent) break; // still unreachable / busy: keep the rest for next time
       }
-      queue = queue.slice(1);
-      store.setJSON(LS.pendingVisits, queue);
+      store.setJSON(LS.pendingVisits, store.getJSON(LS.pendingVisits, []).slice(1)); // drop the one we handled
     }
   } finally { flushingVisits = false; }
   if (synced) { toast(`Synced ${synced} offline check-in${synced > 1 ? 's' : ''}`, 'success'); refreshHeatmap(); loadStreak(); }

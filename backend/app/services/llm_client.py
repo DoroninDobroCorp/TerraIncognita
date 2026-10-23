@@ -34,8 +34,22 @@ _total_input_tokens: int = 0
 _total_output_tokens: int = 0
 
 # Daily budget (persisted so a restart does not reset the counter)
-_daily_usage_path = Path(settings.cache_dir) / "llm_usage.json"
+# In its own subdirectory: DiskCache prunes the oldest *.json files of the cache root, and the
+# budget counter must never be one of them.
+_daily_usage_path = Path(settings.cache_dir) / "llm_state" / "usage.json"
 _daily: dict[str, Any] = {"date": "", "input": 0, "output": 0}
+
+
+class LLMResponseError(ValueError):
+    """The provider answered, but not with a usable reply (cut off, refused, empty).
+
+    Raised after the call succeeded, so it does not count towards the circuit breaker, and the
+    text is never handed to the caches.
+    """
+
+
+# Claude stop reasons whose text must not be treated as a finished answer.
+_UNUSABLE_STOP_REASONS = frozenset({"max_tokens", "refusal", "pause_turn", "model_context_window_exceeded"})
 
 
 class LLMBudgetError(RuntimeError):
@@ -193,12 +207,15 @@ def _anthropic_request(
 
 def _response_text(response: Any) -> str:
     """The answer text: all ``text`` blocks, skipping thinking blocks that may come first."""
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason in _UNUSABLE_STOP_REASONS:
+        raise LLMResponseError(f"LLM reply is not usable (stop_reason={stop_reason})")
     text = "".join(
         block.text for block in response.content
         if getattr(block, "type", None) == "text" and getattr(block, "text", None)
     )
     if not text.strip():
-        raise ValueError(f"LLM returned no text (stop_reason={getattr(response, 'stop_reason', None)})")
+        raise LLMResponseError(f"LLM returned no text (stop_reason={stop_reason})")
     return text
 
 
@@ -238,7 +255,6 @@ async def chat_completion(
                 _total_input_tokens, _total_output_tokens,
             )
 
-        return _response_text(response)
     except anthropic.APIError as e:
         _record_failure()
         logger.error("Anthropic API error: %s", e)
@@ -247,6 +263,7 @@ async def chat_completion(
         _record_failure()
         logger.exception("Unexpected LLM error")
         raise
+    return _response_text(response)  # outside the try: an unusable reply is not a provider failure
 
 
 async def _openai_completion(
@@ -280,11 +297,16 @@ async def _openai_completion(
                 _total_input_tokens, _total_output_tokens,
             )
 
-        return response.choices[0].message.content
     except Exception as e:
         _record_failure()
         logger.error("OpenAI API error: %s", e)
         raise
+    choice = response.choices[0]
+    if getattr(choice, "finish_reason", None) in ("length", "content_filter"):
+        raise LLMResponseError(f"LLM reply is not usable (finish_reason={choice.finish_reason})")
+    if not (choice.message.content or "").strip():
+        raise LLMResponseError("LLM returned no text")
+    return choice.message.content
 
 
 async def cached_completion(
@@ -303,6 +325,24 @@ async def cached_completion(
     result = await chat_completion(messages, system, temperature, max_tokens)
     await _description_cache.set(cache_key, result)
     return result
+
+
+def is_expected_llm_failure(exc: BaseException) -> bool:
+    """No key, a spent budget, an open circuit breaker or an unusable reply: routine, not a bug."""
+    if isinstance(exc, LLMBudgetError | LLMResponseError):
+        return True
+    if isinstance(exc, ValueError) and "API key" in str(exc):
+        return True
+    return isinstance(exc, ConnectionError) and "circuit breaker" in str(exc)
+
+
+def log_llm_failure(log: logging.Logger, exc: BaseException, message: str, *args: Any) -> None:
+    """One line for the expected failures (they happen on every request without a key), a
+    traceback for anything else."""
+    if is_expected_llm_failure(exc):
+        log.info(message + ": %s", *args, exc)
+    else:
+        log.error(message, *args, exc_info=exc)
 
 
 def get_llm_usage() -> dict[str, Any]:

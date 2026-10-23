@@ -168,6 +168,9 @@ def build_overpass_query(
     return f"[out:json][timeout:{timeout}];\n(\n{body}\n);\nout center tags{limit};\n"
 
 
+_MIN_RADIUS_KM = 0.1
+
+
 class OverpassError(SourceError):
     """Overpass answered, but not with a usable result (timeout remark, overload, bad status)."""
 
@@ -185,6 +188,7 @@ class OSMSource(BaseSource):
         self._in_flight = SingleFlight()
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
+        radius_km = max(radius_km, _MIN_RADIUS_KM)  # rounded to ~100 m below, a tiny radius would have no area
         south, west, north, east = bounding_box(lat, lng, radius_km)
         # ~100 m grid: a reload with a slightly different GPS fix must hit the entry that an
         # earlier (possibly still running) request fills, and the cache stays reusable.
@@ -229,12 +233,12 @@ class OSMSource(BaseSource):
         self, tier: str, clauses: tuple[str, ...], bbox: str
     ) -> tuple[list[Place], bool]:
         """(places, complete). ``complete`` is False when Overpass flagged the answer as partial."""
-        # "osm2": entries written by the pre-tier query (different shape) are not reused.
-        cache_key = f"osm2_{tier}_{bbox}"
+        # "osm3": earlier entries had a different shape (plain lists, no completeness flag).
+        cache_key = f"osm3_{tier}_{bbox}"
         cached = await disk_cache.get(cache_key)
-        if cached is not None:
+        if isinstance(cached, dict) and isinstance(cached.get("places"), list):
             logger.debug("OSM cache hit for %s", cache_key)
-            return [Place.model_validate(p) for p in cached], True
+            return [Place.model_validate(p) for p in cached["places"]], bool(cached.get("complete", True))
 
         # A retry while an earlier request is still waiting on Overpass shares that request
         # instead of sending the same heavy query again.
@@ -251,15 +255,23 @@ class OSMSource(BaseSource):
         )
         data = await self._run_query(query)
         elements = data.get("elements", [])
-        if len(elements) >= settings.overpass_max_elements:
+        capped = len(elements) >= settings.overpass_max_elements
+        if capped:
             logger.warning(
                 "OSM %s result hit the %d element cap for bbox=%s; consider a smaller radius",
                 tier, settings.overpass_max_elements, bbox,
             )
         places = self._parse_elements(elements)
-        complete = not data.get("remark")  # a remark means a partial result: do not cache it
-        if complete:
-            await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
+        # Overpass lists nodes before ways and relations, so a capped answer is missing exactly the
+        # bigger objects. It is cached (re-running a heavy query every request would be worse) but
+        # remembered as incomplete, so it keeps being reported as "partial". A server "remark"
+        # means the query itself was cut short: not cached at all.
+        complete = not data.get("remark") and not capped
+        if not data.get("remark"):
+            await disk_cache.set(
+                cache_key,
+                {"places": [p.model_dump(mode="json") for p in places], "complete": complete},
+            )
         return places, complete
 
     # ------------------------------------------------------------------

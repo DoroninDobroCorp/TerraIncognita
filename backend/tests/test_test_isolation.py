@@ -24,3 +24,32 @@ def test_resetting_the_store_leaves_a_real_regions_file_alone(tmp_path):
         assert sentinel.exists()
     finally:
         sentinel.unlink(missing_ok=True)
+
+
+def test_a_visit_in_a_test_writes_no_files_into_the_real_data_dirs(tmp_path):
+    """The journal hook feeds gamification; both must run against temporary stores."""
+    import asyncio
+    from pathlib import Path
+
+    from app.services import journal
+
+    real = [Path(settings.journal_data_dir), Path(settings.gamification_data_dir)]
+    before = {str(p): sorted(x.name for x in p.glob("*.json")) if p.exists() else None for p in real}
+    asyncio.run(journal.create_visit("p1", 42.0, 18.0, "Isolation check"))
+    after = {str(p): sorted(x.name for x in p.glob("*.json")) if p.exists() else None for p in real}
+    assert before == after
+
+
+def test_the_suite_runs_on_shipped_defaults_whatever_the_developers_environment():
+    """A developer's backend/.env or TERRA_* variables (the README tells people to create one) must not
+    change what the tests see: conftest clears them before `app` is imported."""
+    from app.config import Settings
+
+    defaults = Settings(_env_file=None)
+    drifted = {
+        name: (getattr(settings, name), getattr(defaults, name))
+        for name in Settings.model_fields
+        if getattr(settings, name) != getattr(defaults, name)
+        and name != "community_data_dir"  # redirected to a temp dir on purpose (see conftest)
+    }
+    assert not drifted, drifted

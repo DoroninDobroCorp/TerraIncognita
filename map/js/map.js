@@ -89,7 +89,7 @@ function setBaseLayer(key) {
   applyBaseLayerState();
 }
 
-function isInFog(place) { return state.fogEnabled && !state.visitedPlaces.has(place.id) && !state.revealedIds.has(place.id); }
+function isInFog(place) { return state.fogEnabled && !isVisited(place) && !state.revealedIds.has(place.id); }
 function beforePlaceLayers() { return map.getLayer('place-clusters') ? 'place-clusters' : undefined; }
 
 // ── Place markers ──
@@ -146,14 +146,14 @@ function renderFog() {
   if(map.getSource('fog')) map.removeSource('fog');
   if(!state.fogEnabled) return;
   const ov = mapTheme().overlay;
-  const visited = [...state.visitedPlaces].map(id => { const p = state.places.find(x=>x.id===id); return p?[p.coordinates.lng,p.coordinates.lat]:null; }).filter(Boolean);
+  const visited = state.places.filter(isVisited).map(p => [p.coordinates.lng, p.coordinates.lat]);
   const world = [[-180,-85],[180,-85],[180,85],[-180,85],[-180,-85]];
   const holes = visited.map(([lng,lat]) => { const pts=[]; for(let i=0;i<=FOG_CIRCLE_SEGMENTS;i++){const a=(i/FOG_CIRCLE_SEGMENTS)*Math.PI*2; pts.push([lng+FOG_REVEAL_RADIUS_DEG/Math.cos(lat*Math.PI/180)*Math.cos(a),lat+FOG_REVEAL_RADIUS_DEG*Math.sin(a)]);} return pts; });
   map.addSource('fog',{type:'geojson',data:{type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[world,...holes]}}]}});
   map.addLayer({id:'fog-layer',type:'fill',source:'fog',paint:{'fill-color':ov.fog,'fill-opacity':ov.fogOpacity}}, beforePlaceLayers());
 }
 function updateFogStats() {
-  const t=state.places.length, v=state.visitedPlaces.size, p=t>0?Math.round(v/t*100):0;
+  const t=state.places.length, v=state.places.filter(isVisited).length, p=t>0?Math.round(v/t*100):0;
   $('fog-pct').textContent=p+'%'; $('fog-fill').style.width=p+'%';
 }
 function setFogEnabled(on) {
@@ -174,7 +174,7 @@ function popupHtml(place, props) {
   const def = catDef(props.category);
   const fog = place ? isInFog(place) : false;
   const dist = Number(props.distance) || 0;
-  return html`<div class="popup-title">${fog ? '❓ Mystery Place' : def.icon + ' ' + (place ? place.name : props.name)}</div><div class="popup-cat">${def.label}</div>${
+  return html`<div class="popup-title">${fog ? '❓ Mystery Place' : def.icon + ' ' + ((place ? place.name : props.name) || 'Unknown')}</div><div class="popup-cat">${def.label}</div>${
     dist > 0 ? html`<div class="popup-dist">📏 ${(dist/1000).toFixed(1)} km</div>` : ''}<button type="button" class="popup-more" data-action="show-place" data-id="${props.id}">Show details →</button>`;
 }
 

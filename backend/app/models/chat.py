@@ -7,6 +7,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints
 
+from app.config import settings
 from app.models.place import Place, PlaceCategory
 
 MAX_FREE_FORM_JSON = 8_000  # serialised size of client-supplied metadata / context dicts
@@ -55,7 +56,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    radius_km: float = Field(5.0, gt=0, le=50.0)
+    radius_km: float = Field(5.0, gt=0, le=settings.max_radius_km)
     conversation_id: str | None = Field(None, max_length=100)
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
     language: str = Field("auto", pattern=r"^(auto|ru|en|[a-z]{2})$")
@@ -116,7 +117,7 @@ class RecommendationRequest(BaseModel):
 
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
-    radius_km: float = Field(5.0, gt=0, le=50.0)
+    radius_km: float = Field(5.0, gt=0, le=settings.max_radius_km)
     preferences: UserPreferences = Field(default_factory=UserPreferences)
     context: BoundedDict = Field(default_factory=dict)  # time_of_day, weather, etc.
     limit: int = Field(10, ge=1, le=50)

@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import settings
 from app.models.daily import DailyPlaceResponse
 from app.services.daily_place import NoPlacesNearbyError, get_daily_place
 
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api", tags=["daily"])
 async def daily_place(
     lat: float = Query(..., ge=-90, le=90),
     lng: float = Query(..., ge=-180, le=180),
-    radius_km: float = Query(10.0, gt=0, le=50.0),
+    radius_km: float = Query(10.0, gt=0, le=settings.max_radius_km),
     lang: str = Query("en", pattern=r"^(auto|[a-z]{2})$", description="Language of the story"),
 ) -> DailyPlaceResponse:
     """One unusual, well-documented place for today, the same for the whole neighbourhood.

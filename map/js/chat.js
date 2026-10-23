@@ -50,7 +50,7 @@ async function sendChat(msg) {
     if (el) {
       const timedOut = String(e.message).startsWith('Request timeout');
       el.removeAttribute('id');
-      setHtml(el, html`❌ ${timedOut ? 'Request timed out. The server may be busy — try again.' : 'Could not get a response. Make sure the API is running.'}<br><button class="btn btn-sm btn-secondary mt-8" data-action="chat-retry" data-msg="${msg}">🔄 Retry</button>`);
+      setHtml(el, html`❌ ${timedOut ? 'Request timed out. The server may be busy — try again.' : friendlyError(e, 'Could not get a response. Make sure the API is running.')}<br><button class="btn btn-sm btn-secondary mt-8" data-action="chat-retry" data-msg="${msg}">🔄 Retry</button>`);
     }
   } finally { chatBusy = false; }
   container.scrollTop = container.scrollHeight;

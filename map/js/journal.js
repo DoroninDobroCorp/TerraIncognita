@@ -107,7 +107,7 @@ async function createTrip() {
   if(start && end && new Date(start) > new Date(end)){toast('Start date must be before end date','warning');return;}
   const btn=$('trip-create'); btn.disabled=true; btn.textContent='Creating...';
   try{ await api('/api/trips',{method:'POST',body:{name,region:region||undefined,start_date:start||undefined,end_date:end||undefined}});toast('Trip created!','success');analytics.track('trip_created');hideCreateTrip();loadTrips();}
-  catch(e){toast('Failed to create trip: '+(e.message||'check connection'),'error');}
+  catch(e){toast('Failed to create trip: '+(apiDetail(e)||'check connection'),'error');}
   finally{btn.disabled=false;btn.textContent='Create';}
 }
 async function showTripDetail(id) {

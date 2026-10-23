@@ -297,3 +297,32 @@ class TestXpHistoryOrder:
         events, total = await gam.get_xp_history(limit=10)
         assert [e.id for e in events] == ["x3", "x2", "x1", "x0"]
         assert total == 4
+
+
+class TestNotesEarnXpWhenWritten:
+    """award_visit_xp has note bonuses, but only create_visit ran the hook — at which point no note existed."""
+
+    async def test_adding_a_note_with_text_photo_and_rating_pays_the_bonuses(self):
+        from app.models.journal import PlaceRating
+        from app.services import gamification, journal
+
+        visit = await journal.create_visit("p1", 42.0, 18.0, "Old Fort")
+        before = (await gamification.get_explorer_profile()).total_xp
+        await journal.create_note(
+            visit.id, text="Lovely ruin", photos=["https://example.org/a.jpg"],
+            rating=PlaceRating(interesting=5, accessibility=4, safety=4, photo_worthy=5),
+        )
+        gained = (await gamification.get_explorer_profile()).total_xp - before
+        assert gained >= 5  # note_with_text alone; photo and rating add more
+
+    async def test_editing_a_note_pays_each_bonus_once(self):
+        from app.services import gamification, journal
+
+        visit = await journal.create_visit("p1", 42.0, 18.0, "Old Fort")
+        note = await journal.create_note(visit.id, text="first")
+        xp_after_note = (await gamification.get_explorer_profile()).total_xp
+        await journal.update_note(note.id, text="edited")
+        await journal.update_note(note.id, text="edited again")
+        assert (await gamification.get_explorer_profile()).total_xp == xp_after_note  # same note, same bonus
+        await journal.update_note(note.id, photos=["https://example.org/b.jpg"])
+        assert (await gamification.get_explorer_profile()).total_xp > xp_after_note  # a new photo is a new bonus

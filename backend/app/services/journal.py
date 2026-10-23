@@ -206,37 +206,41 @@ async def create_visit(
     _save_visits()
     logger.info("Created visit %s for place %r", visit_id, place_id)
 
-    # Trigger gamification hook (Epic 6)
     if status == VisitStatus.VISITED:
-        try:
-            from app.services import gamification as gam_service
-            all_visits = list(_visits.values())
-            all_notes = list(_notes.values())
-            visit_notes = [n for n in all_notes if n.visit_id == visit_id]
-            streak = _compute_streak([v for v in all_visits if v.status == VisitStatus.VISITED])
-            sorted_visited = sorted(
-                [v for v in all_visits if v.status == VisitStatus.VISITED],
-                key=lambda v: v.visited_at,
-            )
-            total_dist = 0.0
-            for i in range(1, len(sorted_visited)):
-                prev, curr = sorted_visited[i - 1], sorted_visited[i]
-                total_dist += _haversine_m(
-                    prev.coordinates.lat, prev.coordinates.lng,
-                    curr.coordinates.lat, curr.coordinates.lng,
-                ) / 1000.0
-            await gam_service.on_visit_created(
-                visit=visit,
-                notes=visit_notes,
-                all_visits=all_visits,
-                all_notes=all_notes,
-                streak_days=streak.current_streak,
-                total_distance_km=total_dist,
-            )
-        except Exception:
-            logger.warning("Gamification hook failed for visit %s", visit_id, exc_info=True)
+        await _run_gamification_hook(visit)
 
     return visit
+
+
+async def _run_gamification_hook(visit: Visit) -> None:
+    """Epic 6: XP, achievements and fog for a visit. Safe to repeat: every reward is idempotent
+    (keyed by place / note / day), so it also runs when a note is added or edited — that is when
+    the note bonuses and the note-based achievements become due."""
+    try:
+        from app.services import gamification as gam_service
+        all_visits = list(_visits.values())
+        all_notes = list(_notes.values())
+        visit_notes = [n for n in all_notes if n.visit_id == visit.id]
+        visited = [v for v in all_visits if v.status == VisitStatus.VISITED]
+        streak = _compute_streak(visited)
+        sorted_visited = sorted(visited, key=lambda v: v.visited_at)
+        total_dist = 0.0
+        for i in range(1, len(sorted_visited)):
+            prev, curr = sorted_visited[i - 1], sorted_visited[i]
+            total_dist += _haversine_m(
+                prev.coordinates.lat, prev.coordinates.lng,
+                curr.coordinates.lat, curr.coordinates.lng,
+            ) / 1000.0
+        await gam_service.on_visit_created(
+            visit=visit,
+            notes=visit_notes,
+            all_visits=all_visits,
+            all_notes=all_notes,
+            streak_days=streak.current_streak,
+            total_distance_km=total_dist,
+        )
+    except Exception:
+        logger.warning("Gamification hook failed for visit %s", visit.id, exc_info=True)
 
 
 async def get_visit(visit_id: str) -> Visit | None:
@@ -423,6 +427,8 @@ async def create_note(
     _notes[note_id] = note
     _save_notes()
     logger.info("Created note %s for visit %s", note_id, visit_id)
+    if visit.status == VisitStatus.VISITED:
+        await _run_gamification_hook(visit)
     return note
 
 
@@ -459,6 +465,9 @@ async def update_note(
 
     note.updated_at = datetime.now(UTC)
     _save_notes()
+    visit = _visits.get(note.visit_id)
+    if visit is not None and visit.status == VisitStatus.VISITED:
+        await _run_gamification_hook(visit)  # a photo/rating added later earns its bonus now
     return note
 
 

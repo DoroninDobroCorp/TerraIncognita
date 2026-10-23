@@ -148,7 +148,8 @@ async def _gather_sources(sources, req: DiscoverRequest) -> list[tuple[list[Plac
         asyncio.ensure_future(_query_source(name, src, req.lat, req.lng, req.radius_km))
         for name, src in sources
     ]
-    _, pending = await asyncio.wait(tasks, timeout=settings.discovery_deadline_seconds)
+    deadline = min(settings.discovery_deadline_seconds, settings.discovery_max_wait_seconds)
+    _, pending = await asyncio.wait(tasks, timeout=deadline)
     while pending and not any(t.done() and t.result()[0] for t in tasks):
         remaining = started + settings.discovery_max_wait_seconds - loop.time()
         if remaining <= 0:

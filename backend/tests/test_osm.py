@@ -461,3 +461,80 @@ class TestOSMSearch:
         request = httpx_mock.get_requests()[0]
         query = parse_qs(request.content.decode())["data"][0]
         assert query.startswith("[out:json]") and "out center tags" in query
+
+
+class TestCapAndRadius:
+    async def test_an_answer_cut_off_by_the_element_cap_is_reported_partial(self, osm, overpass, monkeypatch):
+        monkeypatch.setattr(settings, "overpass_max_elements", 1)
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT), (PRIMARY, "landmarks"): _ok()}
+        with pytest.raises(PartialSourceResult) as partial:
+            await osm.search(42.45, 18.53, 5.0)
+        assert len(partial.value.places) == 1
+
+    async def test_the_cap_verdict_survives_the_cache(self, osm, overpass, monkeypatch):
+        monkeypatch.setattr(settings, "overpass_max_elements", 1)
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT), (PRIMARY, "landmarks"): _ok()}
+        with pytest.raises(PartialSourceResult):
+            await osm.search(42.45, 18.53, 5.0)
+        calls = len(overpass.calls)
+        with pytest.raises(PartialSourceResult):  # served from the cache, still flagged
+            await osm.search(42.45, 18.53, 5.0)
+        assert len(overpass.calls) == calls
+
+    async def test_an_uncapped_answer_is_ok_and_cached(self, osm, overpass):
+        overpass.handlers = {(PRIMARY, "gems"): _ok(_GEM_ELEMENT), (PRIMARY, "landmarks"): _ok()}
+        assert len(await osm.search(42.45, 18.53, 5.0)) == 1
+        assert len(await osm.search(42.45, 18.53, 5.0)) == 1
+
+    @pytest.mark.parametrize("radius", [0.001, 0.01, 0.05])
+    async def test_a_tiny_radius_still_queries_an_area(self, tmp_path, monkeypatch, httpx_mock, radius):
+        import re
+
+        monkeypatch.setattr("app.sources.osm.disk_cache", DiskCache(cache_dir=str(tmp_path), ttl=3600))
+        monkeypatch.setattr(settings, "overpass_url", PRIMARY)
+        monkeypatch.setattr(settings, "overpass_fallback_urls", "")
+        http_client._client = None
+        source = OSMSource()
+        source._rate_limiter = RateLimiter(max_requests=1000, window_seconds=1)
+        bodies: list[str] = []
+
+        def capture(request: httpx.Request) -> httpx.Response:
+            bodies.append(parse_qs(request.content.decode())["data"][0])
+            return _ok()
+
+        httpx_mock.add_callback(capture, is_reusable=True)
+        try:
+            await source.search(42.45, 18.53, radius)
+        finally:
+            await close_http_client()
+        assert bodies
+        south, west, north, east = (
+            float(v) for v in re.search(r"\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)", bodies[0]).groups()
+        )
+        # rounded to ~100 m, a raw 10 m radius would collapse to zero area; the minimum radius prevents that
+        assert north - south >= 0.001 and east - west >= 0.001
+
+
+async def test_concurrent_identical_searches_really_share_one_upstream_query(tmp_path, monkeypatch, httpx_mock):
+    """The earlier version of this test used a handler that never yields, so the searches never overlapped."""
+    monkeypatch.setattr("app.sources.osm.disk_cache", DiskCache(cache_dir=str(tmp_path), ttl=3600))
+    monkeypatch.setattr(settings, "overpass_url", PRIMARY)
+    monkeypatch.setattr(settings, "overpass_fallback_urls", "")
+    http_client._client = None
+    source = OSMSource()
+    source._rate_limiter = RateLimiter(max_requests=1000, window_seconds=1)
+    seen: list[str] = []
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        tier = _tier_of(request)
+        seen.append(tier)
+        await asyncio.sleep(0.05)  # long enough for the second search to arrive meanwhile
+        return _ok(_GEM_ELEMENT) if tier == "gems" else _ok()
+
+    httpx_mock.add_callback(slow, is_reusable=True)
+    try:
+        a, b = await asyncio.gather(source.search(42.45, 18.53, 5.0), source.search(42.45, 18.53, 5.0))
+    finally:
+        await close_http_client()
+    assert len(a) == len(b) == 1
+    assert sorted(seen) == ["gems", "landmarks"]  # one query per tier, not two

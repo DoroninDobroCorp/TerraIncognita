@@ -22,7 +22,7 @@ async function buildRoute() {
   try {
     const data = await api('/api/route',{method:'POST',timeout:60000,body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
     if (setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links })) toast('Route built!','success');
-  } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
+  } catch(e) { toast('Route building failed: '+(apiDetail(e)||'check connection'),'error'); } finally { btn.disabled=false; }
 }
 
 async function exploreRoute() {
@@ -34,7 +34,7 @@ async function exploreRoute() {
   try {
     const data = await api('/api/route/explore',{method:'POST',timeout:45000,body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
     if (setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links })) toast('Circular walk generated!','success');
-  } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
+  } catch(e) { toast('Generation failed: '+(apiDetail(e)||'check connection'),'error'); } finally { btn.disabled=false; }
 }
 
 // ── Loop route (POST /api/route/loop): same RouteResponse as the other builders ──
@@ -176,7 +176,7 @@ async function getRouteStory() {
     $('route-story').hidden = false;
     $('route-story-text').textContent = data.story;
     toast('Story ready!','success');
-  } catch { toast('Story failed','error'); }
+  } catch (e) { toast(friendlyError(e, 'Story failed'), 'error'); }
 }
 
 // ── Saved routes (localStorage) ──

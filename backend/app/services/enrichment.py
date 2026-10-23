@@ -96,8 +96,14 @@ async def enrich_place(req: EnrichRequest) -> EnrichResponse:
     if future is None:
         future = asyncio.ensure_future(_compute(key, req))
         _inflight[key] = future
-        future.add_done_callback(lambda _f, k=key: _inflight.pop(k, None))
+        future.add_done_callback(lambda f, k=key: _finish_flight(k, f))
     return await asyncio.shield(future)
+
+
+def _finish_flight(key: str, future: asyncio.Future) -> None:
+    _inflight.pop(key, None)
+    if not future.cancelled():
+        future.exception()  # retrieved: a caller that gave up must not trigger "never retrieved"
 
 
 async def _compute(key: str, req: EnrichRequest) -> EnrichResponse:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -155,3 +156,23 @@ class TestPaginationBoundary:
         with p1, p2, p3, p4:
             page = await discovery.discover(DiscoverRequest(lat=42.45, lng=18.53, radius_km=5, limit=2))
         assert page.total == 2 and page.has_more is False and page.cursor is None
+
+
+class TestBookkeeping:
+    async def test_a_straggler_is_tracked_when_the_answer_goes_out(self, monkeypatch):
+        """Without a strong reference the loop may garbage-collect the task mid-flight."""
+        monkeypatch.setattr(settings, "discovery_deadline_seconds", 0.05)
+        slow = FakeSource("osm", [_place("osm1")], delay=0.5)
+        await _run(slow, FakeSource("atlas", []), FakeSource("wiki", [_place("wiki1", PlaceSource.WIKIDATA)]))
+        assert len(discovery._background_tasks) == 1
+        await asyncio.sleep(0.6)
+        assert slow.finished and not discovery._background_tasks
+
+    async def test_the_first_wait_is_capped_by_max_wait_too(self, monkeypatch):
+        monkeypatch.setattr(settings, "discovery_deadline_seconds", 5.0)
+        monkeypatch.setattr(settings, "discovery_max_wait_seconds", 0.1)
+        started = time.monotonic()
+        resp = await _run(FakeSource("osm", [], delay=2.0), FakeSource("atlas", []), FakeSource("wiki", [], delay=2.0))
+        assert time.monotonic() - started < 1.0
+        assert resp.source_status["osm"] == "timeout"
+        discovery._background_tasks.clear()

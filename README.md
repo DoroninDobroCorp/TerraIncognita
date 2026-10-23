@@ -18,7 +18,7 @@ Terra Incognita combines open geodata (OpenStreetMap, Wikidata, Wikipedia/Common
 
 ## ✨ Features
 
-- **🔍 Smart Discovery** — abandoned buildings, military objects, underground structures, ruins and other unusual places nearby, ranked by an explainable **unusualness score** ("abandoned · no Wikipedia article · listed on Atlas Obscura")
+- **🔍 Smart Discovery** — abandoned buildings, military objects, underground structures, ruins and other unusual places nearby, ranked by an explainable **unusualness score** ("abandoned · not linked to Wikipedia · listed on Atlas Obscura")
 - **📖 Rich place cards** — Wikipedia summaries and attributed Wikimedia Commons photos, loaded on demand
 - **🌅 Place of the day** — one hand-picked unusual spot near you, with a short story
 - **🧭 Routes** — point-to-point, circular walks, and **loops of N hours** on foot or by bike; GPX/KML export
@@ -28,7 +28,7 @@ Terra Incognita combines open geodata (OpenStreetMap, Wikidata, Wikipedia/Common
 - **💬 AI Chat & "Ask this place"** — find places by mood, ask a question about a specific spot (voice input/output optional)
 - **👥 Community** — share places, routes and reviews
 - **📡 Installable & offline** — PWA with an offline shell and bounded tile cache
-- **🛡️ Safe by default** — per-IP rate limits, daily LLM token cap, strict CSP, hardened inputs
+- **🛡️ Safe by default** — per-IP rate limits, strict CSP, hardened inputs, and an optional daily LLM token cap
 
 ## 🏗️ Architecture
 
@@ -42,7 +42,7 @@ TerraIncognita/
 │   │   ├── sources/      # OSM, Wikidata, Atlas Obscura, deep research
 │   │   ├── utils/        # geo, HTTP client, sanitising, atomic file IO
 │   │   └── middleware.py # rate limits, body cap, scanner block, security headers
-│   └── tests/            # ~1,900 pytest tests (no network)
+│   └── tests/            # ~2,000 pytest tests (no network)
 ├── map/                  # Frontend: build-free PWA (app.html + css/ + js/ + sw.js)
 ├── deploy/               # nginx, systemd and backup examples
 ├── docs/                 # ARCHITECTURE.md, IDEAS.md
@@ -126,7 +126,7 @@ Run **one worker**: rate limits, the LLM budget and service state live in proces
 ## 🔒 Security notes
 
 - Rate limits per IP (one table in `app/middleware.py`), a 64 KB body cap, bot-probe short-circuit, security headers and a strict CSP.
-- LLM calls: user text is cleaned and fenced in prompts, outputs are validated, and a daily token cap protects your bill.
+- LLM calls: user text is cleaned and fenced in prompts, outputs are validated, and `TERRA_LLM_DAILY_TOKEN_CAP` (off by default — set it) protects your bill.
 - **The app is single-explorer by design**: journal, XP and offline state belong to the instance, and community endpoints trust the client-supplied user id. Put it behind your own authentication before exposing it to people you don't trust. See *Known limits* in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 🛠️ Tech Stack
@@ -163,7 +163,7 @@ Terra Incognita объединяет открытые геоданные (OpenSt
 
 ## ✨ Возможности
 
-- **🔍 Умный поиск** — заброшенные здания, военные объекты, подземные сооружения, руины и другие необычные места поблизости, отсортированные по объяснимой **оценке необычности** («заброшено · нет статьи в Википедии · есть в Atlas Obscura»)
+- **🔍 Умный поиск** — заброшенные здания, военные объекты, подземные сооружения, руины и другие необычные места поблизости, отсортированные по объяснимой **оценке необычности** («заброшено · нет ссылки на Википедию · есть в Atlas Obscura»)
 - **📖 Богатые карточки мест** — сводки из Википедии и фото из Wikimedia Commons с указанием авторов, подгружаются по запросу
 - **🌅 Место дня** — одно необычное место рядом с вами и короткая история о нём
 - **🧭 Маршруты** — из точки в точку, круговые прогулки и **петли на N часов** пешком или на велосипеде; экспорт в GPX/KML
@@ -173,7 +173,7 @@ Terra Incognita объединяет открытые геоданные (OpenSt
 - **💬 ИИ-чат и «Спроси у места»** — поиск по настроению, вопросы о конкретном месте (голосовой ввод и озвучка — по желанию)
 - **👥 Сообщество** — делитесь местами, маршрутами и отзывами
 - **📡 Установка и офлайн** — PWA с офлайн-оболочкой и ограниченным кэшем тайлов
-- **🛡️ Безопасность по умолчанию** — лимиты запросов по IP, дневной лимит токенов LLM, строгий CSP, проверка входных данных
+- **🛡️ Безопасность по умолчанию** — лимиты запросов по IP, строгий CSP, проверка входных данных и необязательный дневной лимит токенов LLM
 
 ## 🏗️ Архитектура
 
@@ -187,7 +187,7 @@ TerraIncognita/
 │   │   ├── sources/      # OSM, Wikidata, Atlas Obscura, deep research
 │   │   ├── utils/        # гео, HTTP-клиент, очистка ввода, атомарная запись файлов
 │   │   └── middleware.py # лимиты, ограничение тела, блок сканеров, заголовки безопасности
-│   └── tests/            # ~1900 тестов pytest (без сети)
+│   └── tests/            # ~2000 тестов pytest (без сети)
 ├── map/                  # Фронтенд: PWA без сборки (app.html + css/ + js/ + sw.js)
 ├── deploy/               # примеры nginx, systemd и бэкапа
 ├── docs/                 # ARCHITECTURE.md, IDEAS.md
@@ -271,7 +271,7 @@ docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
 ## 🔒 Заметки о безопасности
 
 - Лимиты по IP (одна таблица в `app/middleware.py`), ограничение тела запроса 64 КБ, отсечение ботов-сканеров, заголовки безопасности и строгий CSP.
-- LLM: пользовательский текст очищается и «огораживается» в промптах, ответы проверяются, а дневной лимит токенов защищает ваш счёт.
+- LLM: пользовательский текст очищается и «огораживается» в промптах, ответы проверяются, а `TERRA_LLM_DAILY_TOKEN_CAP` (по умолчанию выключен — задайте его) защищает ваш счёт.
 - **Приложение задумано для одного исследователя**: дневник, XP и офлайн-состояние принадлежат экземпляру, а эндпоинты сообщества доверяют идентификатору пользователя от клиента. Прежде чем открывать его чужим людям, поставьте перед ним свою авторизацию. См. *Known limits* в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 🛠️ Технологический стек

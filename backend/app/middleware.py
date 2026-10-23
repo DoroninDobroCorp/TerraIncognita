@@ -13,7 +13,6 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
-from app.services.llm_client import budget_exhausted, seconds_until_budget_reset
 
 logger = logging.getLogger(__name__)
 
@@ -132,13 +131,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             rule = next(
                 (r for r in RATE_RULES if r.matches(request.method, request.url.path)), None
             )
-            if rule is not None and rule.name == "LLM" and budget_exhausted():
-                return Response(
-                    content='{"detail":"Daily AI budget reached, try again after 00:00 UTC"}',
-                    status_code=503,
-                    media_type="application/json",
-                    headers={"Retry-After": str(seconds_until_budget_reset())},
-                )
             if rule is not None:
                 retry_after = limiter.check(rule, client_ip(request))
                 if retry_after:

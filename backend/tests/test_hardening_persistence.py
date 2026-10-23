@@ -117,3 +117,52 @@ class TestCommunityCorruptStore:
         backups = list(tmp_path.glob("places.json.corrupt-*"))
         assert len(backups) == 1
         assert backups[0].read_text() == "{broken"
+
+
+class TestUnreadableStoreFile:
+    @staticmethod
+    def _skip_if_root():
+        import os
+
+        if os.geteuid() == 0:
+            pytest.skip("root can read files whatever their mode")
+
+    def test_garbage_is_moved_aside_not_left_in_place(self, tmp_path):
+        target = tmp_path / "visits.json"
+        target.write_text("{not json")
+        assert load_json_file(target) is None
+        assert not target.exists()  # nothing left for the next save to overwrite
+        backups = list(tmp_path.glob("visits.json.corrupt-*"))
+        assert len(backups) == 1 and backups[0].read_text() == "{not json"
+
+    def test_a_file_that_cannot_be_read_is_preserved_too(self, tmp_path):
+        self._skip_if_root()
+        target = tmp_path / "visits.json"
+        target.write_text('{"a": 1}')
+        target.chmod(0)
+        try:
+            assert load_json_file(target) is None
+            assert not target.exists()
+            (backup,) = tmp_path.glob("visits.json.corrupt-*")
+        finally:
+            for f in tmp_path.iterdir():
+                f.chmod(0o600)
+        assert backup.read_text() == '{"a": 1}'
+
+    def test_if_it_cannot_even_be_moved_the_service_refuses_to_start_empty(self, tmp_path):
+        self._skip_if_root()
+        from app.utils.atomic_io import StoreUnreadableError
+
+        sub = tmp_path / "store"
+        sub.mkdir()
+        target = sub / "visits.json"
+        target.write_text('{"a": 1}')
+        target.chmod(0)
+        sub.chmod(0o500)  # no rename/create inside the directory
+        try:
+            with pytest.raises(StoreUnreadableError):
+                load_json_file(target)
+        finally:
+            sub.chmod(0o700)
+            target.chmod(0o600)
+        assert target.read_text() == '{"a": 1}'  # untouched

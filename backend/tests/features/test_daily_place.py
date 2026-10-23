@@ -55,7 +55,11 @@ def mk(
 
 def ranked_set(n: int = 8) -> list[Place]:
     """n places with strictly decreasing quality, ids p0 (best) .. p{n-1}."""
-    return [mk(f"p{i}", None, C.RUINS, confidence=0.95 - i * 0.05) for i in range(n)]
+    # spread out: places closer than 150 m (or sharing a name) count as one site in the shortlist
+    return [
+        mk(f"p{i}", None, C.RUINS, confidence=0.95 - i * 0.05, lat=42.46 + i * 0.01, lng=18.53 + i * 0.01)
+        for i in range(n)
+    ]
 
 
 def discover_returning(*pages: list[Place], status: dict[str, str] | None = None):
@@ -150,10 +154,10 @@ class TestPickDaily:
             pick_daily([], DAY, CELL, 5)
 
     def test_prefers_unusual_and_documented_places_over_better_known_ones(self):
-        museum = mk("museum", None, C.MUSEUM, confidence=0.95)
+        museum = mk("museum", None, C.MUSEUM, confidence=0.95, lat=42.40)
         bunker = mk("bunker", None, C.MILITARY, C.UNDERGROUND, confidence=0.6,
-                    description="x" * 200, photos=2)
-        filler = [mk(f"f{i}", None, C.PARK, confidence=0.3) for i in range(8)]
+                    description="x" * 200, photos=2, lat=42.50)
+        filler = [mk(f"f{i}", None, C.PARK, confidence=0.3, lat=42.41 + i * 0.01) for i in range(8)]
         cands = [museum, bunker, *filler]
         assert sorted(cands, key=_rank_key)[0].id == "bunker"
         picks = {pick_daily(cands, DAY + timedelta(days=i), CELL, 2).id for i in range(6)}
@@ -279,7 +283,7 @@ class TestGetDailyPlace:
             await get_daily_place(42.463, 18.537, 12, "en", today=DAY)
         req = mock.await_args.args[0]
         assert (req.lat, req.lng) == cell_center(cell_of(42.463, 18.537))
-        assert (req.radius_km, req.limit, req.sort_by) == (12.0, 200, "unusual")
+        assert (req.radius_km, req.limit, req.sort_by) == (12.0, 200, "unusual")  # rank the whole pool by unusualness
 
     async def test_radius_widens_until_something_is_found(self, no_llm_key):
         with discover_returning([], [], ranked_set(3)) as mock:
@@ -492,3 +496,44 @@ class TestDegradedDiscovery:
             await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
             await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
         assert mock.await_count == 1
+
+
+class TestShortlistOfDistinctSites:
+    def test_segments_of_one_promenade_take_one_slot(self):
+        segments = [
+            mk(f"seg{i}", "Šetalište 5 Danica", C.LANDMARK, confidence=0.9 - i * 0.01, lat=42.45 + i * 0.004)
+            for i in range(4)
+        ]
+        others = [mk(f"o{i}", None, C.RUINS, confidence=0.5, lat=42.50 + i * 0.01) for i in range(4)]
+        picks = {pick_daily([*segments, *others], DAY + timedelta(days=i), CELL, 3).id for i in range(12)}
+        assert len([p for p in picks if p.startswith("seg")]) <= 1
+
+    def test_neighbouring_buildings_of_one_fort_take_one_slot(self):
+        fort = [mk(f"b{i}", f"Building {i}", C.RUINS, confidence=0.9, lat=42.45 + i * 0.0002) for i in range(3)]
+        elsewhere = [mk("far1", None, C.RUINS, confidence=0.6, lat=42.60), mk("far2", None, C.RUINS, confidence=0.5, lat=42.70)]
+        picks = {pick_daily([*fort, *elsewhere], DAY + timedelta(days=i), CELL, 3).id for i in range(9)}
+        assert len([p for p in picks if p.startswith("b")]) <= 1
+
+    def test_fewer_distinct_sites_than_top_k_still_works(self):
+        same = [mk(f"x{i}", "One Site", C.RUINS, confidence=0.9 - i * 0.1, lat=42.45 + i * 0.001) for i in range(4)]
+        assert pick_daily(same, DAY, CELL, 5).id == "x0"
+
+
+class TestDegradedAtAnyStep:
+    async def test_a_crippled_narrow_search_taints_a_later_healthy_step(self, no_llm_key):
+        pages = [
+            DiscoverResponse(places=[], total=0, has_more=False, source_status={"osm": "timeout", "wiki": "ok"}),
+            DiscoverResponse(places=ranked_set(3), total=3, has_more=False, source_status={"osm": "ok", "wiki": "ok"}),
+            DiscoverResponse(places=ranked_set(3), total=3, has_more=False, source_status={"osm": "ok", "wiki": "ok"}),
+        ]
+        with patch("app.services.daily_place.discover", new_callable=AsyncMock, side_effect=pages) as mock:
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+        # not cached after the first answer, because the 10 km step that found nothing was degraded
+        assert mock.await_count == 3
+
+    async def test_the_pick_cache_key_includes_the_radius(self, no_llm_key):
+        with discover_returning(ranked_set(3), ranked_set(3), status={"osm": "ok", "wiki": "ok"}) as mock:
+            await get_daily_place(42.46, 18.53, 10, "en", today=DAY)
+            await get_daily_place(42.46, 18.53, 20, "en", today=DAY)
+        assert mock.await_count == 2

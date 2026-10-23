@@ -70,7 +70,7 @@ options and `app/config.py` every setting. The ones you will touch first:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | — | Optional; enables chat, descriptions, stories, ask-a-place |
-| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on tokens spent through the LLM client (Deep Research is billed separately); LLM endpoints answer 503 once spent |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on tokens spent through the LLM client (Deep Research is billed separately); endpoints then degrade to their fallback (or `503` for ask-the-place) |
 | `TERRA_LLM_MODEL` / `TERRA_LLM_EFFORT` | `claude-sonnet-5-5` / `low` | Claude model and thinking depth (no sampling parameters are sent: current Claude models reject them) |
 | `TERRA_CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `TERRA_TRUSTED_PROXY_HOPS` | `0` | Set to `1` behind nginx so rate limits see real client IPs |
@@ -133,8 +133,9 @@ layers over the existing discovery, route and journal code; the LLM ones degrade
   confidence, description, photos, and `unusual_score` / `wikipedia` when the `Place` model has
   them. The day's place is taken from the top `TERRA_DAILY_TOP_K` (default 5) by rotation, so
   it changes every day and never repeats two days in a row while the top K is stable.
-- The pick is cached for the day per (date, cell, radius), so a flaky data source cannot make
-  it flip and repeat calls are cheap.
+- The pick is cached for the day per (date, cell, radius), so repeat calls are cheap and everyone in
+  the cell sees the same place. A pick made while OSM or Wikidata was `timeout`/`error`/`partial` (at any
+  radius step) is *not* cached: the next request gets a proper chance instead of freezing a degraded one.
 - **Radius widens** automatically: requested radius, then 25 km, then 50 km, never above
   `TERRA_MAX_RADIUS_KM`. Nothing found (unnamed places do not count) gives `404` with a hint to
   try another location, and the LLM is not called.
@@ -216,7 +217,8 @@ Response: `{ "answer": "..." }`.
   text is cleaned (single line, no control or invisible characters, no angle brackets,
   injection markers neutralised) and only ever appears in the user message inside delimited
   blocks; the system prompt contains no user text. Output is capped at
-  `TERRA_PLACE_ASK_MAX_TOKENS` tokens (default 500).
+  `TERRA_PLACE_ASK_MAX_TOKENS` tokens (default 500; on Claude the request carries 1024 extra tokens of thinking
+  headroom, so the answer budget is what this setting says).
 - Identical (place, question, language) requests are answered from a disk cache for
   `TERRA_PLACE_ASK_CACHE_TTL_SECONDS` (7 days), even when the LLM is down.
 - `503` with a clear message when the LLM is unavailable (no key, circuit breaker open,
@@ -239,7 +241,7 @@ is a plain deterministic summary with `ai_generated: false` rather than an error
 |-----------|--------------|------------------|-------------------|
 | Cached result exists | served | served | served |
 | No API key / circuit open / provider error | `story: null` | `503` | plain summary |
-| Daily token budget spent | `story: null` | `503` (middleware) | `503` (middleware) |
+| Daily token budget spent | `story: null` | `503` | plain summary |
 
 Concurrent identical requests share a single LLM call. Provider error text is logged by type
 only and never returned. Caches live under `TERRA_CACHE_DIR`: `daily_pick/` (2 days),
@@ -250,11 +252,11 @@ only and never returned. Caches live under `TERRA_CACHE_DIR`: `daily_pick/` (2 d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TERRA_DAILY_TOP_K` | `5` | Size of the shortlist the day's place rotates through |
-| `TERRA_DAILY_STORY_MAX_TOKENS` | `400` | Output cap for the daily story |
+| `TERRA_DAILY_STORY_MAX_TOKENS` | `400` | Answer budget (tokens) for the daily story |
 | `TERRA_LOOP_SAFETY_MARGIN` | `0.10` | Share of a loop's time budget kept in reserve |
-| `TERRA_PLACE_ASK_MAX_TOKENS` | `500` | Output cap for ask-the-place answers |
+| `TERRA_PLACE_ASK_MAX_TOKENS` | `500` | Answer budget (tokens) for ask-the-place answers |
 | `TERRA_PLACE_ASK_CACHE_TTL_SECONDS` | `604800` | How long answers are cached |
-| `TERRA_WALK_REPORT_MAX_TOKENS` | `600` | Output cap for walk reports |
+| `TERRA_WALK_REPORT_MAX_TOKENS` | `600` | Answer budget (tokens) for walk reports |
 
 Tests for these features live in `tests/features/` and never touch the network or a real LLM.
 
@@ -265,7 +267,7 @@ How a search turns raw map data into "3 genuinely unusual places nearby":
 1. **Sources** (queried concurrently, each with its own time budget): OpenStreetMap/Overpass,
    Wikidata, Atlas Obscura, Deep Research. A failing source never fails the request; the response
    says what happened in `source_status` (`{"osm": "ok", "atlas": "error", ...}` with
-   `ok | empty | error | timeout`).
+   `ok | empty | partial | error | timeout`; `partial` = the source answered but part of its query failed or was cut short).
 2. **OSM** (`sources/osm.py`, `sources/osm_tags.py`): two Overpass queries run concurrently — the
    *gems* tier (abandoned / disused / ruined objects and `abandoned:*` / `disused:*` prefixes,
    historic ruins, forts, mines, wrecks; military bunkers; adits, water towers, silos, tunnels,

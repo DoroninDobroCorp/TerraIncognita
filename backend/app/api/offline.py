@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.config import settings
 from app.models.offline import (
     CachePlacesRequest,
     CachePlacesResponse,
@@ -121,7 +122,7 @@ async def cache_places(req: CachePlacesRequest):
     center_lat = (bbox.min_lat + bbox.max_lat) / 2
     center_lng = (bbox.min_lng + bbox.max_lng) / 2
     radius_m = _haversine(bbox.min_lat, bbox.min_lng, bbox.max_lat, bbox.max_lng) / 2
-    radius_km = max(min(radius_m / 1000, 50.0), 0.1)  # DiscoverRequest needs 0 < r <= 50
+    radius_km = max(min(radius_m / 1000, settings.max_radius_km), 0.1)  # DiscoverRequest: 0 < r <= max
 
     try:
         result = await discover(DiscoverRequest(

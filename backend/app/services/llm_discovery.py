@@ -14,7 +14,7 @@ import uuid
 from app.models.chat import ChatRequest, ChatResponse, ParsedIntent
 from app.models.place import DiscoverRequest, Place, PlaceCategory
 from app.services.discovery import discover
-from app.services.llm_client import chat_completion
+from app.services.llm_client import chat_completion, log_llm_failure
 from app.utils.sanitize import (
     UNTRUSTED_DATA_NOTICE,
     fence_untrusted,
@@ -374,8 +374,8 @@ async def _generate_response(
         if not answer:  # None (OpenAI `content: null`) or blank
             raise ValueError("the model returned an empty answer")
         return answer
-    except Exception:
-        logger.exception("Failed to generate LLM response, using fallback")
+    except Exception as exc:
+        log_llm_failure(logger, exc, "Failed to generate LLM response, using fallback")
         return _fallback_response(places, language)
 
 

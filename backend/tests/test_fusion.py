@@ -436,14 +436,30 @@ class TestClusterGuards:
     """Pairwise rules are sound; connected components must not undo them via a bridging entry."""
 
     def test_a_bridge_cannot_merge_two_different_wikidata_ids(self):
-        fortress = make("wiki_Q1", "Fort A", source=PlaceSource.WIKIDATA, categories=[MIL],
+        # a distinctive name ("Mamula"): generic words would make these entries "unnamed" and the other
+        # guard would block the merge, hiding a broken Wikidata guard
+        fortress = make("wiki_Q1", "Fort Mamula", source=PlaceSource.WIKIDATA, categories=[MIL],
                         metadata={"wikidata_id": "Q1"})
-        island = make("wiki_Q2", "Fort A", east=20, source=PlaceSource.WIKIDATA, categories=[MIL],
+        island = make("wiki_Q2", "Mamula Island Fort", east=20, source=PlaceSource.WIKIDATA, categories=[MIL],
                       metadata={"wikidata_id": "Q2"})
-        bridge = make("osm_1", "Fort A", east=10, categories=[MIL])  # no wikidata tag: matches both
+        bridge = make("osm_1", "Fort Mamula", east=10, categories=[MIL])  # no wikidata tag: matches both
         result = fuse_places([[fortress, island], [bridge]])
         ids = [{p.id, *p.metadata.get("merged_ids", [])} for p in result]
         assert not any({"wiki_Q1", "wiki_Q2"} <= group for group in ids), ids
+        assert any("osm_1" in group for group in ids)  # the bridge joined one of them, not both
+
+    def test_the_guard_also_tracks_ids_through_chains_of_merges(self):
+        """Q1 absorbs the bridge first; a later Q2 must still be refused through the merged cluster."""
+        parts = [
+            make("wiki_Q1", "Fort Mamula", source=PlaceSource.WIKIDATA, categories=[MIL], metadata={"wikidata_id": "Q1"}),
+            make("osm_1", "Fort Mamula", east=10, categories=[MIL]),
+            make("osm_2", "Mamula Fort", east=12, categories=[MIL]),
+            make("wiki_Q2", "Fort Mamula", east=15, source=PlaceSource.WIKIDATA, categories=[MIL], metadata={"wikidata_id": "Q2"}),
+        ]
+        for order in (parts, parts[::-1], [parts[3], parts[1], parts[0], parts[2]]):
+            result = fuse_places([order])
+            groups = [{p.id, *p.metadata.get("merged_ids", [])} for p in result]
+            assert not any({"wiki_Q1", "wiki_Q2"} <= g for g in groups), groups
 
     def test_a_bridge_cannot_merge_two_unnamed_entries_of_one_source(self):
         a = make("osm_node_10", None, north=0, categories=[MIL])
