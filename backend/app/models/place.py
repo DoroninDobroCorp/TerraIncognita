@@ -153,6 +153,22 @@ class EnrichRequest(BaseModel):
         v = (v or "").strip()
         return v or None
 
+    @field_validator("wikidata_id", mode="before")
+    @classmethod
+    def _normalise_wikidata_id(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = v.strip().upper()
+            return v or None
+        return v
+
+    @field_validator("lang", mode="before")
+    @classmethod
+    def _normalise_lang(cls, v: object) -> object:
+        """Accept what browsers send ("en-US", "RU", "pt_BR"): keep the language subtag."""
+        if isinstance(v, str) and len(v) <= 16:
+            return v.strip().lower().replace("_", "-").split("-")[0]
+        return v
+
 
 class EnrichedPhoto(BaseModel):
     """A freely-licensed photo with the attribution its licence requires."""

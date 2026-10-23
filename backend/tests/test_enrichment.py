@@ -563,8 +563,9 @@ class TestEndpoint:
         {"lat": 0, "lng": 0, "name": "x" * 201},
         {"lat": 0, "lng": 0, "wikidata_id": "P31"}, {"lat": 0, "lng": 0, "wikidata_id": "Q"},
         {"lat": 0, "lng": 0, "wikidata_id": "Q1; DROP"}, {"lat": 0, "lng": 0, "wikidata_id": "Q0"},
-        {"lat": 0, "lng": 0, "lang": "english"}, {"lat": 0, "lng": 0, "lang": "EN"},
-        {"lat": 0, "lng": 0, "lang": "e"}, {"lat": 0, "lng": 0, "lang": "evil.com/x"},
+        {"lat": 0, "lng": 0, "lang": "english"}, {"lat": 0, "lng": 0, "lang": "e"},
+        {"lat": 0, "lng": 0, "lang": "evil.com/x"}, {"lat": 0, "lng": 0, "lang": "x" * 40},
+        {"lat": 0, "lng": 0, "lang": "12"}, {"lat": 0, "lng": 0, "lang": 5},
         {"lat": 0, "lng": 0, "lang": ""},
     ])
     def test_invalid_input_is_rejected_before_any_outgoing_call(self, body):
@@ -572,6 +573,22 @@ class TestEndpoint:
             resp = client.post("/api/place/enrich", json=body)
         assert resp.status_code == 422
         mock.assert_not_called()
+
+    @pytest.mark.parametrize(("sent", "expected"), [
+        ("en-US", "en"), ("RU", "ru"), ("pt_BR", "pt"), (" uk ", "uk"), ("ceb", "ceb"), ("sr-Latn", "sr"),
+    ])
+    def test_language_tags_from_browsers_are_normalised(self, sent, expected):
+        with patch("app.api.enrich.enrich_place", new=AsyncMock(return_value=EnrichResponse())) as mock:
+            resp = client.post("/api/place/enrich", json={"lat": 1, "lng": 2, "lang": sent})
+        assert resp.status_code == 200
+        assert mock.call_args[0][0].lang == expected
+
+    def test_wikidata_id_is_normalised_and_blank_means_none(self):
+        with patch("app.api.enrich.enrich_place", new=AsyncMock(return_value=EnrichResponse())) as mock:
+            client.post("/api/place/enrich", json={"lat": 1, "lng": 2, "wikidata_id": " q260715 "})
+            assert mock.call_args[0][0].wikidata_id == "Q260715"
+            client.post("/api/place/enrich", json={"lat": 1, "lng": 2, "wikidata_id": ""})
+            assert mock.call_args[0][0].wikidata_id is None
 
     def test_boundary_values_are_valid(self):
         with patch("app.api.enrich.enrich_place", new=AsyncMock(return_value=EnrichResponse())):
