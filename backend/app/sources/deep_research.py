@@ -34,17 +34,34 @@ _dr_cache = DiskCache(
     ttl=settings.deep_research_cache_ttl_seconds,
 )
 
-# Category keyword mapping for parsing research output
+# Runs in progress, by cache key. The map fires several discovery requests while one run takes
+# minutes; without this each of them started (and paid for) its own identical run.
+_running: dict[str, asyncio.Task] = {}
+# "Researched, found nothing (or failed)" is remembered briefly so an empty/failed run is
+# retried later instead of cached as the answer for 30 days — or re-run on every request.
+_nothing_found = DiskCache(cache_dir=settings.cache_dir, ttl=1800)
+
+
+def _configured() -> bool:
+    """Deep research needs the switch on and at least one provider key."""
+    return settings.deep_research_enabled and bool(
+        settings.parallel_api_key or settings.gemini_api_key
+    )
+
+
+# Category keyword mapping for parsing research output. Keywords match whole words (plural
+# allowed); a trailing "*" makes a stem. Raw substring matching put every "…street…" in
+# NATURE_HIDDEN ("tree") and every "comfort" in MILITARY ("fort").
 _CATEGORY_KEYWORDS: dict[str, PlaceCategory] = {
-    "abandoned": PlaceCategory.ABANDONED,
-    "ruins": PlaceCategory.RUINS,
+    "abandon*": PlaceCategory.ABANDONED,
+    "ruin*": PlaceCategory.RUINS,
     "underground": PlaceCategory.UNDERGROUND,
-    "tunnel": PlaceCategory.UNDERGROUND,
-    "bunker": PlaceCategory.MILITARY,
+    "tunnel*": PlaceCategory.UNDERGROUND,
+    "bunker*": PlaceCategory.MILITARY,
     "military": PlaceCategory.MILITARY,
-    "fort": PlaceCategory.MILITARY,
+    "fort*": PlaceCategory.MILITARY,
     "industrial": PlaceCategory.INDUSTRIAL,
-    "factory": PlaceCategory.INDUSTRIAL,
+    "factor*": PlaceCategory.INDUSTRIAL,
     "cave": PlaceCategory.CAVE,
     "viewpoint": PlaceCategory.VIEWPOINT,
     "panorama": PlaceCategory.VIEWPOINT,
@@ -56,13 +73,13 @@ _CATEGORY_KEYWORDS: dict[str, PlaceCategory] = {
     "statue": PlaceCategory.MONUMENT,
     "church": PlaceCategory.RELIGIOUS,
     "mosque": PlaceCategory.RELIGIOUS,
-    "monastery": PlaceCategory.RELIGIOUS,
+    "monaster*": PlaceCategory.RELIGIOUS,
     "abbey": PlaceCategory.RELIGIOUS,
     "museum": PlaceCategory.MUSEUM,
     "palace": PlaceCategory.ARCHITECTURE,
     "architecture": PlaceCategory.ARCHITECTURE,
     "brutalist": PlaceCategory.ARCHITECTURE,
-    "castle": PlaceCategory.LANDMARK,
+    "castle*": PlaceCategory.LANDMARK,
     "fortress": PlaceCategory.LANDMARK,
     "landmark": PlaceCategory.LANDMARK,
     "park": PlaceCategory.PARK,
@@ -90,8 +107,20 @@ _CATEGORY_KEYWORDS: dict[str, PlaceCategory] = {
     "tree": PlaceCategory.NATURE_HIDDEN,
     "railway": PlaceCategory.TRANSPORT,
     "train": PlaceCategory.TRANSPORT,
-    "aqueduct": PlaceCategory.ARCHITECTURE,
+    "aqueduct*": PlaceCategory.ARCHITECTURE,
 }
+
+_CATEGORY_PATTERNS: list[tuple[re.Pattern[str], PlaceCategory]] = [
+    (
+        re.compile(
+            rf"(?<!\w){re.escape(keyword[:-1])}\w*"
+            if keyword.endswith("*")
+            else rf"(?<!\w){re.escape(keyword)}(?:s|es)?(?!\w)"
+        ),
+        category,
+    )
+    for keyword, category in _CATEGORY_KEYWORDS.items()
+]
 
 # Structured prompt that asks for JSON POI output
 _RESEARCH_PROMPT = """Research unusual, hidden, and extraordinary points of interest within {radius_km} km
@@ -149,7 +178,7 @@ class DeepResearchSource(BaseSource):
 
         Status: "idle" | "pending" | "cached"
         """
-        if not settings.deep_research_enabled:
+        if not _configured():
             return ("idle", None)
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
@@ -159,12 +188,15 @@ class DeepResearchSource(BaseSource):
             count = len(cached)
             return ("cached", f"{count} additional places found via Deep Research")
 
-        # Check if research is in progress (we don't track this explicitly,
-        # but we can assume it's pending on first request)
-        return ("pending", "Deep Research in progress... Check back in 2-5 minutes for additional hidden gems!")
+        if cache_key in _running:
+            return (
+                "pending",
+                "Deep Research in progress... Check back in 2-5 minutes for additional hidden gems!",
+            )
+        return ("idle", None)
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
-        if not settings.deep_research_enabled:
+        if not _configured():
             return []
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
@@ -173,14 +205,19 @@ class DeepResearchSource(BaseSource):
             logger.debug("Deep Research cache hit for %s", cache_key)
             return [Place.model_validate(p) for p in cached]
 
+        if cache_key in _running or await _nothing_found.get(cache_key) is not None:
+            return []  # already researching / just came back empty-handed
+
         # Fire-and-forget: trigger research in background, return empty now
-        asyncio.create_task(self._research_and_cache(lat, lng, radius_km, cache_key))
+        task = asyncio.create_task(self._research_and_cache(lat, lng, radius_km, cache_key))
+        _running[cache_key] = task  # also keeps a reference so the task cannot be garbage-collected
+        task.add_done_callback(lambda _t, key=cache_key: _running.pop(key, None))
         logger.info("Deep Research triggered in background for %s (no cache yet)", cache_key)
         return []
 
     async def search_sync(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         """Blocking version: waits for research to complete. Use for prefetch/CLI."""
-        if not settings.deep_research_enabled:
+        if not _configured():
             return []
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
@@ -194,13 +231,16 @@ class DeepResearchSource(BaseSource):
         self, lat: float, lng: float, radius_km: float, cache_key: str
     ) -> list[Place]:
         """Run both research APIs, merge results, cache them."""
-        city_name = await self._reverse_geocode(lat, lng)
+        # One geocoding round trip pair (concurrent), shared by both providers' prompts.
+        city_name, country = await asyncio.gather(
+            self._reverse_geocode(lat, lng), self._guess_country(lat, lng)
+        )
 
         parallel_task = asyncio.create_task(
-            self._research_parallel(lat, lng, radius_km, city_name)
+            self._research_parallel(lat, lng, radius_km, city_name, country)
         )
         gemini_task = asyncio.create_task(
-            self._research_gemini(lat, lng, radius_km, city_name)
+            self._research_gemini(lat, lng, radius_km, city_name, country)
         )
 
         results = await asyncio.gather(parallel_task, gemini_task, return_exceptions=True)
@@ -217,14 +257,20 @@ class DeepResearchSource(BaseSource):
         # Deduplicate by proximity (100m threshold for research results)
         merged = self._deduplicate(all_places, threshold_m=100)
 
-        await _dr_cache.set(cache_key, [p.model_dump(mode="json") for p in merged])
-        logger.info("Deep Research cached %d merged places for %s", len(merged), cache_key)
+        if merged:
+            await _dr_cache.set(cache_key, [p.model_dump(mode="json") for p in merged])
+            logger.info("Deep Research cached %d merged places for %s", len(merged), cache_key)
+        else:
+            # Empty usually means both providers failed or timed out: do not pin that for 30 days.
+            await _nothing_found.set(cache_key, [])
+            logger.warning("Deep Research found nothing for %s; will retry later", cache_key)
         return merged
 
     # --- Parallel AI (OpenAI Deep Research) ---
 
     async def _research_parallel(
-        self, lat: float, lng: float, radius_km: float, city_name: str
+        self, lat: float, lng: float, radius_km: float, city_name: str,
+        country: str | None = None,
     ) -> list[Place]:
         if not settings.parallel_api_key:
             logger.debug("Parallel API key not set, skipping")
@@ -232,7 +278,7 @@ class DeepResearchSource(BaseSource):
 
         prompt = _RESEARCH_PROMPT.format(
             city_name=city_name,
-            country=await self._guess_country(lat, lng),
+            country=country if country is not None else await self._guess_country(lat, lng),
             lat=lat, lng=lng, radius_km=radius_km,
         )
 
@@ -335,7 +381,8 @@ class DeepResearchSource(BaseSource):
     # --- Gemini Deep Research ---
 
     async def _research_gemini(
-        self, lat: float, lng: float, radius_km: float, city_name: str
+        self, lat: float, lng: float, radius_km: float, city_name: str,
+        country: str | None = None,
     ) -> list[Place]:
         if not settings.gemini_api_key:
             logger.debug("Gemini API key not set, skipping")
@@ -343,7 +390,7 @@ class DeepResearchSource(BaseSource):
 
         prompt = _RESEARCH_PROMPT.format(
             city_name=city_name,
-            country=await self._guess_country(lat, lng),
+            country=country if country is not None else await self._guess_country(lat, lng),
             lat=lat, lng=lng, radius_km=radius_km,
         )
 
@@ -575,8 +622,8 @@ class DeepResearchSource(BaseSource):
                 pass
 
         # Keyword matching
-        for keyword, cat in _CATEGORY_KEYWORDS.items():
-            if keyword in combined:
+        for pattern, cat in _CATEGORY_PATTERNS:
+            if pattern.search(combined):
                 cats.add(cat)
 
         return sorted(cats, key=lambda c: c.value)
@@ -642,7 +689,7 @@ class DeepResearchSource(BaseSource):
                     "format": "json", "zoom": "10",
                     "accept-language": "en",
                 },
-                headers={"User-Agent": "TerraIncognita/0.1"},
+                headers={"User-Agent": settings.wikimedia_user_agent},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -669,7 +716,7 @@ class DeepResearchSource(BaseSource):
                     "format": "json", "zoom": "3",
                     "accept-language": "en",
                 },
-                headers={"User-Agent": "TerraIncognita/0.1"},
+                headers={"User-Agent": settings.wikimedia_user_agent},
                 timeout=10,
             )
             resp.raise_for_status()
