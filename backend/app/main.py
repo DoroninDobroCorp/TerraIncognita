@@ -6,9 +6,10 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
@@ -31,6 +32,7 @@ from app.middleware import (
 )
 from app.services.llm_client import check_llm_health, close_llm_client, get_llm_usage
 from app.utils.http_client import close_http_client
+from app.utils.safe_route import _public_errors
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +54,13 @@ app = FastAPI(
     description="Discovery Engine — find unusual and interesting places around you",
     lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing raw input: NaN/Infinity in a body would make FastAPI's default
+    handler fail to serialise its own error (a 500) — this covers every router."""
+    return JSONResponse(status_code=422, content={"detail": _public_errors(exc.errors())})
+
 
 _cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 _cors_open = "*" in _cors_origins

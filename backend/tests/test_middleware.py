@@ -145,3 +145,33 @@ class TestMiscEndpoints:
         assert resp.status_code in (200, 204)
         if resp.status_code == 200:
             assert resp.headers["content-type"].startswith("image/svg+xml")
+
+
+class TestBodyLimit:
+    def test_declared_oversize_body_is_413(self):
+        resp = client.post("/api/discover", content=b"x" * (65 * 1024))
+        assert resp.status_code == 413
+
+    def test_chunked_oversize_body_is_413(self):
+        """No Content-Length header: the cap must count the bytes actually received."""
+        def chunks():
+            for _ in range(5):
+                yield b"x" * (16 * 1024)
+
+        resp = client.post("/api/discover", content=chunks())
+        assert resp.status_code == 413
+
+    def test_small_body_passes_through(self):
+        resp = client.post("/api/discover", json={"lat": 91, "lng": 0})
+        assert resp.status_code == 422
+
+
+class TestValidationErrors:
+    def test_non_finite_numbers_are_422_not_500(self):
+        resp = client.post(
+            "/api/discover",
+            content=b'{"lat": NaN, "lng": Infinity}',
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"][0]["loc"][0] == "body"

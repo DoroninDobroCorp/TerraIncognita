@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # Cache
     cache_dir: str = "cache"
     cache_ttl_seconds: int = 86400  # 24 hours
+    cache_max_entries: int = 20000  # per cache directory; oldest files are evicted beyond this
 
     # LLM Intelligence Layer (Epic 2)
     anthropic_api_key: str = ""

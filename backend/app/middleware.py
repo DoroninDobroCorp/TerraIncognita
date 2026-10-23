@@ -148,18 +148,76 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # ── Body size ────────────────────────────────────────────────
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject request bodies larger than MAX_REQUEST_BODY_BYTES."""
+class _BodyTooLargeError(Exception):
+    pass
 
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY_BYTES:
-            return Response(
-                content='{"detail":"Request body too large"}',
-                status_code=413,
-                media_type="application/json",
-            )
-        return await call_next(request)
+
+class RequestSizeLimitMiddleware:
+    """Reject request bodies larger than ``max_bytes`` (pure ASGI).
+
+    Checks ``Content-Length`` up front and also counts the bytes actually received, so a
+    chunked upload without a length header cannot slip past the cap.
+    """
+
+    def __init__(self, app, max_bytes: int = MAX_REQUEST_BODY_BYTES) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > self.max_bytes:
+            await self._reject(send)
+            return
+
+        received = 0
+        exceeded = False
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    exceeded = True
+                    raise _BodyTooLargeError
+            return message
+
+        async def guarded_send(message):
+            # The framework may turn our exception into its own 400 ("error parsing the
+            # body"); once the cap has been hit, replace whatever it answers with a 413.
+            nonlocal response_started
+            if exceeded:
+                if not response_started:
+                    response_started = True
+                    await self._reject(send)
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except _BodyTooLargeError:
+            if not response_started:
+                await self._reject(send)
+
+    @staticmethod
+    async def _reject(send) -> None:
+        body = b'{"detail":"Request body too large"}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 # ── Scanner noise ────────────────────────────────────────────

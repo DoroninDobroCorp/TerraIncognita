@@ -82,3 +82,18 @@ def test_health_reports_budget():
     assert usage["daily_tokens_used"] == 150
     assert usage["daily_token_cap"] == 1000
     assert usage["budget_exhausted"] is False
+
+
+async def test_openai_path_honours_explicit_zero_temperature(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "llm_temperature", 0.7)
+    monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
+    response = MagicMock()
+    response.usage.prompt_tokens, response.usage.completion_tokens = 1, 1
+    response.choices = [MagicMock(message=MagicMock(content="ok"))]
+    oai = MagicMock()
+    oai.chat.completions.create = AsyncMock(return_value=response)
+    with patch.object(llm_client, "_get_openai_client", return_value=oai):
+        await llm_client.chat_completion([{"role": "user", "content": "x"}], temperature=0.0)
+    assert oai.chat.completions.create.call_args.kwargs["temperature"] == 0.0

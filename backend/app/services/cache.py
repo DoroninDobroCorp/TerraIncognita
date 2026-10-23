@@ -17,10 +17,23 @@ logger = logging.getLogger(__name__)
 class DiskCache:
     """Simple file-system cache. Each entry is a JSON file with metadata."""
 
-    def __init__(self, cache_dir: str | None = None, ttl: int | None = None) -> None:
-        """``ttl`` in seconds; ``None`` = default from settings, ``0`` = never expires."""
+    _PRUNE_EVERY = 50  # writes between size checks
+
+    def __init__(
+        self,
+        cache_dir: str | None = None,
+        ttl: int | None = None,
+        max_entries: int | None = None,
+    ) -> None:
+        """``ttl`` in seconds; ``None`` = default from settings, ``0`` = never expires.
+
+        ``max_entries`` bounds the directory (``None`` = settings default): when exceeded,
+        the least recently written files are removed.
+        """
         self._dir = Path(cache_dir or settings.cache_dir)
         self._ttl = settings.cache_ttl_seconds if ttl is None else ttl
+        self._max_entries = settings.cache_max_entries if max_entries is None else max_entries
+        self._writes = 0
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
@@ -47,6 +60,14 @@ class DiskCache:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
         tmp.replace(path)  # atomic: readers never see a half-written entry
+        self._writes += 1
+        if self._max_entries and self._writes % self._PRUNE_EVERY == 0:
+            self._prune()
+
+    def _prune(self) -> None:
+        files = sorted(self._dir.glob("*.json"), key=lambda f: f.stat().st_mtime)
+        for f in files[: max(len(files) - self._max_entries, 0)]:
+            f.unlink(missing_ok=True)
 
     async def invalidate(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

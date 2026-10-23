@@ -79,3 +79,17 @@ async def test_set_leaves_no_tmp_files(tmp_path):
     cache = DiskCache(cache_dir=str(tmp_path), ttl=60)
     await cache.set("k", "v")
     assert [p.suffix for p in tmp_path.iterdir()] == [".json"]
+
+
+@pytest.mark.asyncio
+async def test_old_entries_are_evicted_beyond_max_entries(tmp_path):
+    cache = DiskCache(cache_dir=str(tmp_path), ttl=0, max_entries=10)
+    for i in range(DiskCache._PRUNE_EVERY):
+        await cache.set(f"k{i}", i)
+        # distinct mtimes so "oldest" is well defined
+        import os
+        os.utime(cache._path(f"k{i}"), (i, i))
+    remaining = list(tmp_path.glob("*.json"))
+    assert len(remaining) == 10
+    assert await cache.get("k49") == 49  # newest survives
+    assert await cache.get("k0") is None  # oldest evicted

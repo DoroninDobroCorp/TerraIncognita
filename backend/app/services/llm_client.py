@@ -221,7 +221,7 @@ async def _openai_completion(
         response = await client.chat.completions.create(
             model=settings.openai_model,
             messages=oai_messages,
-            temperature=temperature or settings.llm_temperature,
+            temperature=settings.llm_temperature if temperature is None else temperature,
             max_tokens=max_tokens or settings.llm_max_tokens,
         )
         _record_success()
