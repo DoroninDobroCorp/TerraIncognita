@@ -229,8 +229,10 @@ PENALTIES: tuple[Penalty, ...] = (
             lambda c: c.tags.get("military") in _ACTIVE_MILITARY
             and not (c.info and c.info.lifecycles)),
     Penalty("marked as a tourist attraction", 0.80, lambda c: c.tags.get("tourism") == "attraction"),
+    # (Atlas Obscura's museums are the quirky ones; its curation already says "unusual".)
     Penalty("museum (a managed visitor attraction)", 0.55,
-            lambda c: c.tags.get("tourism") == "museum" or C.MUSEUM in c.cats),
+            lambda c: (c.tags.get("tourism") == "museum" or C.MUSEUM in c.cats)
+            and PlaceSource.ATLAS_OBSCURA not in c.sources),
     Penalty("ticketed / commercial", 0.85,
             lambda c: c.tags.get("fee") == "yes" or bool(c.tags.get("opening_hours"))
             or bool(c.place.metadata.get("opening_hours"))),

@@ -421,3 +421,11 @@ def test_a_long_railway_is_still_one_namesake_group():
     other = _scored("g", 0.5, 43.0, 19.0, name="Cave of Winds")
     out = [p.id for p in diversify_by_site(sorted([*line, other], key=unusual_sort_key))]
     assert out.index("g") <= 2  # 0.74 * 0.5 (namesake floor) = 0.37 < 0.5: the cave beats the second segment
+
+
+def test_quirky_museums_curated_by_atlas_obscura_are_not_penalised_as_museums():
+    ordinary = plain([C.MUSEUM], name="City Museum", source=S.WIKIDATA)
+    quirky = plain([C.MUSEUM], name="Museum of Broken Relationships", source=S.ATLAS_OBSCURA)
+    assert "museum (a managed visitor attraction)" in score_place(ordinary).penalties
+    assert "museum (a managed visitor attraction)" not in score_place(quirky).penalties
+    assert score_place(quirky).score > 0.3 > score_place(ordinary).score
