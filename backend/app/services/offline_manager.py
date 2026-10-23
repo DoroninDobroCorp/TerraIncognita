@@ -41,6 +41,10 @@ _CONNECTIVITY_TTL_S = 30.0
 _CONNECTIVITY_URL = "https://overpass-api.de/api/status"
 
 
+class RouteNotFoundError(ValueError):
+    """There is no saved route with that id (404)."""
+
+
 class StorageLimitError(ValueError):
     """A configured disk/count limit (storage MB, cached places, regions, queue) is reached."""
 
@@ -373,7 +377,7 @@ class OfflineManager:
         route_data_dir = Path(settings.journal_data_dir).parent / "routes"
         route_file = route_data_dir / f"{route_id}.json"
         if not route_file.exists():
-            return 0
+            raise RouteNotFoundError(f"No saved route {route_id!r}")
         try:
             route_data = json.loads(route_file.read_text("utf-8"))
             places = []

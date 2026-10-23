@@ -118,7 +118,7 @@ _GEM_CLAUSES: tuple[str, ...] = _lifecycle_clauses() + (
     'cooling|water|bell_tower|round|square|fortified)$"]',
     'nwr["man_made"="tower"]["name"]["tower:type"!~"^(communication|radio|tv)$"]',
     # tunnels (but not culverts, underpasses or ordinary road tunnels)
-    f'nwr{_REAL_TUNNEL}["tunnel:name"]',
+    f'nwr{_REAL_TUNNEL}["tunnel:name"][!"highway"][!"railway"][!"waterway"]',
     f'nwr{_REAL_TUNNEL}["highway"~"^(footway|path|pedestrian|cycleway|track|steps|bridleway)$"]["name"]',
     f'nwr[{_DEAD_RAILWAY}]["tunnel"]',
     # dead railways: stations (nodes), named lines (not streets), lines carrying a bridge

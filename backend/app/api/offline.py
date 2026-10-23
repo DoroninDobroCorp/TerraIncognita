@@ -22,7 +22,7 @@ from app.models.offline import (
 )
 from app.models.place import Coordinates, DiscoverRequest
 from app.services.discovery import discover
-from app.services.offline_manager import StorageLimitError, offline_manager
+from app.services.offline_manager import RouteNotFoundError, StorageLimitError, offline_manager
 from app.utils.safe_route import SafeValidationRoute
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,8 @@ async def cache_places(req: CachePlacesRequest):
             cached_count = await offline_manager.cache_route_places(req.route_id)
         except StorageLimitError as exc:
             raise HTTPException(507, str(exc)) from exc
+        except RouteNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         total_cached, total_size = await offline_manager.cache_stats()
@@ -124,15 +126,17 @@ async def cache_places(req: CachePlacesRequest):
     radius_m = _haversine(bbox.min_lat, bbox.min_lng, bbox.max_lat, bbox.max_lng) / 2
     radius_km = max(min(radius_m / 1000, settings.max_radius_km), 0.1)  # DiscoverRequest: 0 < r <= max
 
+    source_status: dict[str, str] = {}
     try:
         result = await discover(DiscoverRequest(
             lat=center_lat,
             lng=center_lng,
             radius_km=radius_km,
             categories=list(req.categories),
-            limit=200,
+            limit=min(200, settings.max_limit),
             sort_by="confidence",
         ))
+        source_status = result.source_status
         # The search circle also covers the corners outside the rectangle the user asked for.
         places = [
             p for p in result.places
@@ -144,6 +148,15 @@ async def cache_places(req: CachePlacesRequest):
         logger.warning("Discovery failed (possibly offline), returning existing cache", exc_info=True)
         places = []
 
+    # A place's id depends on which sources answered. When a better-ranked source joins a place we
+    # cached earlier under another id, that older entry is the same place: replace it.
+    for place in places:
+        for old_id in place.metadata.get("merged_ids", ()):
+            try:
+                await offline_manager.delete_cached_place(old_id)
+            except ValueError:
+                continue  # not a safe id: it could never have been cached
+
     try:
         # No LLM description is generated here (budget), so never flag one as present.
         cached_count = await offline_manager.cache_places(places, has_llm_description=False)
@@ -152,10 +165,21 @@ async def cache_places(req: CachePlacesRequest):
 
     total_cached, total_size = await offline_manager.cache_stats()
 
+    degraded = sorted(
+        name for name, status in source_status.items()
+        if status in ("timeout", "partial") or (status == "error" and name != "atlas")
+    )
+    warning = None
+    if not places:
+        warning = "Nothing was found for this area — the data sources may be unreachable. Try again in a while."
+    elif degraded:
+        warning = f"{', '.join(degraded)} did not answer in full: what was cached may be incomplete."
     return CachePlacesResponse(
         cached_count=cached_count,
         total_cached=total_cached,
         disk_usage_bytes=total_size,
+        source_status=source_status,
+        warning=warning,
     )
 
 

@@ -358,7 +358,12 @@ def interpret_tags(tags: dict[str, str]) -> OsmInterpretation:
     if "ruins" in states:
         cats.add(C.RUINS)
     tunnel = eff.get("tunnel")
-    if tunnel and _is_true(tunnel) and tunnel not in _BORING_TUNNELS:
+    dead = bool({"abandoned", "disused", "ruins"} & set(states))
+    # a road, rail, metro or canal that happens to run underground is infrastructure in use
+    carries_traffic = not dead and (
+        eff.get("highway") in _ROAD_TYPES or bool(eff.get("railway")) or bool(eff.get("waterway"))
+    )
+    if tunnel and _is_true(tunnel) and tunnel not in _BORING_TUNNELS and not carries_traffic:
         cats.add(C.UNDERGROUND)
     if eff.get("industrial") and _is_true(eff["industrial"]):
         cats.add(C.INDUSTRIAL)

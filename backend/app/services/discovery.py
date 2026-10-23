@@ -59,6 +59,8 @@ async def discover(req: DiscoverRequest) -> DiscoverResponse:
 
     # 1. Concurrent source queries. Looked up at call time so tests can swap the singletons.
     sources = (("osm", _osm), ("atlas", _atlas), ("wiki", _wiki), ("deep_research", _deep))
+    if not settings.atlas_obscura_enabled:
+        sources = tuple(s for s in sources if s[0] != "atlas")
     outcomes = await _gather_sources(sources, req)
     results = [places for places, _ in outcomes]
     source_status = {name: status for (name, _), (_, status) in zip(sources, outcomes, strict=True)}

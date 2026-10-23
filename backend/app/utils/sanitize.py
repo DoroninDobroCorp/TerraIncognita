@@ -31,7 +31,8 @@ DEFAULT_MAX_LENGTH = 10_000
 _CONTROL_RE = re.compile(
     "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
     "​‎‏‪-‮⁠-⁤⁦-⁩﻿"
-    "\U000e0000-\U000e007f]"
+    "\U000e0000-\U000e007f"
+    "\ud800-\udfff]"  # lone surrogates: valid in a Python str, impossible to encode as UTF-8
 )
 # No two adjacent \s* (the old "<\s*/?\s*name" form backtracked quadratically on "<" + thousands of spaces).
 _ROLE_TAG_RE = re.compile(r"<\s*(?:/\s*)?(?:system|assistant|human|user)\s*>", re.IGNORECASE)

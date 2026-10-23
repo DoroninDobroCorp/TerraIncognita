@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
-from app.middleware import RATE_RULES, RateRule, SlidingWindowLimiter, client_ip
+from app.middleware import (
+    MAX_REQUEST_BODY_BYTES,
+    RATE_RULES,
+    RateRule,
+    SlidingWindowLimiter,
+    client_ip,
+)
 
 client = TestClient(app)
 
@@ -149,14 +155,19 @@ class TestMiscEndpoints:
 
 class TestBodyLimit:
     def test_declared_oversize_body_is_413(self):
-        resp = client.post("/api/discover", content=b"x" * (65 * 1024))
+        resp = client.post("/api/discover", content=b"x" * (MAX_REQUEST_BODY_BYTES + 1))
         assert resp.status_code == 413
+
+    def test_a_body_at_the_cap_is_still_read(self):
+        """The cap is the largest accepted body, not an exclusive bound (this one is merely invalid JSON)."""
+        resp = client.post("/api/discover", content=b"x" * MAX_REQUEST_BODY_BYTES)
+        assert resp.status_code == 422
 
     def test_chunked_oversize_body_is_413(self):
         """No Content-Length header: the cap must count the bytes actually received."""
         def chunks():
             for _ in range(5):
-                yield b"x" * (16 * 1024)
+                yield b"x" * (MAX_REQUEST_BODY_BYTES // 4)
 
         resp = client.post("/api/discover", content=chunks())
         assert resp.status_code == 413
@@ -175,3 +186,15 @@ class TestValidationErrors:
         )
         assert resp.status_code == 422
         assert resp.json()["detail"][0]["loc"][0] == "body"
+
+
+class TestTheSharedHttpClient:
+    async def test_it_identifies_itself_with_the_configured_contact_agent(self):
+        """Overpass and Nominatim block anonymous or generic agents; Wikimedia asks for a contact."""
+        from app.utils import http_client
+
+        http_client._client = None
+        try:
+            assert http_client.get_http_client().headers["user-agent"] == settings.wikimedia_user_agent
+        finally:
+            await http_client.close_http_client()

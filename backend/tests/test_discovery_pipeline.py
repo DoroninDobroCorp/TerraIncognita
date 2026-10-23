@@ -224,3 +224,16 @@ class TestDefaultRadius:
     def test_explicit_radius_wins(self, monkeypatch):
         monkeypatch.setattr(settings, "default_radius_km", 7.5)
         assert DiscoverRequest(lat=1, lng=1, radius_km=2).radius_km == 2
+
+
+class TestAtlasObscuraSwitch:
+    async def test_it_is_queried_by_default(self, sources):
+        await discover(DiscoverRequest(**REQ))
+        sources["atlas"].search.assert_awaited_once()
+
+    async def test_when_disabled_the_site_is_never_contacted_and_not_reported(self, sources, monkeypatch):
+        monkeypatch.setattr(settings, "atlas_obscura_enabled", False)
+        result = await discover(DiscoverRequest(**REQ))
+        sources["atlas"].search.assert_not_called()
+        assert "atlas" not in result.source_status
+        assert {"osm", "wiki"} <= set(result.source_status)

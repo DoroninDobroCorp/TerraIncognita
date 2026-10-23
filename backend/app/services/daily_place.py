@@ -277,7 +277,7 @@ async def _choose_place(
     degraded = False  # any step: a crippled narrower search may be why a farther place was picked
     for radius in steps:
         result = await discover(DiscoverRequest(
-            lat=lat, lng=lng, radius_km=radius, limit=_DISCOVER_LIMIT, sort_by="unusual",
+            lat=lat, lng=lng, radius_km=radius, limit=min(_DISCOVER_LIMIT, settings.max_limit), sort_by="unusual",
         ))
         degraded = degraded or _degraded(result.source_status)
         named = [p for p in result.places if p.name and p.name.strip()]

@@ -157,4 +157,10 @@ function initUi() {
   // Populate user ID input with the auto-generated ID
   const uidInput = $('my-user-id');
   if (uidInput && !uidInput.value) uidInput.value = USER_ID;
+  // The id is the one stored in this browser (getUserId); a custom one is kept for next time, so that
+  // authorship and karma do not split across a generated id and the one the person chose.
+  if (uidInput) uidInput.addEventListener('change', () => {
+    const id = getActiveUserId();
+    if (id !== USER_ID) store.set(LS.userId, id);
+  });
 }

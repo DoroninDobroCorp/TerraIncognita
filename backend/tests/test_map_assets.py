@@ -791,3 +791,189 @@ def test_the_service_worker_prefers_a_cached_copy_to_a_server_error():
     })();
     """
     assert json.loads(_run_node(script)) == [True, True, True]
+
+
+# ── pass-3 frontend regressions, run in node ────────────────────────────────
+
+
+def _node_json(script: str, env: dict | None = None):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
+                         env={"PATH": "/usr/bin:/bin", **(env or {})})
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+_LOCK_HARNESS = """
+const LS = { pendingVisits: 'q' };
+let db = [{place_id: 'a'}, {place_id: 'b'}, {place_id: 'c'}];
+const store = { getJSON: (k, d) => db, setJSON: (k, v) => { db = v; return true; } };
+const TI = { net: { ok: true } };
+const calls = [];
+async function api(path, opts) { calls.push(opts.body.place_id); await new Promise(r => setTimeout(r, 5)); return {}; }
+const toast = () => {}, refreshHeatmap = () => {}, loadStreak = () => {};
+// a Web Locks stand-in: one holder at a time, `ifAvailable` gives null to the others
+let held = false;
+const fakeNavigator = { locks: { request: async (name, opts, cb) => {
+  if (held) return cb(null);
+  held = true;
+  try { return await cb({ name }); } finally { held = false; }
+} } };
+// two windows of one profile: the page flag is per window, the lock and the stored queue are shared
+function makePage() {
+  const page = {};
+  new Function('page', 'LS', 'store', 'TI', 'api', 'toast', 'refreshHeatmap', 'loadStreak', 'navigator',
+    __SOURCE__ + '; page.flush = flushPendingVisits;')(page, LS, store, TI, api, toast, refreshHeatmap, loadStreak, __NAVIGATOR__);
+  return page;
+}
+const a = makePage(), b = makePage();
+Promise.all([a.flush(), b.flush()]).then(() => console.log(JSON.stringify({ calls, left: db.length })));
+"""
+
+
+def _two_windows(navigator_js: str):
+    src = _js_snippet("places.js", "// ── Check-ins waiting for a connection ──", "\nregisterActions(")
+    return _node_json(_LOCK_HARNESS.replace("__SOURCE__", json.dumps(src)).replace("__NAVIGATOR__", navigator_js))
+
+
+def test_two_windows_replaying_the_queue_send_each_checkin_once():
+    result = _two_windows("fakeNavigator")
+    assert sorted(result["calls"]) == ["a", "b", "c"] and result["left"] == 0, result
+
+
+def test_the_two_window_check_is_not_vacuous():
+    """Without Web Locks (an old browser) both windows replay the head item: the lock is what prevents it."""
+    result = _two_windows("{}")
+    assert len(result["calls"]) > 3, result
+
+
+def test_a_checkin_that_could_not_be_stored_is_not_reported_as_saved():
+    src = _js_snippet("places.js", "const MAX_PENDING_VISITS", "let flushingVisits")
+    script = """
+    const LS = { pendingVisits: 'q' };
+    let ok = true;
+    const store = { getJSON: () => [], setJSON: () => ok };
+    """ + src + """
+    const saved = queueVisit({ place_id: 'x' });
+    ok = false;
+    console.log(JSON.stringify([saved, queueVisit({ place_id: 'y' })]));
+    """
+    assert _node_json(script) == [True, False]
+
+
+_FALLBACK_HARNESS = """
+const state = { userLat: __LAT__, userLng: __LNG__, radius: 5 };
+const shown = [];
+const dateStr = () => 'today', toast = (m, kind) => shown.push(kind + ': ' + m);
+const loadDemoData = () => shown.push('demo'), applyFilters = () => shown.push('snapshot');
+const snapshot = __SNAPSHOT__;
+const loadLastPlaces = () => snapshot;
+__SOURCE__
+showFallbackPlaces(); console.log(JSON.stringify(shown));
+"""
+
+
+def _fallback(lat, lng, snapshot):
+    util = (MAP_DIR / "js" / "util.js").read_text(encoding="utf-8")
+    haversine = util[util.index("function haversineJS("):util.index("function formatBytes(")]
+    src = _js_snippet("places.js", "// The demo places are in Montenegro", "\n/** Sources whose")
+    script = (_FALLBACK_HARNESS.replace("__LAT__", str(lat)).replace("__LNG__", str(lng))
+              .replace("__SNAPSHOT__", json.dumps(snapshot)).replace("__SOURCE__", haversine + src))
+    return _node_json(script)
+
+
+def test_a_snapshot_of_another_city_is_not_shown_as_the_places_saved_here():
+    montenegro = {"t": 1, "lat": 42.44, "lng": 18.77, "places": [{"id": "kotor"}]}
+    paris = {"t": 1, "lat": 48.86, "lng": 2.35, "places": [{"id": "paris"}]}
+    assert _fallback(48.86, 2.36, paris)[0] == "snapshot"            # same city: fine
+    assert _fallback(48.86, 2.36, montenegro)[0].startswith("error:")  # Paris with a Montenegro snapshot
+
+
+def test_demo_places_appear_only_near_montenegro():
+    assert _fallback(42.45, 18.77, None) == ["demo", "warning: API unavailable — showing demo data"]
+    tokyo = _fallback(35.68, 139.69, None)
+    assert tokyo[0].startswith("error:") and "demo" not in tokyo
+
+
+def test_a_stale_cached_daily_pick_is_not_shown_as_todays():
+    src = _js_snippet("daily.js", "/** A pick for today", "function renderDaily")
+    script = src + """
+    const day = (offset) => new Date(Date.now() - offset * 86400000).toISOString().slice(0, 10);
+    console.log(JSON.stringify([isRecentDaily({ date: day(0) }), isRecentDaily({ date: day(1) }),
+      isRecentDaily({ date: day(7) }), isRecentDaily({}), isRecentDaily({ date: 'garbage' })]));
+    """
+    assert _node_json(script) == [True, True, False, True, False]
+
+
+def _sw_function() -> str:
+    sw = (MAP_DIR / "sw.js").read_text(encoding="utf-8")
+    return sw[sw.index("async function networkFirstApi"):sw.index("// ── bounded caches ──")]
+
+
+_SW_HARNESS = """
+const API_NETWORK_TIMEOUT_MS = 40, API_CACHE_MAX = 10, API_CACHE = 'c';
+const trimCache = async () => {};
+const store = new Map();
+const cache = { match: async (r) => store.get(r.url), put: async (r, res) => { store.set(r.url, res); } };
+globalThis.caches = { open: async () => cache };
+const event = { request: { url: 'https://x/api/daily?lat=1' }, waitUntil: () => {} };
+const reply = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), body, clone() { return this; } });
+__SOURCE__
+if (__CACHED__) store.set(event.request.url, reply('cached'));
+globalThis.fetch = () => new Promise((resolve) => setTimeout(() => resolve(reply('network', __STATUS__)), __DELAY__));
+const t0 = Date.now();
+networkFirstApi(event).then((r) => console.log(JSON.stringify({ body: r.body, ms: Date.now() - t0 })),
+                            (e) => console.log(JSON.stringify({ error: String(e) })));
+"""
+
+
+def _sw_run(cached: bool, network_ms: int, network_status: int = 200):
+    script = (_SW_HARNESS.replace("__SOURCE__", _sw_function()).replace("__CACHED__", "true" if cached else "false")
+              .replace("__STATUS__", str(network_status)).replace("__DELAY__", str(network_ms)))
+    return _node_json(script)
+
+
+def test_with_nothing_cached_a_slow_api_answer_is_awaited_not_abandoned():
+    """/api/daily on a cold area legitimately takes longer than the 8 s fallback timeout."""
+    assert _sw_run(cached=False, network_ms=120)["body"] == "network"
+
+
+def test_with_a_cached_copy_a_slow_api_answer_falls_back_to_it():
+    assert _sw_run(cached=True, network_ms=400)["body"] == "cached"
+
+
+def test_a_fast_answer_wins_over_the_cache():
+    assert _sw_run(cached=True, network_ms=1)["body"] == "network"
+
+
+def test_a_server_error_serves_the_cached_copy_but_never_hides_the_error_when_there_is_none():
+    assert _sw_run(cached=True, network_ms=1, network_status=503)["body"] == "cached"
+    assert _sw_run(cached=False, network_ms=1, network_status=503)["body"] == "network"
+
+
+def test_the_collapsed_filter_panel_is_out_of_the_tab_order():
+    css = (MAP_DIR / "css" / "app.css").read_text(encoding="utf-8")
+    assert re.search(r"#filter-panel:not\(\.open\) #filter-body\s*\{[^}]*visibility:\s*hidden", css)
+    assert re.search(r"#filter-panel\.open #filter-body\s*\{[^}]*visibility:\s*visible", css)
+
+
+def test_filters_redraw_the_fog_and_a_checkin_goes_through_them():
+    """The fog holes follow the visited places among the *current* results; a check-in must refresh them too."""
+    src = _js_snippet("places.js", "function applyFilters()", "// ── Place card ──")
+    script = """
+    const state = { places: [{id: 'a', categories: [], confidence: 1}, {id: 'b', categories: [], confidence: 1}],
+      activeCategories: new Set(), minConfidence: 0, hideVisited: false, fogEnabled: true, visitedPlaces: new Set(['a']) };
+    const isVisited = (p) => state.visitedPlaces.has(p.id);
+    const els = {}; const $ = (id) => els[id] || (els[id] = {});
+    const log = [];
+    const renderPlaces = () => log.push('places'), renderFog = () => log.push('fog'), updateFogStats = () => log.push('stats');
+    """ + src + """
+    applyFilters();
+    state.fogEnabled = false; applyFilters();
+    console.log(JSON.stringify(log));
+    """
+    assert _node_json(script) == ["places", "fog", "stats", "places"]
+    places_js = (MAP_DIR / "js" / "places.js").read_text(encoding="utf-8")
+    assert "persistVisited(); applyFilters(); }" in places_js

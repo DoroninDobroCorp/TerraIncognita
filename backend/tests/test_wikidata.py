@@ -189,10 +189,15 @@ def test_sitelink_count_is_exposed_for_scoring():
 def test_sparql_asks_for_sitelinks_and_every_known_type():
     query = wikidata_module._SPARQL_TEMPLATE.format(
         south=1, west=2, north=3, east=4,
-        type_values=" ".join(f"wd:{q}" for q in wikidata_module._TYPE_MAP))
+        type_values=" ".join(f"wd:{q}" for q in wikidata_module._TYPE_MAP),
+        common_values=", ".join(f"wd:{q}" for q in wikidata_module._COMMON_TYPES),
+        limit=wikidata_module._QUERY_LIMIT)
     assert "wikibase:sitelinks ?sitelinks" in query
     assert all(f"wd:{q}" in query for q in wikidata_module._TYPE_MAP)
     assert 'Point(2 1)' in query and 'Point(4 3)' in query
+    # when the row limit bites, the common types (churches, museums...) go first, not the rare ones
+    assert query.index("ORDER BY ?common") < query.index(f"LIMIT {wikidata_module._QUERY_LIMIT}")
+    assert set(wikidata_module._COMMON_TYPES) <= set(wikidata_module._TYPE_MAP)
 
 
 @pytest.fixture
@@ -256,3 +261,53 @@ class TestUnlabelledItems:
         place = src._parse_results({"results": {"bindings": [self._binding("Golubinja Pećina", "cave")]}})[0]
         assert place.name == "Golubinja Pećina"
         assert "name_generated" not in place.metadata
+
+
+def _row(qid, label, type_qid, lat=42.45, lng=18.53):
+    return {
+        "item": {"value": f"http://www.wikidata.org/entity/{qid}"}, "itemLabel": {"value": label},
+        "coord": {"value": f"Point({lng} {lat})"}, "type": {"value": f"http://www.wikidata.org/entity/{type_qid}"},
+    }
+
+
+class TestTypeRowsAndTruncation:
+    def test_every_type_of_an_item_counts_whatever_order_the_rows_come_in(self):
+        src = WikidataSource()
+        rows = [_row("Q1", "Kula", "Q109607"), _row("Q1", "Kula", "Q35509")]  # ruins, cave
+        forward = src._parse_results({"results": {"bindings": rows}})
+        backward = src._parse_results({"results": {"bindings": rows[::-1]}})
+        assert len(forward) == len(backward) == 1
+        wanted = {*wikidata_module._TYPE_MAP["Q109607"], *wikidata_module._TYPE_MAP["Q35509"]}
+        assert set(forward[0].categories) == set(backward[0].categories) == wanted
+        assert PlaceCategory.RUINS in wanted and len(wanted) > 1
+
+    def test_merging_type_rows_does_not_write_into_the_shared_type_map(self):
+        src = WikidataSource()
+        before = {k: list(v) for k, v in wikidata_module._TYPE_MAP.items()}
+        src._parse_results({"results": {"bindings": [
+            _row("Q1", "A", "Q109607"), _row("Q1", "A", "Q35509"), _row("Q2", "B", "Q109607"),
+        ]}})
+        assert {k: list(v) for k, v in wikidata_module._TYPE_MAP.items()} == before
+
+    async def test_a_row_limited_answer_is_partial_and_the_gap_is_remembered(self, wd, httpx_mock, monkeypatch):
+        from app.sources.base import PartialSourceResult
+
+        monkeypatch.setattr(wikidata_module, "_QUERY_LIMIT", 3)
+        httpx_mock.add_response(url=re.compile(r"https://query\.wikidata\.org/sparql.*"), json=_SPARQL_RESPONSE)
+        for _ in range(2):  # the second call is served from the cache and is still flagged
+            with pytest.raises(PartialSourceResult) as caught:
+                await wd.search(42.45, 18.53, 5.0)
+            assert len(caught.value.places) == 3
+        assert len(httpx_mock.get_requests()) == 1
+
+    async def test_an_answer_below_the_limit_is_complete(self, wd, httpx_mock, monkeypatch):
+        monkeypatch.setattr(wikidata_module, "_QUERY_LIMIT", 4)
+        httpx_mock.add_response(url=re.compile(r"https://query\.wikidata\.org/sparql.*"), json=_SPARQL_RESPONSE)
+        assert len(await wd.search(42.45, 18.53, 5.0)) == 3
+
+    async def test_a_bare_list_in_the_cache_is_not_trusted(self, wd, httpx_mock):
+        """Entries written before completeness was tracked were plain lists: re-ask rather than serve them."""
+        south, west, north, east = wikidata_module.bounding_box(42.45, 18.53, 5.0)
+        await wikidata_module.disk_cache.set(f"wiki2_{south:.3f}_{west:.3f}_{north:.3f}_{east:.3f}", [])
+        httpx_mock.add_response(url=re.compile(r"https://query\.wikidata\.org/sparql.*"), json=_SPARQL_RESPONSE)
+        assert len(await wd.search(42.45, 18.53, 5.0)) == 3

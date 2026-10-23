@@ -16,7 +16,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-MAX_REQUEST_BODY_BYTES = 64 * 1024  # 64 KB
+MAX_REQUEST_BODY_BYTES = 256 * 1024  # 256 KB: a 50-stop route (~68 KB) or a 1000-point GPS trail (~78 KB) must fit
 
 
 # ── Rate limiting ────────────────────────────────────────────
@@ -54,7 +54,7 @@ RATE_RULES: tuple[RateRule, ...] = (
         exact=frozenset({"/api/discover", "/api/route", "/api/route/explore", "/api/route/loop"}),
     ),
     RateRule("enrichment", limit=30, methods=_POST, exact=frozenset({"/api/place/enrich"})),
-    RateRule("journal", limit=120, prefixes=("/api/visits", "/api/trips")),
+    RateRule("journal", limit=120, prefixes=("/api/visits", "/api/trips", "/api/notes")),
     RateRule(
         "gamification", limit=60,
         prefixes=("/api/fog/", "/api/achievements", "/api/explorer/"),
@@ -249,8 +249,8 @@ _CONNECT_HOSTS = (
     "https://tile.openstreetmap.org",
     "https://*.tile.opentopomap.org",
     "https://server.arcgisonline.com",
-    "https://tile.openhistoricalmap.org",
     "https://maps.georeferencer.com",
+    "https://wmts.oldmapsonline.org",  # where Georeferencer redirects its tiles
 )
 
 # map/app.html has NO inline script and NO inline event handlers, so script-src needs no
@@ -259,7 +259,7 @@ _CONNECT_HOSTS = (
 # recomputes these hashes, so editing one of those blocks fails the test until this list is
 # updated.
 _LEGACY_INLINE_SCRIPT_HASHES = (
-    "'sha256-k/9l6xyrtmIX3CqCDu6hl/hjESDl+ct5lRriyXzfF+s='",  # map/explorer.html
+    "'sha256-3KyBKPx8JjddoShU3tEOFh4Vpzp2ppfT1nBtNF/FIJ4='",  # map/explorer.html
     "'sha256-KrR/MfVPb3/O9bqsYx0jP7ekZ2bWxAY9I9QYz0ZKpf4='",  # map/index.html
     "'sha256-GvjjD+oQ0458JuVUf5MygZK9je1zL4KR7YQAInG6HGA='",  # map/debug.html
 )

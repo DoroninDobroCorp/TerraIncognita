@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import httpx
 
+from app.config import settings
+
 # Re-usable async client with connection pooling.
 # Created lazily on first import; closed on application shutdown via lifespan.
 _client: httpx.AsyncClient | None = None
@@ -15,7 +17,7 @@ def get_http_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             timeout=30,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            headers={"User-Agent": "TerraIncognita/0.1 (personal research project)"},
+            headers={"User-Agent": settings.wikimedia_user_agent},  # also used for Overpass and Nominatim
         )
     return _client
 

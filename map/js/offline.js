@@ -64,7 +64,8 @@ async function cachePlaces() {
   try {
     // discovery may take up to its server-side deadline (25 s), longer for cold sources
     const data = await api('/api/offline/places/cache',{method:'POST',timeout:60000,body:{bbox:{min_lat:sw.lat,min_lng:sw.lng,max_lat:ne.lat,max_lng:ne.lng},include_descriptions:true}});
-    toast(`Cached ${data.cached_count} places!`,'success');
+    if (data.warning) toast(`⚠️ Cached ${data.cached_count} places. ${data.warning}`, 'warning', 8000);
+    else toast(`Cached ${data.cached_count} places!`,'success');
   } catch { toast('Cache failed','error'); }
   finally { loadCachedPlaces(); } // also after a timeout: the server may have finished anyway
 }

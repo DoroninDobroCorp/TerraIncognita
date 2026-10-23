@@ -10,6 +10,10 @@ import os
 for _key in [k for k in os.environ if k.startswith("TERRA_")]:
     del os.environ[_key]
 
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
 import pytest  # noqa: E402
 
 from app.config import Settings, settings  # noqa: E402
@@ -17,6 +21,15 @@ from app.config import Settings, settings  # noqa: E402
 _defaults = Settings(_env_file=None)
 for _name in Settings.model_fields:
     setattr(settings, _name, getattr(_defaults, _name))
+
+# Module-level caches and stores (disk_cache, offline_manager, the LLM caches, ...) are built at import time
+# from these relative paths. Pointing them into a throw-away directory first means a test run never reads,
+# writes or deletes the cache/ and data/ of the checkout it runs in — which on a server is the live one.
+SESSION_ROOT = tempfile.mkdtemp(prefix="terra-tests-")
+atexit.register(shutil.rmtree, SESSION_ROOT, ignore_errors=True)
+settings.cache_dir = f"{SESSION_ROOT}/cache"
+for _name in ("journal", "gamification", "community", "offline"):
+    setattr(settings, f"{_name}_data_dir", f"{SESSION_ROOT}/{_name}")
 
 from app.middleware import limiter  # noqa: E402
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource  # noqa: E402
@@ -49,10 +62,13 @@ def _isolated_user_data(tmp_path_factory, monkeypatch):
     A journal test creates visits, a visit triggers the gamification hook: without this, running
     ``pytest`` from the server's directory writes XP/fog/visits into the real stores."""
     from app.services import community as community_module
-    from app.services import gamification, journal
+    from app.services import gamification, journal, llm_client
 
     monkeypatch.setattr(settings, "community_data_dir", str(tmp_path_factory.mktemp("community")))
     monkeypatch.setattr(community_module, "_community_service", None)
+    # the persisted daily LLM token counter: tests that record usage must not touch the real one
+    monkeypatch.setattr(llm_client, "_daily_usage_path", tmp_path_factory.mktemp("llm_state") / "usage.json")
+    monkeypatch.setattr(llm_client, "_daily", {"date": "", "input": 0, "output": 0})
     journal._reset_store()  # both resets also point their store at a fresh temp directory
     gamification._reset_store()
     yield

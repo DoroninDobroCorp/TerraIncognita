@@ -128,7 +128,7 @@ def summarize_collections(places: list[Place], visited_ids: set[str]) -> list[Co
 
 async def build_collections(lat: float, lng: float, radius_km: float) -> list[Collection]:
     result = await discover(DiscoverRequest(
-        lat=lat, lng=lng, radius_km=radius_km, limit=_DISCOVER_LIMIT, sort_by="confidence",
+        lat=lat, lng=lng, radius_km=min(radius_km, settings.max_radius_km), limit=min(_DISCOVER_LIMIT, settings.max_limit), sort_by="confidence",
     ))
     if result.has_more:
         logger.info(

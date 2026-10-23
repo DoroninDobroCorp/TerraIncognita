@@ -63,6 +63,7 @@ class FogRevealResponse(BaseModel):
     new_cells_revealed: int = 0
     total_explored_cells: int = 0
     total_explored_area_km2: float = 0.0
+    capped: bool = False  # the fog store is full: some points could not be revealed
 
 
 class FogStatusResponse(BaseModel):

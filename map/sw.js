@@ -3,7 +3,7 @@
  * What is cached and how (see map/README.md):
  *   app shell  (app.html, css, js, icons, manifest)   precached at install, stale-while-revalidate afterwards
  *   CDN libs   (maplibre-gl js/css from unpkg)         precached with their SRI hashes, stale-while-revalidate
- *   map tiles  (OSM, OpenTopoMap, Esri, OHM, ...)      cache-first, bounded to TILE_CACHE_MAX entries, oldest evicted
+ *   map tiles  (OSM, OpenTopoMap, Esri, Georeferencer, ...) cache-first, bounded to TILE_CACHE_MAX entries, oldest evicted
  *   map fonts  (demotiles glyph .pbf)                  stale-while-revalidate
  *   API GETs   (ONLY the allow-list in API_CACHEABLE)  network-first, cached copy when the network fails
  *   everything else (POST/PUT/DELETE, /api/chat, journal/gamification/community, /health, OSRM, ...) is
@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const SHELL_VERSION = 'v7';
+const SHELL_VERSION = 'v8';
 const SHELL_CACHE = `ti-shell-${SHELL_VERSION}`;
 const STATIC_CACHE = `ti-static-${SHELL_VERSION}`;
 const API_CACHE = `ti-api-${SHELL_VERSION}`;
@@ -78,8 +78,8 @@ const TILE_HOSTS = [
   /^tile\.openstreetmap\.org$/,
   /^([a-c]\.)?tile\.opentopomap\.org$/,
   /^server\.arcgisonline\.com$/,
-  /^tile\.openhistoricalmap\.org$/,
   /^maps\.georeferencer\.com$/,
+  /^wmts\.oldmapsonline\.org$/, // where Georeferencer redirects its tiles
 ];
 const TILE_PATH = /\/\d{1,2}\/\d+\/\d+(\.(png|jpe?g|webp|pbf))?$/;
 
@@ -184,21 +184,26 @@ function isStale(res) {
 async function networkFirstApi(event) {
   const req = event.request;
   const cache = await caches.open(API_CACHE);
+  const cached = await cache.match(req);
   try {
-    const res = await Promise.race([
-      fetch(req),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), API_NETWORK_TIMEOUT_MS)),
-    ]);
-    if (res.status >= 500) {  // server trouble: a cached copy beats an error page
-      const stale = await cache.match(req);
-      if (stale) return stale;
+    // The timeout only makes sense when there is a copy to fall back on. With nothing cached, giving up early
+    // turns a slow success into a failure (a cold /api/daily needs up to the server's 25 s discovery deadline).
+    const network = fetch(req);
+    let res = network;
+    if (cached) {
+      network.catch(() => {}); // the loser of the race must not end up as an unhandled rejection
+      res = Promise.race([
+        network,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), API_NETWORK_TIMEOUT_MS)),
+      ]);
     }
+    res = await res;
+    if (res.status >= 500 && cached) return cached; // server trouble: a cached copy beats an error page
     const noStore = /no-store/i.test(res.headers.get('cache-control') || '');
     if (res.ok && !noStore) event.waitUntil(cache.put(req, res.clone()).then(() => trimCache(cache, API_CACHE_MAX)));
     return res;
   } catch (err) {
-    const hit = await cache.match(req);
-    if (hit) return hit;
+    if (cached) return cached;
     throw err;
   }
 }

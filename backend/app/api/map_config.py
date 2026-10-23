@@ -137,30 +137,6 @@ class HistoricalLayer(BaseModel):
 
 _HISTORICAL_LAYERS = [
     HistoricalLayer(
-        id="ohm",
-        name="OpenHistoricalMap",
-        period="Multi-era",
-        year_start=1000,
-        year_end=2000,
-        url="https://tile.openhistoricalmap.org/historicmap/{z}/{x}/{y}.png",
-        attribution="© OpenHistoricalMap contributors",
-        tile_size=256,
-        min_zoom=1,
-        max_zoom=18,
-    ),
-    HistoricalLayer(
-        id="esri_topo_1900",
-        name="Esri World Topo (Historic)",
-        period="Early 20th Century",
-        year_start=1890,
-        year_end=1940,
-        url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-        attribution="© Esri, DeLorme, NAVTEQ",
-        tile_size=256,
-        min_zoom=1,
-        max_zoom=16,
-    ),
-    HistoricalLayer(
         id="owm_1880",
         name="Old World Maps (~1880)",
         period="Late 19th Century",

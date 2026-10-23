@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from app.config import settings
 from app.models.loop_route import LoopRouteRequest
-from app.models.place import Coordinates, DiscoverRequest, Place
+from app.models.place import Coordinates, DiscoverRequest, Place, PlaceCategory
 from app.models.route import Route, RouteResponse, TransportMode
 from app.services.discovery import discover
 from app.services.route_builder import (
@@ -176,6 +176,8 @@ def _candidates(
         if p.id in seen:
             continue
         seen.add(p.id)
+        if PlaceCategory.UNDERWATER in p.categories:
+            continue  # a wreck on the seabed is not a stop on a walk or a ride
         d = distance_m(origin, p.coordinates)
         if d > reach:
             continue
@@ -346,7 +348,7 @@ async def build_loop_route(req: LoopRouteRequest) -> RouteResponse:
         searched_km = radius_km
         result = await discover(DiscoverRequest(
             lat=req.lat, lng=req.lng, radius_km=radius_km, categories=req.categories,
-            exclude_visited=req.exclude_visited, limit=_DISCOVER_LIMIT, sort_by="unusual",
+            exclude_visited=req.exclude_visited, limit=min(_DISCOVER_LIMIT, settings.max_limit), sort_by="unusual",
         ))
         discovered = len(result.places)
         if len(_candidates(origin, result.places, budget, req.max_stops)) < 2:

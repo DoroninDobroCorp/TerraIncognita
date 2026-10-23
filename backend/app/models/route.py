@@ -115,7 +115,7 @@ class ExploreRouteRequest(BaseModel):
         default_factory=list, description="Filter POIs by category"
     )
     radius_km: float = Field(
-        5.0, gt=0, le=settings.max_radius_km, description="Search radius from origin"
+        min(5.0, settings.max_radius_km), gt=0, le=settings.max_radius_km, description="Search radius from origin"
     )
     max_waypoints: int = Field(
         8, ge=1, le=50, description="Number of POI stops"

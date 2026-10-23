@@ -60,7 +60,7 @@ async def build_route(req: RouteRequest) -> RouteResponse:
         radius_km=min(search_radius_km, settings.max_radius_km),
         categories=req.categories,
         exclude_visited=req.exclude_visited,
-        limit=200,
+        limit=min(200, settings.max_limit),
         sort_by="confidence",
     )
 
@@ -141,7 +141,7 @@ async def build_explore_route(req: ExploreRouteRequest) -> RouteResponse:
         radius_km=req.radius_km,
         categories=req.categories,
         exclude_visited=req.exclude_visited,
-        limit=200,
+        limit=min(200, settings.max_limit),
         sort_by="confidence",
     )
 

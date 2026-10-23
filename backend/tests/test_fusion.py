@@ -256,10 +256,10 @@ class TestNameAwareDedup:
     def test_scales_to_thousands_of_places(self):
         places = [make(f"p{i}", f"Unique Name {i}", north=(i // 60) * 90, east=(i % 60) * 90)
                   for i in range(3000)]
-        t0 = time.monotonic()
+        t0 = time.process_time()  # CPU time: wall clock is meaningless on a loaded shared runner
         result = fuse_places([places])
         assert len(result) == 3000
-        assert time.monotonic() - t0 < 10.0  # ~0.1 s on an idle machine; generous for shared CI
+        assert time.process_time() - t0 < 10.0  # ~0.3 s of CPU on an idle machine
 
 
 class TestMergeKeepsEverything:
@@ -512,3 +512,33 @@ class TestStableIdentity:
                 for p in fuse_places([places])
             ))
         assert len(outputs) == 1, outputs
+
+
+class TestInputsAreNotMutated:
+    """Concurrent identical requests share one in-flight source answer (utils/single_flight.py)."""
+
+    def test_fusing_leaves_the_callers_places_alone(self):
+        osm = make("osm_1", "Fort Mamula", source=PlaceSource.OSM, categories=[MIL])
+        wiki = make("wiki_Q1", "Tvrđava Mamula", east=5, source=PlaceSource.WIKIDATA, categories=[MIL],
+                    description="Fortress", metadata={"wikidata_id": "Q1"})
+        before = (osm.model_dump(), wiki.model_dump())
+        fused = fuse_places([[osm], [wiki]])
+        assert len(fused) == 1 and fused[0].metadata["merged_ids"]
+        assert (osm.model_dump(), wiki.model_dump()) == before
+
+    def test_two_requests_over_the_same_objects_get_the_same_answer(self):
+        batch = [
+            make("osm_1", "Fort Mamula", categories=[MIL]),
+            make("osm_2", "Mamula Fort", north=20, categories=[MIL]),
+            make("osm_3", "Other", north=900, categories=[UND]),
+        ]
+        first = [p.model_dump() for p in fuse_places([batch])]
+        second = [p.model_dump() for p in fuse_places([batch])]
+        assert first == second
+
+    def test_the_result_is_not_the_input_objects(self):
+        solo = make("osm_9", "Alone", categories=[MIL])
+        [out] = fuse_places([[solo]])
+        out.metadata["touched"] = True
+        out.categories.append(UND)
+        assert "touched" not in solo.metadata and solo.categories == [MIL]

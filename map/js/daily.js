@@ -10,6 +10,13 @@ function localDateStr(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/** A pick for today (UTC, like the server's) or yesterday: a service worker may serve an older copy when the server is down. */
+function isRecentDaily(d) {
+  if (!d || typeof d.date !== 'string') return true; // older backends send no date
+  const age = Date.now() - Date.parse(d.date + 'T00:00:00Z');
+  return Number.isFinite(age) && age < 2 * 86400000;
+}
+
 function renderDaily() {
   const card = $('daily-card');
   const d = daily.data;
@@ -29,6 +36,10 @@ async function loadDaily() {
   try {
     const d = await api(`/api/daily?lat=${state.userLat.toFixed(2)}&lng=${state.userLng.toFixed(2)}&radius_km=10&lang=${uiLang()}`, { retries: 1, timeout: 15000 });
     if (!d || !d.place || !d.place.coordinates) throw new Error('empty daily response');
+    if (!isRecentDaily(d)) { // a stale copy from the cache: show nothing rather than last week's pick as today's
+      daily.key = null; daily.failedAt = Date.now(); $('daily-card').hidden = true;
+      return;
+    }
     daily.data = d;
     renderDaily();
   } catch (e) {

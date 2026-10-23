@@ -496,3 +496,83 @@ def test_the_off_the_beaten_track_reason_does_not_claim_there_is_no_article():
     apply_unusual_scores([place])
     reasons = " ".join(place.unusual_reasons)
     assert "not linked to Wikipedia" in reasons and "no Wikipedia article" not in reasons
+
+
+class TestSameSiteIdentity:
+    """Namesakes are matched on the identifying words of every name a place goes by, near each other only."""
+
+    @staticmethod
+    def _p(pid, name, lat=42.45, lng=18.53, **meta):
+        return Place(id=pid, source=S.OSM, name=name, coordinates=Coordinates(lat=lat, lng=lng), metadata=meta)
+
+    def test_a_former_name_identifies_the_site(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Tvrdjava Lustica", osm_tags={"old_name": "Fort Mamula"})
+        b = self._p("b", "Fort Mamula", lat=42.47)  # ~2 km away
+        assert same_site(a, b) and same_site(b, a)
+
+    def test_alternative_names_count_too(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Mamula", alt_names=["Fort Rose"])
+        b = self._p("b", "Fort Rose", lat=42.47)
+        assert same_site(a, b)
+
+    def test_the_same_name_across_the_country_is_not_one_site(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Fort Mamula")
+        far = self._p("b", "Fort Mamula", lat=42.45 + 0.06)  # ~6.7 km: beyond the namesake radius
+        assert not same_site(a, far)
+
+    def test_identical_generic_names_are_twelve_places_not_one(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Bunker")
+        b = self._p("b", "Bunker", lat=42.47)
+        assert not same_site(a, b)
+
+    def test_a_generated_name_identifies_nothing_even_with_a_real_alias(self):
+        from app.services.scoring import same_site
+
+        a = self._p("a", "Abandoned house", name_generated=True)
+        b = self._p("b", "Abandoned house", lat=42.47, name_generated=True)
+        assert not same_site(a, b)
+
+
+class TestScoringJudgement:
+    def test_a_named_fort_outranks_an_anonymous_derelict_house(self):
+        fort = score_place(osm_place({"historic": "fort", "name": "Fort Mamula"}))
+        house = score_place(osm_place({"abandoned": "yes", "building": "house"}))
+        assert "historic fortification" in fort.reasons
+        assert fort.score > house.score
+
+    def test_an_anonymous_fort_gets_no_fortification_bonus(self):
+        assert "historic fortification" not in score_place(osm_place({"historic": "fort"})).reasons
+
+    @pytest.mark.parametrize("tags", [
+        {"man_made": "chimney", "industrial": "factory", "name": "Tvornica"},
+        {"man_made": "water_tower", "name": "Vodotoranj"},
+        {"man_made": "silo", "name": "Silos"},
+    ])
+    def test_working_industry_is_not_called_heritage(self, tags):
+        result = score_place(osm_place(tags))
+        assert "industrial heritage" not in result.reasons
+        assert result.score < 0.4
+
+    @pytest.mark.parametrize("tags", [
+        {"man_made": "chimney", "industrial": "factory", "name": "Tvornica", "abandoned": "yes"},
+        {"man_made": "chimney", "name": "Dimnjak", "historic": "chimney"},
+        {"man_made": "water_tower", "name": "Vodotoranj", "disused": "yes"},
+    ])
+    def test_the_same_structures_out_of_use_still_are(self, tags):
+        result = score_place(osm_place(tags))
+        assert "industrial heritage" in result.reasons
+        assert result.score > 0.45
+
+    @pytest.mark.parametrize("extra", [{"tourism": "attraction"}, {"fee": "yes"}, {"opening_hours": "Mo-Fr 9-17"}])
+    def test_a_ticketed_place_is_not_called_off_the_tourist_path(self, extra):
+        reason = "not linked to Wikipedia — likely off the tourist path"
+        assert reason in score_place(osm_place({"historic": "ruins", "name": "Kasarna"})).reasons
+        assert reason not in score_place(osm_place({"historic": "ruins", "name": "Kasarna", **extra})).reasons

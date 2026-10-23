@@ -10,7 +10,7 @@ gets the same score and every number can be explained. The model is a noisy-OR o
                  museum / restaurant / park / landmark low).
 * signals      — Atlas Obscura listing, OSM lifecycle tags (abandoned / disused / ruins),
                  bunker / mine / cave tags, historic age, restricted access, being off the
-                 tourist path (no Wikipedia article), and a small data-richness bonus so an
+                 tourist path (no Wikipedia article, no ticket), and a small data-richness bonus so an
                  unknown blob does not outrank a documented bunker.
 * anti-signals — famous (many Wikipedia language editions), has a Wikipedia article,
                  ``tourism=attraction``, ticketed/commercial, ordinary hilltops, unnamed.
@@ -63,7 +63,8 @@ CATEGORY_WEIGHTS: dict[PlaceCategory, float] = {
     C.HOTEL_NOTABLE: 0.06,
 }
 DEFAULT_BASE = 0.12  # nothing is known about what it is
-_MAX_NAMESAKE_TOKEN_FREQUENCY = 60  # a name word used by more places than this is an area word
+_MAX_NAMESAKE_TOKEN_FREQUENCY = 300  # a name word used by more places than this is an area word (the search stays linear)
+_SITE_NAMESAKE_RADIUS_M = 5_000.0  # same-named entries this close are parts of one site
 _REASON_MIN_WEIGHT = 0.40  # categories rarer than this are explained to the user
 
 CATEGORY_REASONS: dict[PlaceCategory, str] = {
@@ -85,6 +86,7 @@ _SECOND_CATEGORY_SHARE = 0.25  # a second rare category adds this share of its w
 _RESTRICTED_ACCESS = frozenset({"private", "no", "military", "permit", "restricted"})
 _BORING_TUNNELS = frozenset({"no", "culvert", "building_passage", "flooded", "passage"})
 _BUNKER_FEATURES = frozenset({"military=bunker", "building=bunker", "historic=bunker"})
+_FORT_FEATURES = frozenset({"historic=fort", "historic=castle", "historic=fortification", "military=fort"})
 _MINE_FEATURES = frozenset({"man_made=adit", "man_made=mineshaft", "historic=mine", "historic=mine_shaft"})
 _CAVE_FEATURES = frozenset({"natural=cave_entrance", "natural=sinkhole"})
 _INDUSTRY_FEATURES = frozenset({
@@ -148,6 +150,21 @@ class Penalty:
     test: Callable[[_Ctx], bool]
 
 
+# Chimneys, silos and water towers are only heritage once they are out of use; the rest of this set
+# (mills, kilns, charcoal piles) is about old crafts and counts as heritage as it stands.
+_WORKING_INDUSTRY_FEATURES = frozenset({"man_made=water_tower", "man_made=silo", "man_made=chimney"})
+
+
+def _is_operating_industry(c: _Ctx) -> bool:
+    """Industrial and in use: no abandonment/ruin state, no `historic=*`, not a craft relic."""
+    if C.INDUSTRIAL not in c.cats or (c.info and c.info.lifecycles) or c.tags.get("historic"):
+        return False
+    if PlaceSource.ATLAS_OBSCURA in c.sources:
+        return False
+    # industrial=* / a working water tower, silo or chimney; mills and kilns stay heritage
+    return bool(c.tags.get("industrial")) or c.has_feature(_WORKING_INDUSTRY_FEATURES)
+
+
 def _year_reason(ctx: _Ctx) -> str:
     return describe_date(ctx.date_text) or f"dates from {ctx.year}"
 
@@ -181,7 +198,12 @@ SIGNALS: tuple[Signal, ...] = (
     Signal("cave entrance", 0.15, lambda c: c.has_feature(_CAVE_FEATURES), priority=22),
     Signal("shipwreck", 0.15, lambda c: c.has_feature(frozenset({"historic=wreck"})), priority=23),
     Signal("tunnel", 0.12, _is_tunnel, priority=24),
-    Signal("industrial heritage", 0.08, lambda c: c.has_feature(_INDUSTRY_FEATURES), priority=50),
+    # a *named* fort or castle is a place worth the trip: without this, ~35 anonymous derelict houses
+    # (same abandonment bonus, no history) outranked Fort Mamula on real data
+    Signal("historic fortification", 0.10,
+           lambda c: c.named and c.has_feature(_FORT_FEATURES), priority=26),
+    Signal("industrial heritage", 0.08,
+           lambda c: c.has_feature(_INDUSTRY_FEATURES) and not _is_operating_industry(c), priority=50),
     Signal(None, 0.04, lambda c: "bunker_type" in c.tags),
     # OSM lifecycle
     Signal("abandoned", 0.25, lambda c: bool(c.info and "abandoned" in c.info.lifecycles),
@@ -201,7 +223,9 @@ SIGNALS: tuple[Signal, ...] = (
            in _RESTRICTED_ACCESS, priority=70),
     # off the beaten track — only worth saying about places that are interesting at all
     Signal("not linked to Wikipedia — likely off the tourist path", 0.06,
-           lambda c: c.base >= 0.40 and not c.has_wikipedia and not (c.sitelinks or 0),
+           lambda c: c.base >= 0.40 and not c.has_wikipedia and not (c.sitelinks or 0)
+           and c.tags.get("tourism") != "attraction" and c.tags.get("fee") != "yes"
+           and not c.tags.get("opening_hours"),
            priority=90),
     # data richness (silent): documented places beat unknown blobs
     Signal(None, 0.03, lambda c: c.named),
@@ -242,6 +266,7 @@ PENALTIES: tuple[Penalty, ...] = (
     Penalty("ordinary viewpoint", 0.85, lambda c: c.tags.get("tourism") == "viewpoint"),
     Penalty("nature reserve", 0.85, lambda c: c.tags.get("leisure") == "nature_reserve"),
     Penalty("unnamed", 0.85, lambda c: not c.named),
+    Penalty("still in operation", 0.65, lambda c: _is_operating_industry(c)),
 )
 
 
@@ -301,8 +326,11 @@ def score_place(place: Place) -> ScoreResult:
     if second >= _REASON_MIN_WEIGHT:
         remaining *= 1.0 - _SECOND_CATEGORY_SHARE * second
 
+    operating = _is_operating_industry(ctx)
     for cat in ctx.cats:
         weight = CATEGORY_WEIGHTS.get(cat, DEFAULT_BASE)
+        if cat == C.INDUSTRIAL and operating:
+            continue  # a working plant is not "industrial heritage"
         if weight >= _REASON_MIN_WEIGHT and cat in CATEGORY_REASONS:
             explained.append((CATEGORY_REASON_PRIORITY, -weight, CATEGORY_REASONS[cat]))
 
@@ -353,16 +381,40 @@ def unusual_sort_key(place: Place) -> tuple[float, float, str, str]:
 # ── Site diversity ─────────────────────────────────────────────
 
 
+def _site_token_sets(place: Place) -> list[frozenset[str]]:
+    """Distinctive-token sets of every name a place goes by (name, alternative and former names).
+
+    Generic names ("Bunker", "Abandoned building") and generated ones identify nothing and are left out.
+    """
+    tags = place.metadata.get("osm_tags")
+    tags = tags if isinstance(tags, dict) else {}
+    candidates: list[object] = [place.metadata.get("alt_names") or [], tags.get("old_name"), tags.get("alt_name")]
+    variants: list[str] = [] if place.metadata.get("name_generated") else [place.name or ""]
+    for item in candidates:
+        variants.extend(item if isinstance(item, list) else [item])
+    out = []
+    for variant in variants:
+        if isinstance(variant, str) and variant.strip():
+            tokens = names.distinctive_tokens(variant)
+            if tokens and tokens not in out:
+                out.append(tokens)
+    return out
+
+
 def same_site(a: Place, b: Place, radius_m: float = 150.0) -> bool:
     """Two entries that are almost certainly parts of one site: within ``radius_m`` of each other, or
-    sharing an exact (real, not generated) name such as the segments of one promenade."""
-    if haversine_distance_m(
+    carrying the *same* identifying name (any of its names, a former one included) within a few
+    kilometres — the segments of one promenade, railway or wall. Identical generic names
+    ("Bunker") are twelve bunkers, not one."""
+    distance = haversine_distance_m(
         a.coordinates.lat, a.coordinates.lng, b.coordinates.lat, b.coordinates.lng
-    ) <= radius_m:
+    )
+    if distance <= radius_m:
         return True
-    if a.metadata.get("name_generated") or b.metadata.get("name_generated"):
+    if distance > _SITE_NAMESAKE_RADIUS_M:
         return False
-    return bool(a.name and b.name) and names.fold(a.name.strip()) == names.fold(b.name.strip())
+    sets_b = _site_token_sets(b)
+    return any(tokens in sets_b for tokens in _site_token_sets(a))
 
 
 def diversify_by_site(
@@ -405,10 +457,7 @@ def diversify_by_site(
 
     # Words shared by dozens of names are area words ("Kotor", a street), not identities: they
     # would make every place in town a namesake of every other (and the search quadratic).
-    all_tokens = [
-        names.distinctive_tokens(p.name) if not p.metadata.get("name_generated") else frozenset()
-        for p in ranked
-    ]
+    all_tokens = [frozenset().union(*_site_token_sets(p)) for p in ranked]
     document_frequency = Counter(token for tokens in all_tokens for token in tokens)
     name_tokens = [
         frozenset(t for t in tokens if document_frequency[t] <= _MAX_NAMESAKE_TOKEN_FREQUENCY)

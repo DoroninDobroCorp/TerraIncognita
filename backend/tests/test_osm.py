@@ -538,3 +538,9 @@ async def test_concurrent_identical_searches_really_share_one_upstream_query(tmp
         await close_http_client()
     assert len(a) == len(b) == 1
     assert sorted(seen) == ["gems", "landmarks"]  # one query per tier, not two
+
+
+def test_the_named_tunnel_query_leaves_out_ordinary_road_rail_and_canal_tunnels():
+    clause = next(c for c in _GEM_CLAUSES if '"tunnel:name"' in c)
+    for key in ("highway", "railway", "waterway"):
+        assert f'[!"{key}"]' in clause

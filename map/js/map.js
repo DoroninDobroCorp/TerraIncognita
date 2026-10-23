@@ -241,7 +241,7 @@ function toggleHistLayer(id) {
 function applyHistOverlay(id) {
   removeHistOverlay();
   const l=historicalState.layers.find(x=>x.id===id); if(!l)return;
-  map.addSource('hist-overlay',{type:'raster',tiles:[l.url],tileSize:l.tile_size||256,minzoom:l.min_zoom||1,maxzoom:l.max_zoom||18});
+  map.addSource('hist-overlay',{type:'raster',tiles:[l.url],tileSize:l.tile_size||256,minzoom:l.min_zoom||1,maxzoom:l.max_zoom||18,attribution:l.attribution||''});
   map.addLayer({id:'hist-overlay-layer',type:'raster',source:'hist-overlay',paint:{'raster-opacity':historicalState.opacity}}, beforePlaceLayers());
 }
 function removeHistOverlay() {

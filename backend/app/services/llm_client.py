@@ -13,6 +13,7 @@ import anthropic
 
 from app.config import settings
 from app.services.cache import DiskCache
+from app.utils.single_flight import SingleFlight
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,8 @@ _description_cache = DiskCache(
     cache_dir=f"{settings.cache_dir}/llm_descriptions",
     ttl=settings.llm_cache_ttl_seconds,
 )
+
+_in_flight = SingleFlight()
 
 # Circuit breaker state
 _circuit_open_until: float = 0.0
@@ -167,6 +170,26 @@ def _record_success() -> None:
     _circuit_open_until = 0.0
 
 
+# The provider turned this particular request down (bad parameter, unknown model, oversized or empty
+# input). That says nothing about the provider's health: counting it would let one malformed request
+# — or a typo in TERRA_LLM_MODEL — switch every AI feature off for a minute at a time.
+_REQUEST_FAULT_STATUSES = frozenset({400, 404, 413, 422})
+
+
+def _note_provider_error(provider: str, exc: Exception) -> None:
+    """Count a provider failure towards the circuit breaker and log it — by type and status only,
+    because the provider's message may quote the prompt (user text)."""
+    status = getattr(exc, "status_code", None)
+    if status in _REQUEST_FAULT_STATUSES:
+        logger.error(
+            "%s rejected the request (HTTP %s, %s): check TERRA_LLM_MODEL / TERRA_LLM_EFFORT",
+            provider, status, type(exc).__name__,
+        )
+        return
+    _record_failure()
+    logger.error("%s API error: %s (HTTP %s)", provider, type(exc).__name__, status or "-")
+
+
 def _record_failure() -> None:
     global _consecutive_failures, _circuit_open_until
     _consecutive_failures += 1
@@ -256,8 +279,7 @@ async def chat_completion(
             )
 
     except anthropic.APIError as e:
-        _record_failure()
-        logger.error("Anthropic API error: %s", e)
+        _note_provider_error("Anthropic", e)
         raise
     except Exception:
         _record_failure()
@@ -298,8 +320,7 @@ async def _openai_completion(
             )
 
     except Exception as e:
-        _record_failure()
-        logger.error("OpenAI API error: %s", e)
+        _note_provider_error("OpenAI", e)
         raise
     choice = response.choices[0]
     if getattr(choice, "finish_reason", None) in ("length", "content_filter"):
@@ -316,15 +337,18 @@ async def cached_completion(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> str:
-    """Chat completion with disk cache lookup."""
+    """Chat completion with disk cache lookup; identical concurrent requests share one paid call."""
     cached = await _description_cache.get(cache_key)
     if cached is not None:
         logger.debug("LLM cache hit: %s", cache_key)
         return cached
 
-    result = await chat_completion(messages, system, temperature, max_tokens)
-    await _description_cache.set(cache_key, result)
-    return result
+    async def generate() -> str:
+        result = await chat_completion(messages, system, temperature, max_tokens)
+        await _description_cache.set(cache_key, result)
+        return result
+
+    return await _in_flight.run(cache_key, generate)
 
 
 def is_expected_llm_failure(exc: BaseException) -> bool:

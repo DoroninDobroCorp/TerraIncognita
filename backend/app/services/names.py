@@ -9,7 +9,6 @@ distinctive token, ``mamula``; "Old Bunker" / "Bunker" reduce to nothing (a *gen
 
 from __future__ import annotations
 
-import re
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -27,7 +26,6 @@ _CYRILLIC = {
 }
 _LATIN_SPECIAL = {"đ": "dj", "ł": "l", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe", "ı": "i", "ð": "d",
                   "þ": "th"}
-_WORD = re.compile(r"[^\W_]+")  # unicode-aware: Greek/CJK/Arabic names still tokenise
 
 # Words that say *what kind* of thing a place is (in a handful of languages), plus articles and
 # vague adjectives. A name made only of these ("Old Bunker") does not identify a specific place.
@@ -70,7 +68,19 @@ def tokens(name: str | None) -> list[str]:
     """All folded alphanumeric tokens of a name."""
     if not name:
         return []
-    return _WORD.findall(fold(name))
+    # Letters, digits and combining marks: vowel signs and viragas of Indic/Thai/Burmese scripts are
+    # category M, and splitting at them (as a plain \w+ does) shreds a word into single letters.
+    out: list[str] = []
+    word: list[str] = []
+    for ch in fold(name):
+        if ch.isalnum() or unicodedata.category(ch).startswith("M"):
+            word.append(ch)
+        elif word:
+            out.append("".join(word))
+            word = []
+    if word:
+        out.append("".join(word))
+    return out
 
 
 def _is_generic_word(token: str) -> bool:

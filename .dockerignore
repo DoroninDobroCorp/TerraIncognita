@@ -6,5 +6,9 @@
 backend/.env
 backend/cache
 backend/data
+data/journal
+data/gamification
+data/community
+data/offline
 backend/tests
 docs

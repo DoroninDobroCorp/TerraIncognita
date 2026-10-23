@@ -80,23 +80,22 @@ const BASE_LAYERS = {
   streets: {
     sourceId: 'osm', layerId: 'osm',
     source: { type:'raster', tiles:['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize:256, maxzoom:19,
-      attribution:'&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' },
+      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
   },
   satellite: {
     sourceId: 'sat', layerId: 'sat',
     source: { type:'raster', tiles:['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize:256, maxzoom:19,
-      attribution:'Imagery &copy; Esri' },
+      attribution:'Imagery &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community' },
   },
   terrain: {
     sourceId: 'ter', layerId: 'ter',
     source: { type:'raster', tiles:['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'], tileSize:256, maxzoom:17,
-      attribution:'&copy; <a href="https://opentopomap.org">OpenTopoMap</a>' },
+      attribution:'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)' },
   },
 };
 const GLYPHS_URL = 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf';
 
 // Used when GET /api/map/historical fails (URLs mirror the server's list).
 const DEFAULT_HIST = [
-  {id:'ohm',name:'OpenHistoricalMap',period:'Multi-era',year_start:1000,year_end:2000,url:'https://tile.openhistoricalmap.org/historicmap/{z}/{x}/{y}.png',tile_size:256,min_zoom:1,max_zoom:18},
-  {id:'esri',name:'Esri Historic Topo',period:'Early 20th C.',year_start:1890,year_end:1940,url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',tile_size:256,min_zoom:1,max_zoom:16},
+  {id:'owm_1880',name:'Old World Maps (~1880)',period:'Late 19th Century',year_start:1850,year_end:1900,url:'https://maps.georeferencer.com/georeferences/28da2318-c4b3-5f25-83dc-3da27859fea2/2019-02-19T17:27:12.514288Z/map/{z}/{x}/{y}.png',tile_size:256,min_zoom:3,max_zoom:15,attribution:'&copy; Georeferencer, David Rumsey Map Collection'},
 ];

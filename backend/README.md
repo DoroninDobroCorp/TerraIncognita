@@ -70,7 +70,8 @@ options and `app/config.py` every setting. The ones you will touch first:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | — | Optional; enables chat, descriptions, stories, ask-a-place |
-| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Hard daily cap on tokens spent through the LLM client (Deep Research is billed separately); endpoints then degrade to their fallback (or `503` for ask-the-place) |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | `0` (off) | Daily cap on tokens spent through the LLM client (Deep Research is billed separately). New calls stop once it is reached — calls already in flight finish and are counted — and endpoints degrade to their fallback (or `503` for ask-the-place) |
+| `TERRA_ATLAS_OBSCURA_ENABLED` | `true` | `false` = never contact Atlas Obscura (see [`docs/DATA_SOURCES.md`](../docs/DATA_SOURCES.md)) |
 | `TERRA_LLM_MODEL` / `TERRA_LLM_EFFORT` | `claude-sonnet-5-5` / `low` | Claude model and thinking depth (no sampling parameters are sent: current Claude models reject them) |
 | `TERRA_CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `TERRA_TRUSTED_PROXY_HOPS` | `0` | Set to `1` behind nginx so rate limits see real client IPs |
@@ -222,8 +223,8 @@ Response: `{ "answer": "..." }`.
 - Identical (place, question, language) requests are answered from a disk cache for
   `TERRA_PLACE_ASK_CACHE_TTL_SECONDS` (7 days), even when the LLM is down.
 - `503` with a clear message when the LLM is unavailable (no key, circuit breaker open,
-  provider failure, or the daily budget is spent: the rate-limit middleware answers that one
-  with `Retry-After`).
+  provider failure, or the daily budget is spent; the budget and circuit-breaker cases carry a
+  `Retry-After` header).
 
 ### POST /api/story/walk
 
@@ -244,7 +245,7 @@ is a plain deterministic summary with `ai_generated: false` rather than an error
 | Daily token budget spent | `story: null` | `503` | plain summary |
 
 Concurrent identical requests share a single LLM call. Provider error text is logged by type
-only and never returned. Caches live under `TERRA_CACHE_DIR`: `daily_pick/` (2 days),
+and HTTP status only and never returned. Caches live under `TERRA_CACHE_DIR`: `daily_pick/` (2 days),
 `daily_story/` (forever), `place_ask/` (7 days), `walk_report/` (forever).
 
 ### Settings added

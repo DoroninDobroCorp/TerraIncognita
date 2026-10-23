@@ -102,3 +102,14 @@ async def test_eviction_works_when_every_write_uses_a_fresh_instance(tmp_path):
     for i in range(120):
         await DiskCache(cache_dir=str(tmp_path), ttl=0, max_entries=10).set(f"k{i}", i)
     assert len(list(tmp_path.glob("*.json"))) <= 10 + DiskCache._PRUNE_EVERY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [b"\xff\xfe\x00 not utf-8", b"null", b"[1, 2]", b'"text"', b"42", b'{"ts": 1}', b'{"data": 1, "ts": "x"}'])
+async def test_any_unreadable_entry_is_a_miss_and_is_removed(temp_cache, content):
+    await temp_cache.set("k", {"v": 1})
+    [entry] = list(temp_cache._dir.glob("*.json"))
+    entry.write_bytes(content)
+    assert await temp_cache.get("k") in (None, 1)  # the last case is a valid entry holding the value 1
+    if await temp_cache.get("k") is None:
+        assert not entry.exists()  # it does not fail again on every request

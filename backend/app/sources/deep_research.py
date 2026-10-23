@@ -25,8 +25,27 @@ from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.cache import DiskCache
 from app.sources.base import BaseSource
 from app.utils.http_client import get_http_client
+from app.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+_MAX_RESEARCH_TEXT_CHARS = 150_000
+_MAX_JSON_ATTEMPTS = 300
+_MAX_PROSE_LINES = 5_000
+_MAX_PROSE_LINE_CHARS = 500
+_ARRAY_OF_OBJECTS = re.compile(r"\[\s*\{")
+_PROSE_NAME = re.compile(r"(?:\*\*|#{1,6}[ \t]*)([^*#\n]+)")
+_PROSE_COORDS = re.compile(r"(\d{1,2}\.\d{3,6})[,\s]+(\d{1,3}\.\d{3,6})")
+_json_decoder = json.JSONDecoder()
+
+
+def _decode_json_at(text: str, pos: int) -> tuple[Any, int] | None:
+    """The JSON value starting at ``pos`` and where it ends, or None if there is none."""
+    try:
+        return _json_decoder.raw_decode(text, pos)
+    except (ValueError, RecursionError):
+        return None
+
 
 # Long-TTL cache for deep research results
 _dr_cache = DiskCache(
@@ -41,6 +60,8 @@ _running: dict[str, asyncio.Task] = {}
 # retried later instead of cached as the answer for 30 days — or re-run on every request.
 # Its own directory: the keys are identical to ``_dr_cache``'s, so sharing one would make an
 # empty marker look like a (30-day) cached answer.
+_geocode_cache = DiskCache(cache_dir=f"{settings.cache_dir}/geocode", ttl=0)  # reverse geocoding: forever
+_nominatim_limiter = RateLimiter(max_requests=1, window_seconds=1.1)  # Nominatim usage policy
 _nothing_found = DiskCache(cache_dir=f"{settings.cache_dir}/dr_empty", ttl=1800)
 
 
@@ -184,7 +205,7 @@ class DeepResearchSource(BaseSource):
             return ("idle", None)
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
-        cached = await _dr_cache.get(cache_key)
+        cached = await _dr_cache.get(cache_key) or None  # [] = an empty entry written by the old 30-day cache
 
         if cached is not None:
             count = len(cached)
@@ -202,7 +223,7 @@ class DeepResearchSource(BaseSource):
             return []
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
-        cached = await _dr_cache.get(cache_key)
+        cached = await _dr_cache.get(cache_key) or None  # [] = old empty entry: ask again
         if cached is not None:
             logger.debug("Deep Research cache hit for %s", cache_key)
             return [Place.model_validate(p) for p in cached]
@@ -223,7 +244,7 @@ class DeepResearchSource(BaseSource):
             return []
 
         cache_key = f"dr_{lat:.2f}_{lng:.2f}_{radius_km:.0f}"
-        cached = await _dr_cache.get(cache_key)
+        cached = await _dr_cache.get(cache_key) or None  # [] = old empty entry: ask again
         if cached is not None:
             return [Place.model_validate(p) for p in cached]
 
@@ -233,10 +254,10 @@ class DeepResearchSource(BaseSource):
         self, lat: float, lng: float, radius_km: float, cache_key: str
     ) -> list[Place]:
         """Run both research APIs, merge results, cache them."""
-        # One geocoding round trip pair (concurrent), shared by both providers' prompts.
-        city_name, country = await asyncio.gather(
-            self._reverse_geocode(lat, lng), self._guess_country(lat, lng)
-        )
+        # Two geocoding requests, one after the other (Nominatim's policy: at most 1 request/s), shared
+        # by both providers' prompts.
+        city_name = await self._reverse_geocode(lat, lng)
+        country = await self._guess_country(lat, lng)
 
         parallel_task = asyncio.create_task(
             self._research_parallel(lat, lng, radius_km, city_name, country)
@@ -482,28 +503,37 @@ class DeepResearchSource(BaseSource):
         return self._items_to_places(items, provider)
 
     def _parse_research_text(self, text: str, provider: str) -> list[Place]:
-        """Parse unstructured text, extract JSON arrays or structured data."""
-        # Try to find JSON array in text
-        json_match = re.search(r'\[[\s\S]*?\{[\s\S]*?\}[\s\S]*?\]', text)
-        if json_match:
-            try:
-                items = json.loads(json_match.group())
-                if isinstance(items, list):
-                    return self._items_to_places(items, provider)
-            except json.JSONDecodeError:
-                pass
+        """Parse unstructured text: a JSON array of places, loose JSON objects, or markdown prose.
 
-        # Try to find individual JSON objects
-        places: list[Place] = []
-        for obj_match in re.finditer(r'\{[^{}]*"name"[^{}]*"lat"[^{}]*\}', text):
-            try:
-                item = json.loads(obj_match.group())
-                p = self._item_to_place(item, provider)
-                if p:
-                    places.append(p)
-            except (json.JSONDecodeError, ValueError):
-                continue
+        The text comes from an LLM that browsed the web, so it is bounded and scanned with a real JSON
+        decoder at a limited number of candidate positions (nested lazy regexes took seconds of CPU,
+        on the event loop, for a hundred kilobytes of the wrong kind of text).
+        """
+        text = text[:_MAX_RESEARCH_TEXT_CHARS]
 
+        for attempt, match in enumerate(_ARRAY_OF_OBJECTS.finditer(text)):
+            if attempt >= _MAX_JSON_ATTEMPTS:
+                break
+            decoded = _decode_json_at(text, match.start())
+            if decoded is not None and isinstance(decoded[0], list):
+                places = self._items_to_places([i for i in decoded[0] if isinstance(i, dict)], provider)
+                if places:
+                    return places
+
+        places = []
+        pos = attempts = 0
+        while attempts < _MAX_JSON_ATTEMPTS:
+            start = text.find("{", pos)
+            if start < 0:
+                break
+            attempts += 1
+            decoded = _decode_json_at(text, start)
+            place = self._item_to_place(decoded[0], provider) if decoded and isinstance(decoded[0], dict) else None
+            if place:
+                places.append(place)
+                pos = decoded[1]  # a place: do not look inside it again
+            else:
+                pos = start + 1  # a wrapper object, or not JSON: look at what is inside
         if places:
             return places
 
@@ -511,37 +541,36 @@ class DeepResearchSource(BaseSource):
         return self._extract_from_prose(text, provider)
 
     def _extract_from_prose(self, text: str, provider: str) -> list[Place]:
-        """Last resort: extract POIs from unstructured prose using coordinate patterns."""
-        places: list[Place] = []
-        # Match patterns like "42.0934, 19.1005" or "(42.0934, 19.1005)"
-        coord_pattern = re.compile(
-            r'(?:^|\n).*?(?:\*\*|#{1,3}\s*)'
-            r'([^\n*#]+?)'  # name
-            r'(?:\*\*)?.*?'
-            r'(\d{1,2}\.\d{3,6})[,\s]+(\d{1,3}\.\d{3,6})',
-            re.MULTILINE,
-        )
-        for m in coord_pattern.finditer(text):
-            name = m.group(1).strip().rstrip(':').strip()
-            try:
-                lat = float(m.group(2))
-                lng = float(m.group(3))
-                if -90 <= lat <= 90 and -180 <= lng <= 180:
-                    place_id = f"dr_{provider}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
-                    categories = self._guess_categories(name, "")
-                    places.append(Place(
-                        id=place_id,
-                        source=PlaceSource.DEEP_RESEARCH,
-                        sources=[PlaceSource.DEEP_RESEARCH],
-                        name=name,
-                        categories=categories or [PlaceCategory.LANDMARK],
-                        coordinates=Coordinates(lat=lat, lng=lng),
-                        confidence=0.6,
-                        metadata={"research_provider": provider},
-                    ))
-            except ValueError:
+        """Last resort: markdown lines such as ``**Fort Mamula** - 42.4381, 18.5694`` or
+        ``### Hidden Cave (42.5, 18.6123)``: a bold or heading name, then coordinates, on one line."""
+        places: dict[str, Place] = {}
+        for line in text.splitlines()[:_MAX_PROSE_LINES]:
+            line = line[:_MAX_PROSE_LINE_CHARS]
+            name_match = _PROSE_NAME.search(line)
+            if not name_match:
                 continue
-        return places
+            coords = _PROSE_COORDS.search(line, name_match.start(1))
+            if not coords:
+                continue
+            name = line[name_match.start(1):min(name_match.end(1), coords.start())]
+            name = name.strip(" \t-\u2013\u2014:,([")
+            if len(name) < 2 or len(name) > 120:
+                continue
+            lat, lng = float(coords.group(1)), float(coords.group(2))
+            if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+                continue
+            place_id = f"dr_{provider}_{hashlib.md5(name.encode()).hexdigest()[:8]}"
+            places.setdefault(place_id, Place(
+                id=place_id,
+                source=PlaceSource.DEEP_RESEARCH,
+                sources=[PlaceSource.DEEP_RESEARCH],
+                name=name,
+                categories=self._guess_categories(name, "") or [PlaceCategory.LANDMARK],
+                coordinates=Coordinates(lat=lat, lng=lng),
+                confidence=0.6,
+                metadata={"research_provider": provider},
+            ))
+        return list(places.values())
 
     def _items_to_places(self, items: list[dict], provider: str) -> list[Place]:
         """Convert a list of raw dicts to Place objects."""
@@ -680,22 +709,33 @@ class DeepResearchSource(BaseSource):
 
     # --- Geocoding helpers ---
 
+    async def _nominatim(self, lat: float, lng: float, zoom: int) -> dict:
+        """One Nominatim reverse lookup: cached for good (a place does not move) and rate limited."""
+        key = f"{lat:.3f}_{lng:.3f}_{zoom}"
+        cached = await _geocode_cache.get(key)
+        if isinstance(cached, dict):
+            return cached
+        await _nominatim_limiter.acquire()
+        resp = await get_http_client().get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": str(lat), "lon": str(lng), "format": "json", "zoom": str(zoom),
+                "accept-language": "en",
+            },
+            headers={"User-Agent": settings.wikimedia_user_agent},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            await _geocode_cache.set(key, data)
+            return data
+        return {}
+
     async def _reverse_geocode(self, lat: float, lng: float) -> str:
         """Get city name from coordinates using Nominatim."""
         try:
-            client = get_http_client()
-            resp = await client.get(
-                "https://nominatim.openstreetmap.org/reverse",
-                params={
-                    "lat": str(lat), "lon": str(lng),
-                    "format": "json", "zoom": "10",
-                    "accept-language": "en",
-                },
-                headers={"User-Agent": settings.wikimedia_user_agent},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = await self._nominatim(lat, lng, 10)
             address = data.get("address", {})
             return (
                 address.get("city")
@@ -710,19 +750,7 @@ class DeepResearchSource(BaseSource):
     async def _guess_country(self, lat: float, lng: float) -> str:
         """Best-effort country detection from coordinates."""
         try:
-            client = get_http_client()
-            resp = await client.get(
-                "https://nominatim.openstreetmap.org/reverse",
-                params={
-                    "lat": str(lat), "lon": str(lng),
-                    "format": "json", "zoom": "3",
-                    "accept-language": "en",
-                },
-                headers={"User-Agent": settings.wikimedia_user_agent},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = await self._nominatim(lat, lng, 3)
             return data.get("address", {}).get("country", "")
         except Exception:
             return ""

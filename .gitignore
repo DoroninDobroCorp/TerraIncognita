@@ -28,6 +28,9 @@ backend/data/journal/
 backend/data/gamification/
 backend/data/community/
 backend/data/offline/
+data/journal/
+data/gamification/
+data/community/
 data/offline/
 
 # macOS

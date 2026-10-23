@@ -374,6 +374,10 @@ label.form-label { display:block; font-size:12px; font-weight:600; color:var(--t
   max-height:65vh; overflow-y:auto;
 }
 #filter-panel.open { transform:translateY(0); }
+/* Collapsed: the controls are off-screen, so they must not be reachable by Tab (focusing one scrolled the
+   whole map section). Hidden after the slide-out has finished, visible at once when it opens. */
+#filter-panel:not(.open) #filter-body { visibility:hidden; transition:visibility 0s linear 0.35s; }
+#filter-panel.open #filter-body { visibility:visible; transition:visibility 0s; }
 .filter-handle-btn { display:block; width:100%; background:none; border:0; padding:0 0 12px; cursor:pointer; }
 .filter-handle { display:block; width:40px; height:4px; background:var(--text-secondary); border-radius:2px; margin:0 auto; opacity:0.5; }
 .filter-title { font-size:15px; font-weight:700; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; }

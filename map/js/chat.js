@@ -60,7 +60,9 @@ function chatPlaceClick(id) {
   // Switch to map and show place
   showSection('map', { runHooks: false });
   const p = state.places.find(x=>x.id===id);
-  if(p){ map.flyTo({center:[p.coordinates.lng,p.coordinates.lat],zoom:15}); map.once('moveend',()=>showPlaceCard(id)); }
+  if (!p) return;
+  if (!mapAvailable) { showPlaceCard(id); return; } // no map to wait for
+  map.flyTo({center:[p.coordinates.lng,p.coordinates.lat],zoom:15}); map.once('moveend',()=>showPlaceCard(id));
 }
 
 registerActions({

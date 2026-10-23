@@ -84,7 +84,7 @@ async function writeReview(placeId) {
   catch{toast('Failed to post review','error');}
 }
 async function voteReview(reviewId, up) {
-  try{await api(`/api/community/reviews/${enc(reviewId)}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{toast('Could not register your vote (you cannot vote on your own review)','warning');}
+  try{await api(`/api/community/reviews/${enc(reviewId)}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch(e){toast(e && e.status === 403 ? 'You cannot vote on your own review' : friendlyError(e, 'Could not register your vote'),'warning');}
 }
 
 // ── Community routes ──

@@ -88,6 +88,9 @@ async def complete_text(
         raise LLMUnavailableError("budget") from exc
     except ConnectionError as exc:  # circuit breaker open
         raise LLMUnavailableError("circuit_open") from exc
+    except llm_client.LLMResponseError as exc:  # cut off, refused or empty: the call worked, the answer is unusable
+        logger.info("LLM reply not usable: %s", exc)
+        raise LLMUnavailableError("error") from exc
     except ValueError as exc:  # llm_client raises ValueError when no API key is configured
         raise LLMUnavailableError("no_key" if "key" in str(exc).lower() else "error") from exc
     except Exception as exc:

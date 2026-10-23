@@ -123,6 +123,8 @@ async def process_chat(req: ChatRequest) -> ChatResponse:
 
     # Sanitize user input
     safe_message = sanitize_user_input(req.message)
+    if not safe_message:  # e.g. "<system>": nothing is left once injection markers are stripped
+        raise ValueError("Message must not be empty")
     logger.info("Chat query: %s", sanitize_for_log(safe_message))
 
     # 1. Extract intent

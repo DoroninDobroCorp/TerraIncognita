@@ -223,7 +223,9 @@ def fuse_places(
     """
     threshold = dedup_distance_m or settings.dedup_distance_meters
     name_range = name_match_distance_m or settings.dedup_name_match_distance_meters
-    all_places = [p for batch in sources_results for p in batch]
+    # Copies: concurrent identical requests share one in-flight source answer (utils/single_flight.py),
+    # and merging rewrites ids, metadata and coordinates of the place it keeps.
+    all_places = [p.model_copy(deep=True) for batch in sources_results for p in batch]
     if not all_places:
         return []
 

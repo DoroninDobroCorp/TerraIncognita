@@ -102,9 +102,9 @@ if docs are disabled the UI stays optimistic and a 404/405/501 from the endpoint
 | what | strategy |
 |---|---|
 | app shell (`SHELL_FILES`) + maplibre-gl from unpkg (SRI-pinned `CDN_FILES`) | precached at install, then stale-while-revalidate |
-| map tiles (OSM, OpenTopoMap, Esri, OHM, Georeferencer) | cache-first in `ti-tiles-v1`, capped at `TILE_CACHE_MAX` (800) entries, oldest evicted, refreshed after 14 days |
+| map tiles (OSM, OpenTopoMap, Esri, Georeferencer) | cache-first in `ti-tiles-v1`, capped at `TILE_CACHE_MAX` (800) entries, oldest evicted, refreshed after 14 days |
 | map glyphs (demotiles) | stale-while-revalidate |
-| `API_CACHEABLE` GETs (map config/presets/historical, `/api/daily`) | network-first, cached copy when offline |
+| `API_CACHEABLE` GETs (map config/presets/historical, `/api/daily`) | network-first; with a cached copy, an answer slower than 8 s or a 5xx falls back to it, with nothing cached the network is awaited in full (a cold `/api/daily` can take 25 s) |
 | everything else — POST/PUT/DELETE, `/api/chat`, journal/gamification/community, `/health`, OSRM | **never touched** |
 
 * **Shipping a change to any shell file:** bump `SHELL_VERSION` in `sw.js`. Old `ti-*` caches (except the tile

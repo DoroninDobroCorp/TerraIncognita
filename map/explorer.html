@@ -1728,20 +1728,6 @@ let historicalState = {
 // Default historical layers (used if API unavailable)
 const DEFAULT_HISTORICAL_LAYERS = [
   {
-    id: 'ohm', name: 'OpenHistoricalMap', period: 'Multi-era',
-    year_start: 1000, year_end: 2000,
-    url: 'https://tile.openhistoricalmap.org/historicmap/{z}/{x}/{y}.png',
-    attribution: '© OpenHistoricalMap contributors',
-    tile_size: 256, min_zoom: 1, max_zoom: 18,
-  },
-  {
-    id: 'esri_topo_1900', name: 'Esri World Topo (Historic)', period: 'Early 20th Century',
-    year_start: 1890, year_end: 1940,
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    attribution: '© Esri, DeLorme, NAVTEQ',
-    tile_size: 256, min_zoom: 1, max_zoom: 16,
-  },
-  {
     id: 'owm_1880', name: 'Old World Maps (~1880)', period: 'Late 19th Century',
     year_start: 1850, year_end: 1900,
     url: 'https://maps.georeferencer.com/georeferences/28da2318-c4b3-5f25-83dc-3da27859fea2/2019-02-19T17:27:12.514288Z/map/{z}/{x}/{y}.png',

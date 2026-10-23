@@ -261,3 +261,85 @@ class TestCacheEndpointCost:
         body = resp.json()
         assert body["total_cached"] == 4  # 3 pre-cached + a1
         assert body["disk_usage_bytes"] > 0
+
+
+# ── honest answers about what was cached ─────────────────────────
+
+_BBOX = {"min_lat": 42.4, "min_lng": 18.7, "max_lat": 42.5, "max_lng": 18.8}
+
+
+def _discovering(places, source_status):
+    async def fake(req):
+        return DiscoverResponse(places=places, total=len(places), has_more=False, source_status=source_status)
+
+    return fake
+
+
+class TestCachePlacesReportsHowItWent:
+    def test_a_complete_answer_has_no_warning_and_says_how_each_source_did(self, monkeypatch):
+        monkeypatch.setattr("app.api.offline.discover", _discovering([_place("a1")], {"osm": "ok", "wiki": "empty"}))
+        body = client.post("/api/offline/places/cache", json={"bbox": _BBOX}).json()
+        assert body["warning"] is None
+        assert body["source_status"] == {"osm": "ok", "wiki": "empty"}
+
+    @pytest.mark.parametrize("status", ["timeout", "partial", "error"])
+    def test_a_source_that_fell_short_is_named_in_the_warning(self, monkeypatch, status):
+        monkeypatch.setattr("app.api.offline.discover", _discovering([_place("a1")], {"osm": status, "wiki": "ok"}))
+        body = client.post("/api/offline/places/cache", json={"bbox": _BBOX}).json()
+        assert body["cached_count"] == 1
+        assert "osm" in body["warning"] and "wiki" not in body["warning"]
+
+    def test_atlas_obscura_errors_are_expected_and_not_worth_a_warning(self, monkeypatch):
+        monkeypatch.setattr("app.api.offline.discover", _discovering([_place("a1")], {"osm": "ok", "atlas": "error"}))
+        assert client.post("/api/offline/places/cache", json={"bbox": _BBOX}).json()["warning"] is None
+
+    def test_finding_nothing_is_not_reported_as_success(self, monkeypatch):
+        monkeypatch.setattr("app.api.offline.discover", _discovering([], {"osm": "error", "wiki": "error"}))
+        body = client.post("/api/offline/places/cache", json={"bbox": _BBOX}).json()
+        assert body["cached_count"] == 0
+        assert "Nothing was found" in body["warning"]
+
+    def test_a_failed_discovery_still_answers_with_the_warning(self, monkeypatch):
+        async def boom(req):
+            raise RuntimeError("offline")
+
+        monkeypatch.setattr("app.api.offline.discover", boom)
+        resp = client.post("/api/offline/places/cache", json={"bbox": _BBOX})
+        assert resp.status_code == 200 and resp.json()["warning"]
+
+
+class TestCachePlacesDeduplicates:
+    def test_a_place_cached_under_an_older_id_is_replaced_not_duplicated(self):
+        """The id of a merged place depends on which sources answered; the earlier entry is the same place."""
+        import asyncio
+
+        asyncio.run(offline_manager.cache_place(_place("wiki_Q1")))
+        merged = _place("osm_node_1")
+        merged.metadata["merged_ids"] = ["wiki_Q1", "../not-an-id"]
+        from unittest.mock import patch
+
+        with patch("app.api.offline.discover", _discovering([merged], {"osm": "ok"})):
+            resp = client.post("/api/offline/places/cache", json={"bbox": _BBOX})
+        assert resp.status_code == 200 and resp.json()["total_cached"] == 1
+        assert client.get("/api/offline/places/osm_node_1").status_code == 200
+        assert client.get("/api/offline/places/wiki_Q1").status_code == 404
+
+    def test_the_search_stays_within_a_lowered_max_limit(self, monkeypatch):
+        seen = []
+
+        async def spy(req):
+            seen.append(req)
+            return DiscoverResponse(places=[], total=0, has_more=False)
+
+        monkeypatch.setattr(settings, "max_limit", 50)
+        monkeypatch.setattr("app.api.offline.discover", spy)
+        client.post("/api/offline/places/cache", json={"bbox": _BBOX})
+        assert seen and seen[0].limit <= 50
+
+
+class TestCacheRouteMissing:
+    def test_an_unknown_route_is_a_404_not_a_silent_zero(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(settings, "journal_data_dir", str(tmp_path / "journal"))
+        (tmp_path / "routes").mkdir()
+        resp = client.post("/api/offline/places/cache", json={"bbox": _BBOX, "route_id": "no-such-route"})
+        assert resp.status_code == 404

@@ -11,7 +11,7 @@ import logging
 from app.config import settings
 from app.models.place import Coordinates, Place, PlaceCategory, PlaceSource
 from app.services.cache import disk_cache
-from app.sources.base import BaseSource
+from app.sources.base import BaseSource, PartialSourceResult
 from app.utils.geo import bounding_box
 from app.utils.http_client import get_http_client
 from app.utils.single_flight import SingleFlight
@@ -72,10 +72,18 @@ SELECT DISTINCT ?item ?itemLabel ?itemDescription ?coord ?sitelink ?sitelinks ?t
               schema:isPartOf <https://en.wikipedia.org/> .
   }}
   OPTIONAL {{ ?item wikibase:sitelinks ?sitelinks . }}
+  BIND(IF(?type IN ({common_values}), 1, 0) AS ?common)
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en,ru,de,fr,es" . }}
 }}
-LIMIT 1500
+ORDER BY ?common
+LIMIT {limit}
 """
+
+_QUERY_LIMIT = 1500
+# Everyday buildings and landmarks: in a city centre they number in the thousands (Vienna, 10 km:
+# 1,084 plain "building" items against one ruin). They sort last, so when the row limit cuts the
+# answer off it is these that go, not the rare types.
+_COMMON_TYPES = ("Q41176", "Q12518", "Q15893266", "Q12280", "Q16970", "Q32815", "Q34627", "Q33506", "Q4989906")
 
 
 def _generated_name(description: str | None, categories: list[PlaceCategory]) -> str:
@@ -98,28 +106,38 @@ class WikidataSource(BaseSource):
 
     async def search(self, lat: float, lng: float, radius_km: float) -> list[Place]:
         south, west, north, east = bounding_box(lat, lng, radius_km)
-        cache_key = f"wiki_{south:.3f}_{west:.3f}_{north:.3f}_{east:.3f}"
+        # "wiki2": entries written before completeness was tracked (plain lists) are not reused.
+        cache_key = f"wiki2_{south:.3f}_{west:.3f}_{north:.3f}_{east:.3f}"
 
         cached = await disk_cache.get(cache_key)
-        if cached is not None:
+        if isinstance(cached, dict) and isinstance(cached.get("places"), list):
             logger.debug("Wikidata cache hit")
-            return [Place.model_validate(p) for p in cached]
+            places = [Place.model_validate(p) for p in cached["places"]]
+            complete = bool(cached.get("complete", True))
+        else:
+            async def fetch() -> tuple[list[Place], bool]:
+                found, complete = await self._query_sparql(south, west, north, east)
+                await disk_cache.set(
+                    cache_key,
+                    {"places": [p.model_dump(mode="json") for p in found], "complete": complete},
+                )
+                logger.info("Wikidata returned %d places%s", len(found), "" if complete else " (truncated)")
+                return found, complete
 
-        async def fetch() -> list[Place]:
-            places = await self._query_sparql(south, west, north, east)
-            await disk_cache.set(cache_key, [p.model_dump(mode="json") for p in places])
-            logger.info("Wikidata returned %d places", len(places))
-            return places
-
-        return await self._in_flight.run(cache_key, fetch)
+            places, complete = await self._in_flight.run(cache_key, fetch)
+        if not complete:
+            raise PartialSourceResult(places, f"the {_QUERY_LIMIT}-row limit cut the answer off")
+        return places
 
     async def _query_sparql(
         self, south: float, west: float, north: float, east: float
-    ) -> list[Place]:
+    ) -> tuple[list[Place], bool]:
+        """(places, complete). ``complete`` is False when the row limit cut the answer off."""
         type_values = " ".join(f"wd:{qid}" for qid in _TYPE_MAP)
         query = _SPARQL_TEMPLATE.format(
             south=south, west=west, north=north, east=east,
-            type_values=type_values,
+            type_values=type_values, limit=_QUERY_LIMIT,
+            common_values=", ".join(f"wd:{qid}" for qid in _COMMON_TYPES),
         )
 
         headers = {
@@ -136,18 +154,26 @@ class WikidataSource(BaseSource):
             timeout=settings.wikidata_timeout,
         )
         resp.raise_for_status()
-        return self._parse_results(resp.json())
+        data = resp.json()
+        rows = len(data.get("results", {}).get("bindings", []))
+        return self._parse_results(data), rows < _QUERY_LIMIT
 
     def _parse_results(self, data: dict) -> list[Place]:
-        seen: set[str] = set()
+        by_qid: dict[str, Place] = {}
         places: list[Place] = []
 
         for binding in data.get("results", {}).get("bindings", []):
             item_uri = binding.get("item", {}).get("value", "")
             qid = item_uri.rsplit("/", 1)[-1]
-            if qid in seen:
+            if qid in by_qid:
+                # another type row of an item we already have: its categories join the first row's
+                # (SPARQL row order is not stable, so "first row wins" would be arbitrary)
+                known = by_qid[qid]
+                type_qid = binding.get("type", {}).get("value", "").rsplit("/", 1)[-1]
+                for cat in _TYPE_MAP.get(type_qid, ()):
+                    if cat not in known.categories:
+                        known.categories.append(cat)
                 continue
-            seen.add(qid)
 
             coord_str = binding.get("coord", {}).get("value", "")
             lat, lng = self._parse_point(coord_str)
@@ -172,7 +198,7 @@ class WikidataSource(BaseSource):
             if name_generated:
                 name = _generated_name(description, categories)
 
-            places.append(
+            place = (
                 Place(
                     id=f"wiki_{qid}",
                     source=PlaceSource.WIKIDATA,
@@ -192,6 +218,8 @@ class WikidataSource(BaseSource):
                     },
                 )
             )
+            by_qid[qid] = place
+            places.append(place)
         return places
 
     @staticmethod

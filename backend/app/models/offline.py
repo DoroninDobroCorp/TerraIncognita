@@ -170,6 +170,10 @@ class CachePlacesResponse(BaseModel):
     cached_count: int
     total_cached: int
     disk_usage_bytes: int
+    # How the discovery behind it went ("ok" | "empty" | "partial" | "error" | "timeout" per source) and,
+    # when what was cached is probably incomplete, a sentence for the user.
+    source_status: dict[str, str] = Field(default_factory=dict)
+    warning: str | None = None
 
 
 class OfflineNavRequest(BaseModel):

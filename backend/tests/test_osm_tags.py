@@ -255,3 +255,24 @@ class TestDescribeDate:
     @pytest.mark.parametrize("raw", ["", "   ", None, "unknown", "yes", "C0", "0th century"])
     def test_nothing_to_say_without_a_date(self, raw):
         assert describe_date(raw) is None
+
+
+@pytest.mark.parametrize("tags", [
+    {"tunnel": "yes", "highway": "primary", "name": "Tunel Sozina"},
+    {"tunnel": "yes", "highway": "residential"},
+    {"tunnel": "yes", "railway": "rail"},
+    {"tunnel": "yes", "railway": "subway"},
+    {"tunnel": "yes", "waterway": "canal"},
+])
+def test_a_road_rail_or_canal_running_underground_is_not_an_underground_place(tags):
+    assert C.UNDERGROUND not in interpret_tags(tags).categories
+
+
+@pytest.mark.parametrize("tags", [
+    {"tunnel": "yes", "tunnel:name": "Stari tunel"},
+    {"tunnel": "yes", "highway": "footway", "name": "Pjesacki tunel"},
+    {"tunnel": "yes", "railway": "abandoned"},
+    {"tunnel": "yes", "railway": "disused"},
+])
+def test_a_named_pedestrian_or_dead_tunnel_still_is(tags):
+    assert C.UNDERGROUND in interpret_tags(tags).categories

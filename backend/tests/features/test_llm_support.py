@@ -213,3 +213,14 @@ class TestSmallHelpers:
         assert settings.daily_top_k >= 1
         assert 0 <= settings.loop_safety_margin < 0.5
         assert settings.place_ask_cache_ttl_seconds == 7 * 86400
+
+
+async def test_an_unusable_reply_is_logged_and_reported_as_unavailable(monkeypatch, caplog):
+    monkeypatch.setattr(
+        llm_client, "chat_completion",
+        AsyncMock(side_effect=llm_client.LLMResponseError("LLM reply is not usable (stop_reason=refusal)")),
+    )
+    with caplog.at_level("INFO"), pytest.raises(LLMUnavailableError) as caught:
+        await complete_text("system", "user", max_tokens=50)
+    assert caught.value.reason == "error"
+    assert "stop_reason=refusal" in caplog.text

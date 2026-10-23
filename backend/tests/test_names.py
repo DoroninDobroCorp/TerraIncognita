@@ -100,3 +100,14 @@ def test_shares_type_word():
     assert shares_type_word("Old Bunker", "The Bunker Complex")
     assert not shares_type_word("Old Bunker", "The Mill")
     assert not shares_type_word("The Mill", "The Church")
+
+
+@pytest.mark.parametrize(("raw", "words"), [
+    ("हिन्दी भाषा", 2),  # Devanagari: vowel signs and the virama are combining marks
+    ("กรุงเทพ", 1),  # Thai
+    ("Fort-Mamula 2", 3),
+])
+def test_tokens_do_not_shred_scripts_with_combining_marks(raw, words):
+    out = tokens(raw)
+    assert len(out) == words
+    assert all(len(t) > 1 for t in out if not t.isdigit())

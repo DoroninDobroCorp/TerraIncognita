@@ -139,7 +139,7 @@ async def test_get_historical_layers(client: AsyncClient):
     assert "layers" in data
     assert "default_opacity" in data
     assert isinstance(data["layers"], list)
-    assert len(data["layers"]) >= 3
+    assert len(data["layers"]) >= 1
     assert 0 <= data["default_opacity"] <= 1
 
 
@@ -174,8 +174,50 @@ async def test_historical_layer_ids_unique(client: AsyncClient):
     assert len(ids) == len(set(ids)), "Layer IDs must be unique"
 
 
+def _connect_src_allows(host: str) -> bool:
+    from app.middleware import DEFAULT_CSP
+
+    connect = next(d for d in DEFAULT_CSP.split(";") if d.strip().startswith("connect-src")).split()[1:]
+    return any(
+        src == f"https://{host}" or (src.startswith("https://*.") and host.endswith(src[len("https://*"):]))
+        for src in connect
+    )
+
+
 @pytest.mark.anyio
-async def test_historical_layers_cover_multiple_periods(client: AsyncClient):
-    resp = await client.get("/api/map/historical")
-    periods = {l["period"] for l in resp.json()["layers"]}
-    assert len(periods) >= 2, "Should cover at least 2 different historical periods"
+async def test_every_historical_layer_host_may_be_fetched_under_the_csp(client: AsyncClient):
+    """A tile host missing from connect-src fails silently in the browser: the layer simply never draws."""
+    from urllib.parse import urlsplit
+
+    for layer in (await client.get("/api/map/historical")).json()["layers"]:
+        host = urlsplit(layer["url"]).hostname
+        assert _connect_src_allows(host), f"{layer['id']}: {host} is not in the CSP connect-src list"
+
+
+def test_georeferencer_tiles_are_allowed_where_they_redirect_to():
+    """maps.georeferencer.com answers 302 to wmts.oldmapsonline.org; a CSP check applies to the redirect too."""
+    assert _connect_src_allows("maps.georeferencer.com") and _connect_src_allows("wmts.oldmapsonline.org")
+
+
+def test_the_built_in_layer_lists_use_only_hosts_the_csp_allows():
+    import re
+    from pathlib import Path
+
+    config_js = (Path(__file__).resolve().parents[2] / "map" / "js" / "config.js").read_text(encoding="utf-8")
+    hosts = {h for h in re.findall(r"https://([a-z0-9.-]+)/", config_js) if "{" not in h}
+    assert {"tile.openstreetmap.org", "maps.georeferencer.com"} <= hosts  # the pattern finds the layer URLs
+    # (links in comments such as maplibre.org docs are not fetched)
+    missing = sorted(h for h in hosts if not _connect_src_allows(h) and not h.startswith(("www.", "github.", "maplibre.org")))
+    assert not missing, missing
+
+
+def test_the_dead_openhistoricalmap_host_is_gone_everywhere():
+    """tile.openhistoricalmap.org no longer resolves: no layer, CSP entry or cache rule may refer to it."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    offenders = [
+        str(p.relative_to(root)) for p in [*root.glob("map/**/*"), *root.glob("backend/app/**/*.py")]
+        if p.is_file() and p.suffix in {".js", ".html", ".py", ".md"} and "tile.openhistoricalmap.org" in p.read_text(encoding="utf-8")
+    ]
+    assert not offenders, offenders

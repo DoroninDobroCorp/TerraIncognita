@@ -198,3 +198,106 @@ def test_the_usage_counter_is_not_in_the_directory_the_cache_prunes():
         sentinel.unlink(missing_ok=True)
         for f in cache._dir.glob("e?.json"):
             f.unlink()
+
+
+def _status_error(cls, status, message="provider said: the user asked about Fort Mamula"):
+    import httpx
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    return cls(message, response=httpx.Response(status, request=request), body=None)
+
+
+class TestProviderErrorsAndTheBreaker:
+    @pytest.fixture(autouse=True)
+    def _setup(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+        monkeypatch.setattr(settings, "llm_provider", "anthropic")
+        monkeypatch.setattr(settings, "llm_daily_token_cap", 0)
+        monkeypatch.setattr(llm_client, "_circuit_open_until", 0.0)
+        monkeypatch.setattr(llm_client, "_consecutive_failures", 0)
+        monkeypatch.setattr(llm_client, "_daily_usage_path", tmp_path / "usage.json")
+        monkeypatch.setattr(llm_client, "_daily", {"date": "", "input": 0, "output": 0})
+
+    def _failing_client(self, error):
+        client = MagicMock()
+        client.messages.create = MagicMock(side_effect=error)
+        return client
+
+    @pytest.mark.parametrize(("cls", "status"), [
+        (anthropic.BadRequestError, 400), (anthropic.NotFoundError, 404),
+        (anthropic.UnprocessableEntityError, 422),
+    ])
+    async def test_a_request_the_provider_rejects_does_not_switch_the_features_off(self, cls, status):
+        client = self._failing_client(_status_error(cls, status))
+        with patch.object(llm_client, "_get_client", return_value=client):
+            for _ in range(llm_client._CIRCUIT_FAILURE_THRESHOLD + 2):
+                with pytest.raises(cls):
+                    await llm_client.chat_completion(MSGS)
+        assert llm_client.get_llm_usage()["circuit_breaker_open"] is False
+        assert llm_client._consecutive_failures == 0
+
+    async def test_a_provider_outage_still_opens_it(self):
+        client = self._failing_client(_status_error(anthropic.InternalServerError, 503))
+        with patch.object(llm_client, "_get_client", return_value=client):
+            for _ in range(llm_client._CIRCUIT_FAILURE_THRESHOLD):
+                with pytest.raises(anthropic.InternalServerError):
+                    await llm_client.chat_completion(MSGS)
+            with pytest.raises(ConnectionError, match="circuit breaker"):
+                await llm_client.chat_completion(MSGS)
+
+    @pytest.mark.parametrize(("cls", "status"), [
+        (anthropic.BadRequestError, 400), (anthropic.InternalServerError, 500),
+    ])
+    async def test_the_provider_message_never_reaches_the_log(self, caplog, cls, status):
+        client = self._failing_client(_status_error(cls, status))
+        with patch.object(llm_client, "_get_client", return_value=client), caplog.at_level("DEBUG"):
+            with pytest.raises(cls):
+                await llm_client.chat_completion(MSGS)
+        assert "Fort Mamula" not in caplog.text
+        assert str(status) in caplog.text
+
+    async def test_identical_concurrent_requests_share_one_paid_call(self, monkeypatch, tmp_path):
+        import asyncio
+
+        from app.services.cache import DiskCache
+
+        monkeypatch.setattr(llm_client, "_description_cache", DiskCache(cache_dir=str(tmp_path / "c"), ttl=0))
+        calls = []
+
+        async def slow_completion(*args, **kwargs):
+            calls.append(1)
+            await asyncio.sleep(0.05)
+            return "a story"
+
+        monkeypatch.setattr(llm_client, "chat_completion", slow_completion)
+        results = await asyncio.gather(*(llm_client.cached_completion("same-key", MSGS) for _ in range(6)))
+        assert results == ["a story"] * 6 and len(calls) == 1
+        assert await llm_client.cached_completion("same-key", MSGS) == "a story" and len(calls) == 1
+
+    async def test_a_failed_shared_call_is_not_remembered(self, monkeypatch, tmp_path):
+        from app.services.cache import DiskCache
+
+        monkeypatch.setattr(llm_client, "_description_cache", DiskCache(cache_dir=str(tmp_path / "c"), ttl=0))
+        outcomes = iter([RuntimeError("down"), "recovered"])
+
+        async def flaky(*args, **kwargs):
+            outcome = next(outcomes)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(llm_client, "chat_completion", flaky)
+        with pytest.raises(RuntimeError):
+            await llm_client.cached_completion("k", MSGS)
+        assert await llm_client.cached_completion("k", MSGS) == "recovered"
+
+
+def test_a_misspelt_effort_fails_at_startup_not_at_the_first_request():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+
+    assert Settings(_env_file=None, llm_effort="").llm_effort == ""
+    assert Settings(_env_file=None, llm_effort="xhigh").llm_effort == "xhigh"
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, llm_effort="hihg")

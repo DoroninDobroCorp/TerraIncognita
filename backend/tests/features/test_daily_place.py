@@ -46,7 +46,7 @@ def mk(
     cls: type[Place] = Place, **extra,
 ) -> Place:
     return cls(
-        id=pid, source=PlaceSource.OSM, name=name if name is not None else f"Place {pid}",
+        id=pid, source=PlaceSource.OSM, name=name if name is not None else f"Place p{pid}",
         categories=list(cats) or [C.LANDMARK], confidence=confidence, description=description,
         photos=[f"https://example.org/{pid}/{i}.jpg" for i in range(photos)],
         coordinates=Coordinates(lat=lat, lng=lng), **extra,

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
+from app.config import settings
 from app.models.chat import (
     RecommendationRequest,
     RecommendationResponse,
@@ -84,7 +85,7 @@ async def get_recommendations(req: RecommendationRequest) -> RecommendationRespo
         radius_km=req.radius_km,
         categories=req.preferences.favorite_categories if strategy == "personalized" else [],
         exclude_visited=req.preferences.visited_place_ids,
-        limit=min(req.limit * 3, 200),  # Fetch more to allow LLM to curate
+        limit=min(req.limit * 3, settings.max_limit),  # Fetch more to allow LLM to curate
         sort_by="confidence",
     )
 

@@ -5,13 +5,18 @@
 const dateStr = (v) => { const d = new Date(v); return isNaN(d) ? '—' : d.toLocaleDateString(); };
 const dateTimeStr = (v) => { const d = new Date(v); return isNaN(d) ? '—' : d.toLocaleString(); };
 
+// The API returns at most 200 rows per request; say so instead of silently showing a prefix.
+const LIST_LIMIT = 200;
+const moreNote = (shown, total) => total > shown
+  ? html`<div class="text-small text-secondary mt-8">Showing the latest ${shown} of ${total}.</div>` : '';
+
 // ── Visits ──
 async function loadVisits() {
   const list = $('visits-list');
   const filter = $('visits-filter').value;
   showSkeleton(list);
   try {
-    const q = filter ? `?status=${enc(filter)}&limit=50` : '?limit=50';
+    const q = filter ? `?status=${enc(filter)}&limit=${LIST_LIMIT}` : `?limit=${LIST_LIMIT}`;
     const data = await api('/api/visits' + q);
     if (!data.visits || !data.visits.length) { setHtml(list, emptyStateHtml('📓', 'No visits yet. Check in at places on the map to start tracking!')); return; }
     setHtml(list, html`${data.visits.map(v => html`
@@ -22,7 +27,7 @@ async function loadVisits() {
           <div class="item-sub">${dateStr(v.visited_at||v.created_at)} · ${v.duration_minutes?parseInt(v.duration_minutes)+' min':'—'}</div>
         </div>
         <span class="tag ${v.status==='visited'?'green':v.status==='want_to_visit'?'blue':'gray'}">${v.status}</span>
-      </div>`)}`);
+      </div>`)}${moreNote(data.visits.length, data.total)}`);
   } catch { setHtml(list, errorStateHtml('📓', 'Could not load visits. Check that the API is running.', 'load-visits')); }
 }
 
@@ -86,7 +91,7 @@ async function loadTrips() {
   const list = $('trips-list');
   showSkeleton(list);
   try {
-    const data = await api('/api/trips?limit=50');
+    const data = await api(`/api/trips?limit=${LIST_LIMIT}`);
     if (!data.trips||!data.trips.length) { setHtml(list, emptyStateHtml('✈️', 'No trips yet. Create one to group your visits!')); return; }
     setHtml(list, html`${data.trips.map(t => html`
       <div class="list-item" role="button" tabindex="0" data-action="trip-detail" data-id="${t.id}">
@@ -95,7 +100,7 @@ async function loadTrips() {
           <div class="item-title">${t.name}</div>
           <div class="item-sub">${t.region||'—'} · ${t.start_date?utcDateStr(t.start_date):''} – ${t.end_date?utcDateStr(t.end_date):''}</div>
         </div>
-      </div>`)}`);
+      </div>`)}${moreNote(data.trips.length, data.total)}`);
   } catch { setHtml(list, errorStateHtml('✈️', 'Could not load trips.', 'load-trips')); }
 }
 function showCreateTrip() { $('create-trip-form').hidden = false; $('trip-name').focus(); }

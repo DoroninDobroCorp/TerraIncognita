@@ -43,7 +43,7 @@ from app.models.journal import (
     VisitStatus,
 )
 from app.models.place import Coordinates
-from app.utils.atomic_io import atomic_write_text, load_model_records
+from app.utils.atomic_io import atomic_write_text, load_model_records, scratch_dir
 from app.utils.geo import haversine_distance_m as _haversine_m
 from app.utils.sanitize import sanitize_url
 
@@ -110,11 +110,17 @@ def _load_store() -> None:
     global _loaded
     if _loaded:
         return
-    _loaded = True
     data_dir = _get_data_dir()
-    _visits.update(load_model_records(data_dir / "visits.json", Visit))
-    _notes.update(load_model_records(data_dir / "notes.json", PlaceNote))
-    _trips.update(load_model_records(data_dir / "trips.json", Trip))
+    # Everything is read before anything is kept, and the flag is set last: if a file is unreadable the
+    # load raises on every call (until fixed) instead of leaving a half-loaded store that the next save
+    # would write over the files that were never read.
+    visits = load_model_records(data_dir / "visits.json", Visit)
+    notes = load_model_records(data_dir / "notes.json", PlaceNote)
+    trips = load_model_records(data_dir / "trips.json", Trip)
+    _visits.update(visits)
+    _notes.update(notes)
+    _trips.update(trips)
+    _loaded = True
 
 
 def _ensure_loaded() -> None:
@@ -212,6 +218,14 @@ async def create_visit(
     return visit
 
 
+def _notes_by_visit() -> dict[str, list[PlaceNote]]:
+    """One pass over the notes instead of one per visit (trip summaries and exports were O(visits x notes))."""
+    index: dict[str, list[PlaceNote]] = {}
+    for note in _notes.values():
+        index.setdefault(note.visit_id, []).append(note)
+    return index
+
+
 async def _run_gamification_hook(visit: Visit) -> None:
     """Epic 6: XP, achievements and fog for a visit. Safe to repeat: every reward is idempotent
     (keyed by place / note / day), so it also runs when a note is added or edited — that is when
@@ -283,6 +297,7 @@ async def update_visit(
     if trip_id and trip_id not in _trips:
         raise TripNotFoundError(f"Trip {trip_id} not found")
 
+    became_visited = status == VisitStatus.VISITED and visit.status != VisitStatus.VISITED
     if status is not None:
         visit.status = status
     if duration_minutes is not None:
@@ -301,6 +316,8 @@ async def update_visit(
 
     visit.updated_at = datetime.now(UTC)
     _save_visits()
+    if became_visited:
+        await _run_gamification_hook(visit)  # a planned place the explorer has now been to
     return visit
 
 
@@ -339,7 +356,15 @@ async def check_proximity(
     nearest_dist = float("inf")
     for visit in _visits.values():
         dist = _haversine_m(lat, lng, visit.coordinates.lat, visit.coordinates.lng)
-        if dist <= radius_m and dist < nearest_dist:  # nearest, not merely the first stored
+        if dist > radius_m:
+            continue
+        # nearest, not merely the first stored; on a tie (a planned and a visited record of one place)
+        # the visited one speaks for the place
+        better = dist < nearest_dist or (
+            dist == nearest_dist and visit.status == VisitStatus.VISITED
+            and nearest is not None and nearest.status != VisitStatus.VISITED
+        )
+        if better:
             nearest, nearest_dist = visit, dist
     if nearest is None:
         return ProximityCheckResponse()
@@ -720,6 +745,8 @@ async def auto_group_visits(
         return None
     start_date, end_date = _utc(start_date), _utc(end_date)
 
+    members = set(trip.visit_ids)
+    left: dict[str, set[str]] = {}  # visits moving out of another trip, removed from its list in one pass
     for visit in _visits.values():
         if not (start_date <= visit.visited_at <= end_date):
             continue
@@ -733,12 +760,13 @@ async def auto_group_visits(
         if visit.trip_id and visit.trip_id != trip_id and visit.trip_id in _trips:
             # A visit belongs to one trip: take it out of the old one (it used to stay in
             # both visit_ids lists, so it was counted and exported twice).
-            old = _trips[visit.trip_id]
-            if visit.id in old.visit_ids:
-                old.visit_ids.remove(visit.id)
-        if visit.id not in trip.visit_ids:
+            left.setdefault(visit.trip_id, set()).add(visit.id)
+        if visit.id not in members:
+            members.add(visit.id)
             trip.visit_ids.append(visit.id)
         visit.trip_id = trip_id
+    for old_id, gone in left.items():
+        _trips[old_id].visit_ids = [vid for vid in _trips[old_id].visit_ids if vid not in gone]
 
     trip.start_date = start_date
     trip.end_date = end_date
@@ -759,12 +787,12 @@ async def get_trip_summary(trip_id: str) -> TripSummary | None:
     visited = [v for v in visits if v.status == VisitStatus.VISITED]
 
     # Category stats from notes
+    notes_by_visit = _notes_by_visit()
     cat_counter: Counter[str] = Counter()
     for v in visits:
-        for note in _notes.values():
-            if note.visit_id == v.id:
-                for tag in note.tags:
-                    cat_counter[tag] += 1
+        for note in notes_by_visit.get(v.id, ()):
+            for tag in note.tags:
+                cat_counter[tag] += 1
     categories = [CategoryStat(category=c, count=n) for c, n in cat_counter.most_common()]
 
     # Total hours
@@ -783,8 +811,8 @@ async def get_trip_summary(trip_id: str) -> TripSummary | None:
     # Best rated
     best: list[tuple[str, float]] = []
     for v in visits:
-        for note in _notes.values():
-            if note.visit_id == v.id and note.rating.average > 0:
+        for note in notes_by_visit.get(v.id, ()):
+            if note.rating.average > 0:
                 best.append((v.place_name or v.place_id, note.rating.average))
     best.sort(key=lambda x: x[1], reverse=True)
     best_names = [b[0] for b in best[:5]]
@@ -842,10 +870,11 @@ async def export_trip(trip_id: str, fmt: str = "markdown") -> tuple[str, str] | 
         visits = [_visits[vid] for vid in trip.visit_ids if vid in _visits]
         if visits:
             lines.append("## 📍 Places")
+            notes_by_visit = _notes_by_visit()
             for v in sorted(visits, key=lambda x: x.visited_at):
                 label = _md_text(v.place_name or v.place_id)
                 lines.append(f"- **{label}** — {v.visited_at.strftime('%Y-%m-%d %H:%M')}")
-                notes = [n for n in _notes.values() if n.visit_id == v.id]
+                notes = notes_by_visit.get(v.id, [])
                 for note in notes:
                     if note.text:
                         # every line of a multi-line note stays inside the quote
@@ -886,8 +915,9 @@ def _export_html(trip: Trip, summary: TripSummary) -> str:
     visits = [_visits[vid] for vid in trip.visit_ids if vid in _visits]
 
     places_html = ""
+    notes_by_visit = _notes_by_visit()
     for v in sorted(visits, key=lambda x: x.visited_at):
-        notes = [n for n in _notes.values() if n.visit_id == v.id]
+        notes = notes_by_visit.get(v.id, [])
         notes_html = ""
         for note in notes:
             if note.text:
@@ -964,5 +994,4 @@ def _reset_store() -> None:
     _notes.clear()
     _trips.clear()
     # Use a temp dir so tests don't interfere with real data or each other
-    import tempfile
-    _data_dir = Path(tempfile.mkdtemp())
+    _data_dir = scratch_dir()

@@ -20,7 +20,7 @@ Middleware, outermost first (`app/main.py`, `app/middleware.py`):
 4. **RateLimit** — one table, `RATE_RULES`; per client IP, sliding window, `Retry-After` on 429. Behind a
    reverse proxy set `TERRA_TRUSTED_PROXY_HOPS` or every user shares the proxy's address. (A spent LLM budget is
    handled where the call is made, not here — see *LLM layer*: endpoints degrade to a fallback or answer 503.)
-5. **RequestSizeLimit** — 64 KB, counted on the bytes actually received (chunked uploads included).
+5. **RequestSizeLimit** — 256 KB, counted on the bytes actually received (chunked uploads included).
 
 Request validation errors go through one global handler that never echoes raw input (a `NaN` in a body would
 otherwise make FastAPI fail to serialise its own 422).
@@ -72,7 +72,7 @@ OSM · Wikidata · Atlas Obscura · Deep Research   (concurrent, each isolated +
 ## LLM layer
 
 `services/llm_client.py` talks to Anthropic (default) or OpenAI, with a circuit breaker, a disk cache for
-generated text, and a persisted **daily token cap** (`TERRA_LLM_DAILY_TOKEN_CAP`; Deep Research providers are billed separately and not counted). Requests to Claude carry no sampling parameters (current models reject them) and read the answer from the `text` blocks, so a leading thinking block is harmless; `tests/test_llm_client_request.py` checks the request against the installed SDK's real signature. Every LLM feature is optional:
+generated text, and a persisted **daily token cap** (`TERRA_LLM_DAILY_TOKEN_CAP`; checked before each call, so calls already in flight when it is reached finish and are counted; Deep Research providers are billed separately and not counted). Requests to Claude carry no sampling parameters (current models reject them) and read the answer from the `text` blocks, so a leading thinking block is harmless; `tests/test_llm_client_request.py` checks the request against the installed SDK's real signature. Every LLM feature is optional:
 no key, open circuit, spent budget, or a reply the model cut off or refused means a deterministic fallback (chat, descriptions, stories, recommendations, walk report) or a clear 503 (ask-the-place). Unusable replies are never cached. Untrusted text (place
 names, tags, questions) is cleaned and fenced before it reaches a prompt (`utils/sanitize.py`,
 `services/llm_support.py`); model output is validated, never trusted.

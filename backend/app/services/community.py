@@ -159,23 +159,26 @@ class CommunityService:
     def _ensure_loaded(self) -> None:
         if self._loaded:
             return
-        self._loaded = True
-        self._places = self._load_store("places.json", CommunityPlace)
-        self._reviews = self._load_store("reviews.json", Review)
-        self._routes = self._load_store("routes.json", PublishedRoute)
-        self._karma = self._load_store("karma.json", ContributorKarma)
-        self._follows = {
+        # All files are read before any is kept and the flag is set last (see journal._load_store).
+        places = self._load_store("places.json", CommunityPlace)
+        reviews = self._load_store("reviews.json", Review)
+        routes = self._load_store("routes.json", PublishedRoute)
+        karma = self._load_store("karma.json", ContributorKarma)
+        follows = {
             # re-key records written with the old "a:b" scheme, whose keys could collide
             _follow_key(d["follower_id"], d["following_id"]): d
             for d in self._load_store("follows.json", ExplorerFollow).values()
         }
         quotas = load_json_file(self._data_dir / "quotas.json")
         today = self._today()
+        self._places, self._reviews, self._routes = places, reviews, routes
+        self._karma, self._follows = karma, follows
         if isinstance(quotas, dict):
             self._quotas = {
                 uid: q for uid, q in quotas.items()
                 if isinstance(q, dict) and q.get("date") == today
             }
+        self._loaded = True
 
     def _load_store(self, filename: str, model: type[BaseModel]) -> dict[str, dict]:
         """Load one store file. Records failing validation are skipped (one bad record must
@@ -195,7 +198,7 @@ class CommunityService:
                 continue
             good[key] = value
         if len(good) != len(raw):
-            quarantine_corrupt(path, f"{len(raw) - len(good)} record(s) failed validation")
+            quarantine_corrupt(path, f"{len(raw) - len(good)} record(s) failed validation", keep_original=True)
         return good
 
     def _atomic_write(self, filename: str, data: dict) -> None:
@@ -290,6 +293,8 @@ class CommunityService:
 
             # Sanitize text inputs
             name = sanitize_user_input(name)
+            if not name:
+                raise ValueError("Place name must not be empty")
             description = sanitize_user_input(description)
             tags = [sanitize_user_input(t) for t in tags]
             photos = _clean_photos(photos)
@@ -489,7 +494,9 @@ class CommunityService:
             # Also delete associated reviews
             to_delete = [rid for rid, r in self._reviews.items() if r.get("place_id") == place_id]
             for rid in to_delete:
-                del self._reviews[rid]
+                review = self._reviews.pop(rid)
+                if review.get("karma_awarded"):  # the reviewers' karma goes with their reviews
+                    self._revoke_karma(review.get("author_id", ""), KARMA_REVIEW_WRITTEN, "review_written")
             # The karma this place earned goes with it
             self._revoke_karma(author_id, KARMA_PLACE_SUBMITTED, "place_submitted")
             if place.moderation_status == ModerationStatus.CONFIRMED:
@@ -540,6 +547,8 @@ class CommunityService:
 
             # Sanitize text inputs
             text = sanitize_user_input(text)
+            if not text and review_type == ReviewType.REVIEW:
+                raise ValueError("Review text must not be empty")
             visit_date = _clean_visit_date(visit_date)
             photos = _clean_photos(photos or [])
 

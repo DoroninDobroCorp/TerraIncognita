@@ -50,7 +50,7 @@ def offset(lat0: float, lng0: float, dist_m: float, bearing: float) -> tuple[flo
 def mk(pid: str, dist_m: float, bearing: float, conf: float = 0.7, *cats: C, name: str | None = None) -> Place:
     lat, lng = offset(START.lat, START.lng, dist_m, bearing)
     return Place(
-        id=pid, source=PlaceSource.OSM, name=name or f"Place {pid}",
+        id=pid, source=PlaceSource.OSM, name=name or f"Place p{pid}",
         categories=list(cats) or [C.LANDMARK], confidence=conf,
         coordinates=Coordinates(lat=lat, lng=lng),
     )
@@ -635,7 +635,7 @@ class TestWideningAndSites:
         radii = [call.args[0].radius_km for call in mock.await_args_list]
         assert len(radii) == 2 and radii[1] > radii[0]
         stops = [w.place.name for w in resp.route.waypoints if not w.is_origin and not w.is_destination]
-        assert "Place C" in stops
+        assert "Place pC" in stops
 
     async def test_both_searches_rank_by_unusualness(self):
         with discover_returning([], []) as mock:
@@ -649,3 +649,17 @@ class TestWideningAndSites:
         stops = select_stops(START, [*promenade, other], budget(3.0), 4)
         names = [s.name for s in stops]
         assert names.count("Šetalište 5 Danica") <= 1 and len(set(names)) == len(names)
+
+
+class TestUnreachableKinds:
+    def test_an_underwater_site_is_never_a_stop_even_when_it_is_also_ruins(self):
+        wreck = mk("wreck", 600, 0, 0.9, C.RUINS, C.UNDERWATER, name="Shipwreck")
+        stops = select_stops(START, [wreck, mk("a", 700, 90, 0.5), mk("b", 700, 270, 0.5)], budget(3.0), 4)
+        assert stops and "wreck" not in [s.id for s in stops]
+
+
+def test_a_wreck_on_the_seabed_is_never_a_stop():
+    wreck = mk("w", 1500, 90, 0.95, C.UNDERWATER, C.SHIPWRECK) if hasattr(C, "SHIPWRECK") else mk("w", 1500, 90, 0.95, C.UNDERWATER)
+    land = mk("l", 1500, 270, 0.5, C.RUINS)
+    ids = {c.place.id for c in loop_route._candidates(START, [wreck, land], budget(), 6)}
+    assert ids == {"l"}

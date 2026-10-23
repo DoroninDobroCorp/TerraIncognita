@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.chat import router as chat_router
 from app.api.community import router as community_router
@@ -46,6 +49,17 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
+class GeoDataFiles(StaticFiles):
+    """Static files for ``/data``, restricted to ``*.geojson``: with a relative store path the journal,
+    XP and community files can land under the same directory when the app is started from the
+    repository root, and they must never be served."""
+
+    async def get_response(self, path: str, scope):
+        if not path.lower().endswith(".geojson"):
+            raise StarletteHTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -55,11 +69,22 @@ async def lifespan(app: FastAPI):
 
 VERSION = "0.2.0"
 
+
+class SafeJSONResponse(JSONResponse):
+    """JSON that always encodes: a lone surrogate in an echoed client string (valid in a Python str,
+    impossible in UTF-8) would otherwise turn a perfectly good response into a 500."""
+
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content, ensure_ascii=False, allow_nan=False, indent=None, separators=(",", ":"),
+        ).encode("utf-8", errors="replace")
+
 app = FastAPI(
     title="Terra Incognita API",
     version=VERSION,
     description="Discovery Engine — find unusual and interesting places around you",
     lifespan=lifespan,
+    default_response_class=SafeJSONResponse,
 )
 
 @app.exception_handler(RequestValidationError)
@@ -111,7 +136,7 @@ _data_dir = _project_root / "data"
 if _map_dir.exists():
     app.mount("/map", StaticFiles(directory=str(_map_dir), html=True), name="map")
 if _data_dir.exists():
-    app.mount("/data", StaticFiles(directory=str(_data_dir)), name="data")
+    app.mount("/data", GeoDataFiles(directory=str(_data_dir)), name="data")
 
 
 @app.get("/")

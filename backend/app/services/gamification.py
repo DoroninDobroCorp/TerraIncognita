@@ -47,6 +47,7 @@ from app.utils.atomic_io import (
     load_json_file,
     load_model_records,
     quarantine_corrupt,
+    scratch_dir,
 )
 from app.utils.geo import haversine_distance_m as _haversine_m
 
@@ -107,42 +108,54 @@ def _save_xp() -> None:
 
 
 def _load_store() -> None:
-    """Load persisted data once (first access); unreadable data is backed up, never dropped."""
+    """Load persisted data once (first access); unreadable data is backed up, never dropped.
+
+    Everything is read into locals first and the flag is set last: a file that cannot be read makes
+    this raise on every call instead of leaving a half-loaded store (e.g. total XP 0) that the next
+    save would write over the files that were never read.
+    """
     global _total_xp, _loaded, _fog_area_km2
     if _loaded:
         return
-    _loaded = True
     data_dir = _get_data_dir()
 
-    _fog_cells.update(load_model_records(data_dir / "fog_cells.json", FogCell))
-    _fog_area_km2 = sum(_cell_area_km2(c.lat) for c in _fog_cells.values())
-    _achievements.update(load_model_records(data_dir / "achievements.json", UserAchievement))
+    fog = load_model_records(data_dir / "fog_cells.json", FogCell)
+    achievements = load_model_records(data_dir / "achievements.json", UserAchievement)
 
+    events: list[XpEvent] = []
+    refs: dict[str, None] = {}
+    total_xp = 0
     xp_path = data_dir / "xp_events.json"
     raw = load_json_file(xp_path)
-    if raw is None:
-        return
-    if not isinstance(raw, dict):
+    if isinstance(raw, dict):
+        bad = 0
+        for e in raw.get("events", []):
+            try:
+                events.append(XpEvent.model_validate(e))
+            except Exception:
+                bad += 1
+        stored_refs = raw.get("refs", [])
+        if isinstance(stored_refs, list):
+            for r in stored_refs:
+                if isinstance(r, str):
+                    refs[r] = None
+        for e in events:
+            if e.ref:
+                refs[e.ref] = None
+        total = raw.get("total_xp", 0)
+        total_xp = total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else 0
+        if bad or total != total_xp:
+            quarantine_corrupt(xp_path, f"{bad} invalid event(s) / total_xp={total!r}", keep_original=True)
+    elif raw is not None:
         quarantine_corrupt(xp_path, "top-level JSON value is not an object")
-        return
-    bad = 0
-    for e in raw.get("events", []):
-        try:
-            _xp_events.append(XpEvent.model_validate(e))
-        except Exception:
-            bad += 1
-    refs = raw.get("refs", [])
-    if isinstance(refs, list):
-        for r in refs:
-            if isinstance(r, str):
-                _xp_refs[r] = None
-    for e in _xp_events:
-        if e.ref:
-            _xp_refs[e.ref] = None
-    total = raw.get("total_xp", 0)
-    _total_xp = total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else 0
-    if bad or total != _total_xp:
-        quarantine_corrupt(xp_path, f"{bad} invalid event(s) / total_xp={total!r}")
+
+    _fog_cells.update(fog)
+    _fog_area_km2 = sum(_cell_area_km2(c.lat) for c in _fog_cells.values())
+    _achievements.update(achievements)
+    _xp_events.extend(events)
+    _xp_refs.update(refs)
+    _total_xp = total_xp
+    _loaded = True
 
 
 def _ensure_loaded() -> None:
@@ -238,16 +251,19 @@ async def reveal_fog(
     global _fog_area_km2
     _ensure_loaded()
     new_count = 0
+    capped = False
 
     async with _write_lock:
         for lat, lng, ts in points:
             if len(_fog_cells) >= MAX_FOG_CELLS:
                 logger.warning("Fog store is full (%d cells); not revealing more", MAX_FOG_CELLS)
+                capped = True
                 break
             for key in _cells_in_radius(lat, lng, radius_m):
                 if key in _fog_cells:
                     continue
                 if len(_fog_cells) >= MAX_FOG_CELLS:
+                    capped = True
                     break
                 clat, clng = _cell_coords(key)
                 _fog_cells[key] = FogCell(
@@ -270,6 +286,7 @@ async def reveal_fog(
         new_cells_revealed=new_count,
         total_explored_cells=total,
         total_explored_area_km2=round(area, 4),
+        capped=capped,
     )
 
 
@@ -933,7 +950,7 @@ async def _award_xp(
 ) -> bool:
     """Internal: award XP and save. Returns False when ``ref`` was already paid.
 
-    ``ref`` is an idempotency key ("visit:<place_id>", "streak:<day>", "note_text:<id>"):
+    ``ref`` is an idempotency key ("visit:<place_id>", "streak:<day>", "note_text:<place_id>"):
     the same reward can never be granted twice by repeating a request.
     """
     global _total_xp
@@ -982,15 +999,17 @@ async def award_visit_xp(
     ):
         total_earned += base_xp
 
-    # Note bonuses: once per note
+    # Note bonuses: once per place and kind
     for note in notes:
         for flag, key, source, text in (
             (bool(note.text), "note_with_text", "note_text", "Note with text"),
             (bool(note.photos), "note_with_photo", "note_photo", "Note with photo"),
             (note.rating.average > 0, "note_with_rating", "note_rating", "Note with rating"),
         ):
+            # once per place and kind — keyed on the place, not the note, so that writing and deleting
+            # notes over and over cannot pay the same bonus again
             if flag and await _award_xp(
-                XP_REWARDS[key], source, text, visit.id, ref=f"{source}:{note.id}"
+                XP_REWARDS[key], source, text, visit.id, ref=f"{source}:{visit.place_id}"
             ):
                 total_earned += XP_REWARDS[key]
 
@@ -1141,5 +1160,4 @@ def _reset_store() -> None:
     _xp_refs.clear()
     _total_xp = 0
     _fog_area_km2 = 0.0
-    import tempfile
-    _data_dir = Path(tempfile.mkdtemp())
+    _data_dir = scratch_dir()

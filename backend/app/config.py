@@ -1,5 +1,7 @@
 """Configuration via environment variables with sensible defaults."""
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
     overpass_landmark_max_radius_km: float = 15.0
 
     # Atlas Obscura
+    atlas_obscura_enabled: bool = True  # false: never contact the site (see docs/DATA_SOURCES.md)
     atlas_obscura_base_url: str = "https://www.atlasobscura.com"
     atlas_obscura_timeout: int = 15
 
@@ -36,7 +39,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     llm_provider: str = "anthropic"  # 'anthropic' or 'openai'
     llm_model: str = "claude-sonnet-5-5"  # cheaper option: claude-haiku-5-5
-    llm_effort: str = "low"  # thinking depth for Claude: low | medium | high | xhigh | max; "" = model default
+    llm_effort: Literal["", "low", "medium", "high", "xhigh", "max"] = "low"  # thinking depth for Claude; "" = model default
     openai_model: str = "gpt-4.1-mini"
     llm_max_tokens: int = 1024
     llm_temperature: float = 0.7

@@ -14,7 +14,10 @@ from app.models.place import Coordinates
 def _as_utc(value: datetime) -> datetime:
     """Naive client datetimes are taken as UTC (comparing naive with the aware ``visited_at``
     raised TypeError -> HTTP 500); aware ones are converted to UTC."""
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    try:
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    except OverflowError as exc:  # e.g. 0001-01-01T00:00:00+05:00 has no UTC representation
+        raise ValueError("date is out of range") from exc
 
 
 UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]

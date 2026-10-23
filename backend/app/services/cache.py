@@ -52,8 +52,11 @@ class DiskCache:
                 path.unlink(missing_ok=True)
                 return None
             return raw["data"]
-        except (json.JSONDecodeError, KeyError):
+        except (ValueError, TypeError, KeyError, AttributeError):
+            # not JSON, not UTF-8 (UnicodeDecodeError is a ValueError), or JSON of the wrong shape
             path.unlink(missing_ok=True)
+            return None
+        except OSError:
             return None
 
     async def set(self, key: str, data: Any) -> None:

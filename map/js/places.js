@@ -31,14 +31,19 @@ function loadLastPlaces() {
   const s = store.getJSON(LS.lastPlaces, null);
   return s && Array.isArray(s.places) && s.places.length ? s : null;
 }
-/** Offline/API-down fallback: last snapshot if we have one, else the built-in demo places. */
+// The demo places are in Montenegro (the app's default start): they are only a stand-in near there.
+const DEMO_CENTER = { lat: 42.445, lng: 18.77 }, DEMO_RADIUS_KM = 50;
+const kmFromHere = (lat, lng) => haversineJS(state.userLat, state.userLng, lat, lng) / 1000;
+/** Offline/API-down fallback: the last snapshot if it was taken around here, else demo places near their home. */
 function showFallbackPlaces() {
   const snap = loadLastPlaces();
-  if (snap) {
+  if (snap && Number.isFinite(snap.lat) && Number.isFinite(snap.lng) && kmFromHere(snap.lat, snap.lng) <= Math.max(state.radius, 2)) {
     state.places = snap.places; applyFilters();
     toast(`📴 Showing places saved on ${dateStr(snap.t)}`, 'warning');
-  } else {
+  } else if (kmFromHere(DEMO_CENTER.lat, DEMO_CENTER.lng) <= DEMO_RADIUS_KM) {
     loadDemoData(); toast('API unavailable — showing demo data','warning');
+  } else {
+    toast('Could not load places here — check your connection and try again', 'error');
   }
 }
 
@@ -103,7 +108,7 @@ function applyFilters() {
   });
   $('place-count').textContent = `${state.filteredPlaces.length} places`;
   renderPlaces();
-  if (state.fogEnabled) updateFogStats();
+  if (state.fogEnabled) { renderFog(); updateFogStats(); } // holes follow the visited places among the new results
 }
 
 // ── Place card ──
@@ -148,45 +153,58 @@ async function checkInSelectedPlace() {
   if(!state.selectedPlace) return;
   const p = state.selectedPlace;
   analytics.track('checkin', { place_id: p.id, category: p.categories?.[0] });
-  const markVisited = () => { state.visitedPlaces.add(p.id); persistVisited(); renderFog(); renderPlaces(); };
+  const markVisited = () => { state.visitedPlaces.add(p.id); persistVisited(); applyFilters(); };
   try {
     await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
     markVisited(); toast('✅ Checked in at '+(p.name||'this place'),'success');
     refreshHeatmap(); loadStreak();
   } catch {
     // Offline or the server is down: remember the check-in and replay it when the connection is back.
-    queueVisit({ place_id: p.id, lat: p.coordinates.lat, lng: p.coordinates.lng, place_name: p.name, status: 'visited' });
-    toast('Offline — check-in saved, it will sync when you are back online','warning');
-    markVisited();
+    if (queueVisit({ place_id: p.id, lat: p.coordinates.lat, lng: p.coordinates.lng, place_name: p.name, status: 'visited' })) {
+      toast('Offline — check-in saved, it will sync when you are back online','warning');
+      markVisited();
+    } else {
+      toast('Could not save the check-in (device storage is full or blocked) — check in again when you are online','error');
+    }
   }
 }
 
 // ── Check-ins waiting for a connection ──
 const MAX_PENDING_VISITS = 100;
+/** Remember a check-in for later. False when the device refused to store it (full or blocked storage). */
 function queueVisit(body) {
   const queue = store.getJSON(LS.pendingVisits, []);
   queue.push(body);
-  store.setJSON(LS.pendingVisits, queue.slice(-MAX_PENDING_VISITS));
+  return store.setJSON(LS.pendingVisits, queue.slice(-MAX_PENDING_VISITS));
 }
 let flushingVisits = false;
 /** Replay queued check-ins in order. A server that refuses one for good (4xx) loses it; anything else waits. */
 async function flushPendingVisits() {
   if (flushingVisits || !TI.net.ok) return;
   flushingVisits = true;
-  let synced = 0;
   try {
-    // The queue is re-read from storage after every request: queueVisit() may have appended while we waited.
-    for (let queue = store.getJSON(LS.pendingVisits, []); queue.length; queue = store.getJSON(LS.pendingVisits, [])) {
-      try {
-        await api('/api/visits', { method: 'POST', retries: 0, body: queue[0] });
-        synced++;
-      } catch (e) {
-        const permanent = e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
-        if (!permanent) break; // still unreachable / busy: keep the rest for next time
-      }
-      store.setJSON(LS.pendingVisits, store.getJSON(LS.pendingVisits, []).slice(1)); // drop the one we handled
+    // The queue is shared by every window of this profile: two windows replaying it at once would each send
+    // the head item, so only one at a time does (a window that finds the lock taken leaves the queue to it).
+    if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+      await navigator.locks.request('ti-flush-visits', { ifAvailable: true }, async (lock) => { if (lock) await replayPendingVisits(); });
+    } else {
+      await replayPendingVisits();
     }
   } finally { flushingVisits = false; }
+}
+async function replayPendingVisits() {
+  let synced = 0;
+  // The queue is re-read from storage after every request: queueVisit() may have appended while we waited.
+  for (let queue = store.getJSON(LS.pendingVisits, []); queue.length; queue = store.getJSON(LS.pendingVisits, [])) {
+    try {
+      await api('/api/visits', { method: 'POST', retries: 0, body: queue[0] });
+      synced++;
+    } catch (e) {
+      const permanent = e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
+      if (!permanent) break; // still unreachable / busy: keep the rest for next time
+    }
+    store.setJSON(LS.pendingVisits, store.getJSON(LS.pendingVisits, []).slice(1)); // drop the one we handled
+  }
   if (synced) { toast(`Synced ${synced} offline check-in${synced > 1 ? 's' : ''}`, 'success'); refreshHeatmap(); loadStreak(); }
 }
 

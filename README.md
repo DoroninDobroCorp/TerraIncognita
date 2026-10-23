@@ -8,7 +8,7 @@
 
 **AI-powered exploration companion** — discover hidden, unusual, and forgotten places around you.
 
-Terra Incognita combines open geodata (OpenStreetMap, Wikidata, Wikipedia/Commons, Atlas Obscura) with LLM intelligence to help travelers and urban explorers find places that don't appear in mainstream guides.
+Terra Incognita combines open geodata (OpenStreetMap, Wikidata, Wikipedia/Commons) and, optionally, Atlas Obscura listings with LLM intelligence to help travelers and urban explorers find places that don't appear in mainstream guides.
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)
@@ -78,7 +78,9 @@ The main options are in [`backend/.env.example`](backend/.env.example); every se
 |----------|-------------|
 | `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | LLM provider key (optional) |
 | `TERRA_LLM_PROVIDER` | `anthropic` (default) or `openai` (`pip install ".[openai]"`) |
-| `TERRA_LLM_DAILY_TOKEN_CAP` | Hard daily cap on LLM tokens; `0` = unlimited |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | Daily cap on LLM tokens (new calls stop once it is reached); `0` = unlimited |
+| `TERRA_WIKIMEDIA_USER_AGENT` | Your app name and a contact URL/e-mail, sent to Wikimedia, Overpass and Nominatim (their policies ask for it) |
+| `TERRA_ATLAS_OBSCURA_ENABLED` | `false` = never contact Atlas Obscura |
 | `TERRA_CORS_ORIGINS` | Allowed origins, comma-separated (`*` for local use) |
 | `TERRA_TRUSTED_PROXY_HOPS` | `1` behind nginx, so rate limits see real client IPs |
 | `TERRA_GEMINI_API_KEY` | Google Gemini key for deep research (optional) |
@@ -123,10 +125,14 @@ Run **one worker**: rate limits, the LLM budget and service state live in proces
 | `/api/offline/*` | GET/POST… | Offline regions and cache |
 | `/health`, `/version` | GET | Liveness, LLM status and usage; version |
 
+## 🌐 Data sources and their terms
+
+Places come from OpenStreetMap (ODbL), Wikidata (CC0), Wikipedia and Wikimedia Commons (CC BY-SA / per-file licences) and, optionally, Atlas Obscura; the map uses third-party tile servers. Each comes with usage rules — attribution, fair use, a contact in the `User-Agent`. Read [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) before you run a public instance. Upgrading from an earlier version: [`docs/UPGRADING.md`](docs/UPGRADING.md).
+
 ## 🔒 Security notes
 
-- Rate limits per IP (one table in `app/middleware.py`), a 64 KB body cap, bot-probe short-circuit, security headers and a strict CSP.
-- LLM calls: user text is cleaned and fenced in prompts, outputs are validated, and `TERRA_LLM_DAILY_TOKEN_CAP` (off by default — set it) protects your bill.
+- Rate limits per IP (one table in `app/middleware.py`), a 256 KB body cap, bot-probe short-circuit, security headers and a strict CSP.
+- LLM calls: user text is cleaned and fenced in prompts, outputs are validated, and `TERRA_LLM_DAILY_TOKEN_CAP` (off by default — set it) protects your bill: new calls stop at the cap, calls already running finish.
 - **The app is single-explorer by design**: journal, XP and offline state belong to the instance, and community endpoints trust the client-supplied user id. Put it behind your own authentication before exposing it to people you don't trust. See *Known limits* in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 🛠️ Tech Stack
@@ -153,7 +159,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 **Исследовательский помощник на базе ИИ** — открывайте скрытые, необычные и забытые места вокруг вас.
 
-Terra Incognita объединяет открытые геоданные (OpenStreetMap, Wikidata, Wikipedia/Commons, Atlas Obscura) с возможностями LLM, чтобы помочь путешественникам и городским исследователям находить места, которых нет в популярных путеводителях.
+Terra Incognita объединяет открытые геоданные (OpenStreetMap, Wikidata, Wikipedia/Commons) и, по желанию, список Atlas Obscura с возможностями LLM, чтобы помочь путешественникам и городским исследователям находить места, которых нет в популярных путеводителях.
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)
@@ -223,7 +229,9 @@ uvicorn app.main:app --reload
 |------------|----------|
 | `TERRA_ANTHROPIC_API_KEY` / `TERRA_OPENAI_API_KEY` | Ключ LLM-провайдера (опционально) |
 | `TERRA_LLM_PROVIDER` | `anthropic` (по умолчанию) или `openai` (`pip install ".[openai]"`) |
-| `TERRA_LLM_DAILY_TOKEN_CAP` | Жёсткий дневной лимит токенов LLM; `0` — без лимита |
+| `TERRA_LLM_DAILY_TOKEN_CAP` | Дневной лимит токенов LLM (новые вызовы останавливаются при его достижении); `0` — без лимита |
+| `TERRA_WIKIMEDIA_USER_AGENT` | Название приложения и контакт (URL/e-mail): отправляется в Wikimedia, Overpass и Nominatim, их правила этого требуют |
+| `TERRA_ATLAS_OBSCURA_ENABLED` | `false` — никогда не обращаться к Atlas Obscura |
 | `TERRA_CORS_ORIGINS` | Разрешённые источники через запятую (`*` для локального запуска) |
 | `TERRA_TRUSTED_PROXY_HOPS` | `1` за nginx, чтобы лимиты видели реальные IP клиентов |
 | `TERRA_GEMINI_API_KEY` | Ключ Google Gemini для глубокого анализа (опционально) |
@@ -268,10 +276,14 @@ docker run -p 127.0.0.1:8000:8000 --env-file backend/.env \
 | `/api/offline/*` | GET/POST… | Офлайн-регионы и кэш |
 | `/health`, `/version` | GET | Состояние, статус и расход LLM; версия |
 
+## 🌐 Источники данных и их условия
+
+Места берутся из OpenStreetMap (ODbL), Wikidata (CC0), Википедии и Wikimedia Commons (CC BY-SA / лицензии отдельных файлов) и, по желанию, из Atlas Obscura; карта использует сторонние серверы тайлов. У каждого свои правила: указание авторства, честное использование, контакт в `User-Agent`. Прочитайте [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) (на английском), прежде чем открывать публичный экземпляр. Обновляетесь с прошлой версии: [`docs/UPGRADING.md`](docs/UPGRADING.md).
+
 ## 🔒 Заметки о безопасности
 
-- Лимиты по IP (одна таблица в `app/middleware.py`), ограничение тела запроса 64 КБ, отсечение ботов-сканеров, заголовки безопасности и строгий CSP.
-- LLM: пользовательский текст очищается и «огораживается» в промптах, ответы проверяются, а `TERRA_LLM_DAILY_TOKEN_CAP` (по умолчанию выключен — задайте его) защищает ваш счёт.
+- Лимиты по IP (одна таблица в `app/middleware.py`), ограничение тела запроса 256 КБ, отсечение ботов-сканеров, заголовки безопасности и строгий CSP.
+- LLM: пользовательский текст очищается и «огораживается» в промптах, ответы проверяются, а `TERRA_LLM_DAILY_TOKEN_CAP` (по умолчанию выключен — задайте его) защищает ваш счёт: новые вызовы останавливаются на лимите, уже идущие завершаются.
 - **Приложение задумано для одного исследователя**: дневник, XP и офлайн-состояние принадлежат экземпляру, а эндпоинты сообщества доверяют идентификатору пользователя от клиента. Прежде чем открывать его чужим людям, поставьте перед ним свою авторизацию. См. *Known limits* в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## 🛠️ Технологический стек
