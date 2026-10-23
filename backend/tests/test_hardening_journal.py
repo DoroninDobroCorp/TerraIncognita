@@ -227,3 +227,16 @@ class TestCaps:
         _trip("a")
         _trip("b")
         assert client.post("/api/trips", json={"name": "c"}).status_code == 507
+
+
+class TestVisitedPlaceIds:
+    def test_ids_are_unique_so_exclude_visited_stays_within_its_limit(self):
+        """Every check-in added the place id again; /discover's exclude_visited accepts at most
+        1000 ids, so a few repeat visits eventually made the client's next search a 422."""
+        for _ in range(3):
+            _visit("same")
+        _visit("other")
+        _visit("wish", status="want_to_visit")
+        body = client.get("/api/visits/place-ids").json()
+        assert sorted(body["place_ids"]) == ["other", "same"]
+        assert body["total"] == 2

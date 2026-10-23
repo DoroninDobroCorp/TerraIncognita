@@ -348,7 +348,12 @@ async def check_proximity(
 async def get_visited_place_ids() -> list[str]:
     """Return list of place IDs with status VISITED (for exclude_visited)."""
     _ensure_loaded()
-    return [v.place_id for v in _visits.values() if v.status == VisitStatus.VISITED]
+    # unique, most recent check-in first (repeat visits used to repeat the id)
+    visited = sorted(
+        (v for v in _visits.values() if v.status == VisitStatus.VISITED),
+        key=lambda v: v.visited_at, reverse=True,
+    )
+    return list(dict.fromkeys(v.place_id for v in visited))
 
 
 async def check_dwell(
