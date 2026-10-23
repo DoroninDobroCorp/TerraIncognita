@@ -520,3 +520,169 @@ def test_api_detail_prefers_the_servers_own_message():
     assert json.loads(_run_node(script)) == [
         "Try more time or a faster mode.", "Field required", "HTTP 500: not json",
     ]
+
+
+def test_ids_in_paths_go_through_enc_not_the_raw_encoder():
+    """api() strips ! ' ( ) * ~ from paths and encodeURIComponent leaves them alone: o'brien would become obrien."""
+    offenders = [
+        f.name for f in (MAP_DIR / "js").glob("*.js")
+        if f.name != "util.js" and "encodeURIComponent(" in f.read_text(encoding="utf-8")
+    ]
+    assert not offenders, f"use enc() instead in: {offenders}"
+
+
+def _js_snippet(filename: str, start_marker: str, end_marker: str) -> str:
+    src = (MAP_DIR / "js" / filename).read_text(encoding="utf-8")
+    start = src.index(start_marker)
+    return src[start:src.index(end_marker, start)]
+
+
+def test_enc_keeps_every_character_of_an_id():
+    util = (MAP_DIR / "js" / "util.js").read_text(encoding="utf-8")
+    enc_src = util[util.index("function enc("):util.index("/** A date-only value")]
+    sanitize = _js_function("sanitizePath")
+    script = enc_src + sanitize + """
+    const ids = ["o'brien", "alice(2)", "a*b~c!", "plain-id_1", "a b/c", "привет"];
+    // what the request path looks like after api() sanitises it, decoded back
+    console.log(JSON.stringify(ids.map(id => decodeURIComponent(sanitizePath('/x/' + enc(id)).slice(3)))));
+    """
+    ids = ["o'brien", "alice(2)", "a*b~c!", "plain-id_1", "a b/c", "привет"]
+    assert json.loads(_run_node(script)) == ids
+
+
+def test_trip_dates_show_the_stored_calendar_day_in_any_timezone():
+    util = (MAP_DIR / "js" / "util.js").read_text(encoding="utf-8")
+    fn = util[util.index("function utcDateStr("):util.index("function clamp(")]
+    for tz in ("America/Sao_Paulo", "Pacific/Auckland", "UTC"):
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node is not installed")
+        out = subprocess.run(
+            [node, "-e", fn + "console.log(utcDateStr('2025-06-10T00:00:00Z'), utcDateStr('nope') === '')"],
+            capture_output=True, text=True, timeout=30, env={"TZ": tz, "LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+        )
+        assert out.returncode == 0, out.stderr
+        assert out.stdout.split() == ["6/10/2025", "true"], (tz, out.stdout)  # the 10th everywhere, never the 9th
+
+
+_FLUSH_HARNESS = """
+const LS = { pendingVisits: 'q' };
+let db = JSON.parse(process.env.QUEUE);
+const store = { getJSON: (k, d) => db, setJSON: (k, v) => { db = v; return true; } };
+const TI = { net: { ok: process.env.ONLINE !== '0' } };
+const calls = [], toasts = [];
+const outcomes = JSON.parse(process.env.OUTCOMES);   // per call: "ok" | status number
+async function api(path, opts) {
+  calls.push(opts.body.place_id);
+  const o = outcomes.shift();
+  if (o === 'ok') return {};
+  const e = new Error('HTTP ' + o); e.status = o; throw e;
+}
+const toast = (m) => toasts.push(m), refreshHeatmap = () => {}, loadStreak = () => {};
+"""
+
+
+def _flush(queue, outcomes, online=True):
+    src = _js_snippet("places.js", "// ── Check-ins waiting for a connection ──", "\nregisterActions(")
+    script = _FLUSH_HARNESS + src + """
+    flushPendingVisits().then(() => console.log(JSON.stringify({ calls, left: db.map(v => v.place_id), toasts })));
+    """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    out = subprocess.run(
+        [node, "-e", script], capture_output=True, text=True, timeout=30,
+        env={"QUEUE": json.dumps([{"place_id": p} for p in queue]), "OUTCOMES": json.dumps(outcomes),
+             "ONLINE": "1" if online else "0", "PATH": "/usr/bin:/bin"},
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_queued_checkins_are_replayed_in_order_and_cleared():
+    r = _flush(["a", "b", "c"], ["ok", "ok", "ok"])
+    assert r["calls"] == ["a", "b", "c"] and r["left"] == [] and "Synced 3" in r["toasts"][0]
+
+
+def test_an_unreachable_server_keeps_the_rest_of_the_queue():
+    r = _flush(["a", "b", "c"], ["ok", 503, "ok"])
+    assert r["calls"] == ["a", "b"] and r["left"] == ["b", "c"]
+
+
+def test_a_checkin_the_server_refuses_for_good_is_dropped_and_the_rest_continue():
+    r = _flush(["a", "b", "c"], ["ok", 422, "ok"])
+    assert r["calls"] == ["a", "b", "c"] and r["left"] == []
+    assert "Synced 2" in r["toasts"][0]
+
+
+def test_rate_limiting_is_not_permanent():
+    r = _flush(["a", "b"], [429, "ok"])
+    assert r["calls"] == ["a"] and r["left"] == ["a", "b"]
+
+
+def test_nothing_is_sent_while_offline():
+    r = _flush(["a"], ["ok"], online=False)
+    assert r["calls"] == [] and r["left"] == ["a"]
+
+
+def _statement_after(src: str, start: int) -> str:
+    """Source from ``start`` to the `;` that ends the statement (brackets balanced, so the `;`
+    of a nested arrow-function body does not end it early)."""
+    depth = 0
+    for i in range(start, len(src)):
+        ch = src[i]
+        if ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+        elif ch == ";" and depth <= 0:
+            return src[start:i]
+    return src[start:]
+
+
+_TAINTED = re.compile(r"\$\{[^}]*\b(?:p|place|props|feature)\.(?:name|description)\b")
+
+
+def _innerhtml_with_place_text(src: str) -> list[str]:
+    return [
+        stmt[:100] for m in re.finditer(r"\.innerHTML\s*=", src)
+        if _TAINTED.search(stmt := _statement_after(src, m.end()))
+    ]
+
+
+def test_explorer_never_puts_place_names_or_descriptions_into_innerhtml():
+    """Names/descriptions are world-editable (OSM); explorer.html builds such cards with the DOM API.
+
+    (Other innerHTML uses there interpolate the app's own constants: category labels, layer names.)
+    """
+    src = (MAP_DIR / "explorer.html").read_text(encoding="utf-8")
+    assert _innerhtml_with_place_text(src) == []
+    assert "list.replaceChildren(" in src
+
+
+def test_the_innerhtml_check_is_not_vacuous():
+    """The pre-fix code (route cards via `list.innerHTML = routeSuggestions.map(... ${p.name} ...)`) must be caught."""
+    old = (
+        "list.innerHTML = routeSuggestions.map((p, i) => {\n"
+        "  const cats = (p.categories || []).map(c => `${c}`).join(' ');\n"
+        "  return `<div>${cats} ${p.name || 'Unknown'}</div>`;\n"
+        "}).join('');"
+    )
+    assert _innerhtml_with_place_text(old)
+
+
+def test_service_worker_trims_the_tile_cache_without_in_memory_state():
+    """A put counter lives in the worker, which the browser stops after ~30 s: the cap would never bind."""
+    sw = (MAP_DIR / "sw.js").read_text(encoding="utf-8")
+    assert "tilePuts" not in sw
+    assert "Math.random()" in sw[sw.index("async function maybeTrimTiles"):sw.index("async function trimCache")]
+
+
+def test_slow_requests_get_a_timeout_that_outlives_the_servers_discovery_deadline():
+    """Discovery answers after up to 25 s (40 s when nothing has arrived); the UI must not give up first."""
+    for filename, call in (("offline.js", "/api/offline/places/cache"), ("places.js", "/api/discover")):
+        src = (MAP_DIR / "js" / filename).read_text(encoding="utf-8")
+        line = next(ln for ln in src.splitlines() if call in ln and "api(" in ln)
+        assert "timeout" in line, f"{filename}: {call} relies on the 10 s default"
+        timeout = int(re.search(r"timeout:\s*(\d+)", line).group(1))
+        assert timeout >= 45000

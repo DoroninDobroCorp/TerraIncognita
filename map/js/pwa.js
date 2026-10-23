@@ -22,6 +22,7 @@ function applyNetState(changed) {
   });
   if (typeof mapAvailable !== 'undefined' && mapAvailable) map.resize(); // the banner changes the map's height
   if (changed) toast(ok ? '🟢 Back online' : '📴 You are offline', ok ? 'success' : 'warning');
+  if (changed && ok && typeof flushPendingVisits === 'function') flushPendingVisits();
 }
 
 // ── Service worker ──

@@ -56,8 +56,9 @@ function warnAboutSlowSources(status) {
 
 // Fetch places (guarded against concurrent calls)
 let fetchBusy = false;
+let fetchAgain = false; // a refresh was asked for while one was running (radius slider, pin, refresh button)
 async function fetchPlaces() {
-  if (fetchBusy) return;
+  if (fetchBusy) { fetchAgain = true; return; }
   fetchBusy = true;
   showMapLoading(true);
   try {
@@ -77,6 +78,7 @@ async function fetchPlaces() {
   } catch(e) { showFallbackPlaces(); }
   showMapLoading(false);
   fetchBusy = false;
+  if (fetchAgain) { fetchAgain = false; fetchPlaces(); }
 }
 
 function loadDemoData() {
@@ -151,7 +153,42 @@ async function checkInSelectedPlace() {
     await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
     markVisited(); toast('✅ Checked in at '+p.name,'success');
     refreshHeatmap(); loadStreak();
-  } catch { toast('Check-in failed — saved locally','warning'); markVisited(); }
+  } catch {
+    // Offline or the server is down: remember the check-in and replay it when the connection is back.
+    queueVisit({ place_id: p.id, lat: p.coordinates.lat, lng: p.coordinates.lng, place_name: p.name, status: 'visited' });
+    toast('Offline — check-in saved, it will sync when you are back online','warning');
+    markVisited();
+  }
+}
+
+// ── Check-ins waiting for a connection ──
+const MAX_PENDING_VISITS = 100;
+function queueVisit(body) {
+  const queue = store.getJSON(LS.pendingVisits, []);
+  queue.push(body);
+  store.setJSON(LS.pendingVisits, queue.slice(-MAX_PENDING_VISITS));
+}
+let flushingVisits = false;
+/** Replay queued check-ins in order. A server that refuses one for good (4xx) loses it; anything else waits. */
+async function flushPendingVisits() {
+  if (flushingVisits || !TI.net.ok) return;
+  flushingVisits = true;
+  let synced = 0;
+  try {
+    let queue = store.getJSON(LS.pendingVisits, []);
+    while (queue.length) {
+      try {
+        await api('/api/visits', { method: 'POST', retries: 0, body: queue[0] });
+        synced++;
+      } catch (e) {
+        const permanent = e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
+        if (!permanent) break; // still unreachable / busy: keep the rest for next time
+      }
+      queue = queue.slice(1);
+      store.setJSON(LS.pendingVisits, queue);
+    }
+  } finally { flushingVisits = false; }
+  if (synced) { toast(`Synced ${synced} offline check-in${synced > 1 ? 's' : ''}`, 'success'); refreshHeatmap(); loadStreak(); }
 }
 
 registerActions({

@@ -109,7 +109,7 @@ const HELP = {
       <ul>
         <li><strong>Download Tiles</strong> — enter a bounding box (min/max lat/lng) and zoom levels to cache map tiles</li>
         <li><strong>Cached Places</strong> — automatically cache visited place info including AI descriptions</li>
-        <li><strong>Sync Queue</strong> — check-ins and notes made offline are queued and synced when back online</li>
+        <li><strong>Sync Queue</strong> — check-ins made offline are kept on this device and sent to your journal when you are back online (they are recorded with the time they are synced; notes need a connection)</li>
         <li><strong>Storage</strong> — monitor disk usage for tiles and cached data</li>
       </ul>
       <div class="help-tip"><strong>Recommended:</strong> Download tiles at zoom levels 10-15 for a good balance of detail vs. storage (typically 50-200 MB per city).</div>

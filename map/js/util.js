@@ -49,6 +49,15 @@ function persistSaved() { store.setJSON(LS.saved, [...state.savedPlaces]); }
 
 // ── Misc utilities ──
 function debounce(fn, ms = 300) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+/** encodeURIComponent that also escapes ! ' ( ) * ~ — api() strips those from paths, which would turn the id o'brien into obrien. */
+function enc(value) {
+  return encodeURIComponent(value).replace(/[!'()*~]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+/** A date-only value stored as midnight UTC (trip start/end): show that calendar day in any viewer zone. */
+function utcDateStr(v) {
+  const d = new Date(v);
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined, { timeZone: 'UTC' });
+}
 function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
 /** Number or fallback (never NaN). */
 function num(v, def = 0) { const n = Number(v); return Number.isFinite(n) ? n : def; }

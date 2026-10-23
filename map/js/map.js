@@ -183,19 +183,19 @@ function bindMapEvents() {
   // Pin mode — click map to set location
   map.on('click', e => {
     if (!state.pinMode) return;
-    setUserLocation(e.lngLat.lat, e.lngLat.lng, '📌 Location set');
+    setUserLocation(e.lngLat.wrap().lat, e.lngLat.wrap().lng, '📌 Location set');
     setPinMode(false);
   });
   // Long press (touch) / right click (mouse) to set location
   map.on('touchstart', e => {
     if (e.originalEvent.touches.length > 1) return;
-    _longPressTimer = setTimeout(() => setUserLocation(e.lngLat.lat, e.lngLat.lng, '📍 Location set'), 600);
+    _longPressTimer = setTimeout(() => setUserLocation(e.lngLat.wrap().lat, e.lngLat.wrap().lng, '📍 Location set'), 600);
   });
   map.on('touchend', () => { clearTimeout(_longPressTimer); });
   map.on('touchmove', () => { clearTimeout(_longPressTimer); });
   map.on('contextmenu', e => {
     e.preventDefault();
-    setUserLocation(e.lngLat.lat, e.lngLat.lng, '📍 Location set');
+    setUserLocation(e.lngLat.wrap().lat, e.lngLat.wrap().lng, '📍 Location set');
   });
 
   map.on('click','place-clusters', e => {

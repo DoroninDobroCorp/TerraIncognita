@@ -45,6 +45,7 @@ function boot() {
   initPwa();
   initMap(startApp);
   probeFeatures().then(() => loadStreak());
+  flushPendingVisits(); // check-ins left over from an earlier offline session
   checkHealth();
 }
 

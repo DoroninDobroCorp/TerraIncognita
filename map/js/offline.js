@@ -45,7 +45,7 @@ async function downloadTiles() {
   } catch { toast('Download failed','error'); }
 }
 async function deleteRegion(id){
-  try{await api(`/api/offline/tiles/regions/${encodeURIComponent(id)}`,{method:'DELETE'});toast('Region deleted','success');loadTileRegions();}catch{toast('Failed','error');}
+  try{await api(`/api/offline/tiles/regions/${enc(id)}`,{method:'DELETE'});toast('Region deleted','success');loadTileRegions();}catch{toast('Failed','error');}
 }
 
 async function loadCachedPlaces() {
@@ -60,10 +60,11 @@ async function loadCachedPlaces() {
 async function cachePlaces() {
   const b=map.getBounds();
   try {
-    const data = await api('/api/offline/places/cache',{method:'POST',body:{bbox:{min_lat:b.getSouth(),min_lng:b.getWest(),max_lat:b.getNorth(),max_lng:b.getEast()},include_descriptions:true}});
+    // discovery may take up to its server-side deadline (25 s), longer for cold sources
+    const data = await api('/api/offline/places/cache',{method:'POST',timeout:60000,body:{bbox:{min_lat:b.getSouth(),min_lng:b.getWest(),max_lat:b.getNorth(),max_lng:b.getEast()},include_descriptions:true}});
     toast(`Cached ${data.cached_count} places!`,'success');
-    loadCachedPlaces();
   } catch { toast('Cache failed','error'); }
+  finally { loadCachedPlaces(); } // also after a timeout: the server may have finished anyway
 }
 async function clearCachedPlaces(){
   try{await api('/api/offline/places',{method:'DELETE'});toast('Cache cleared','success');loadCachedPlaces();}catch{toast('Failed','error');}

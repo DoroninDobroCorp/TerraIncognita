@@ -11,7 +11,7 @@ async function loadVisits() {
   const filter = $('visits-filter').value;
   showSkeleton(list);
   try {
-    const q = filter ? `?status=${encodeURIComponent(filter)}&limit=50` : '?limit=50';
+    const q = filter ? `?status=${enc(filter)}&limit=50` : '?limit=50';
     const data = await api('/api/visits' + q);
     if (!data.visits || !data.visits.length) { setHtml(list, emptyStateHtml('📓', 'No visits yet. Check in at places on the map to start tracking!')); return; }
     setHtml(list, html`${data.visits.map(v => html`
@@ -28,7 +28,7 @@ async function loadVisits() {
 
 async function showVisitDetail(visitId) {
   try {
-    const [visit, notesData] = await Promise.all([api(`/api/visits/${encodeURIComponent(visitId)}`), api(`/api/visits/${encodeURIComponent(visitId)}/notes`)]);
+    const [visit, notesData] = await Promise.all([api(`/api/visits/${enc(visitId)}`), api(`/api/visits/${enc(visitId)}/notes`)]);
     const notes = notesData.notes || [];
     setHtml($('visits-list'), html`
       <div class="card mb-14">
@@ -71,14 +71,14 @@ async function addNote(visitId) {
   ['atmosphere','photogenic','accessibility','uniqueness'].forEach(k => { const v=parseInt($('note-'+k).value); if(v>=0&&v<=5) rating[k]=v; });
   const tags = $('note-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
   try {
-    await api(`/api/visits/${encodeURIComponent(visitId)}/notes`,{method:'POST',body:{text,rating:Object.keys(rating).length?rating:undefined,tags:tags.length?tags:undefined}});
+    await api(`/api/visits/${enc(visitId)}/notes`,{method:'POST',body:{text,rating:Object.keys(rating).length?rating:undefined,tags:tags.length?tags:undefined}});
     toast('Note added!','success'); showVisitDetail(visitId);
   } catch { toast('Failed to add note','error'); }
 }
 
 async function deleteVisit(id) {
   if(!confirm('Delete this visit?'))return;
-  try{await api(`/api/visits/${encodeURIComponent(id)}`,{method:'DELETE'});toast('Visit deleted','success');loadVisits();}catch{toast('Delete failed','error');}
+  try{await api(`/api/visits/${enc(id)}`,{method:'DELETE'});toast('Visit deleted','success');loadVisits();}catch{toast('Delete failed','error');}
 }
 
 // ── Trips ──
@@ -93,7 +93,7 @@ async function loadTrips() {
         <div class="item-icon">✈️</div>
         <div class="item-body">
           <div class="item-title">${t.name}</div>
-          <div class="item-sub">${t.region||'—'} · ${t.start_date?dateStr(t.start_date):''} – ${t.end_date?dateStr(t.end_date):''}</div>
+          <div class="item-sub">${t.region||'—'} · ${t.start_date?utcDateStr(t.start_date):''} – ${t.end_date?utcDateStr(t.end_date):''}</div>
         </div>
       </div>`)}`);
   } catch { setHtml(list, errorStateHtml('✈️', 'Could not load trips.', 'load-trips')); }
@@ -112,12 +112,12 @@ async function createTrip() {
 }
 async function showTripDetail(id) {
   try {
-    const [trip, summaryResp] = await Promise.all([api(`/api/trips/${encodeURIComponent(id)}`), api(`/api/trips/${encodeURIComponent(id)}/summary`).catch(()=>null)]);
+    const [trip, summaryResp] = await Promise.all([api(`/api/trips/${enc(id)}`), api(`/api/trips/${enc(id)}/summary`).catch(()=>null)]);
     const summary = summaryResp ? (summaryResp.summary || summaryResp) : null;
     setHtml($('trips-list'), html`
       <div class="card mb-14">
         <div class="row-between"><div class="card-title">${trip.name}</div><button class="btn btn-danger btn-sm" data-action="delete-trip" data-id="${id}" aria-label="Delete trip">🗑️</button></div>
-        <div class="card-meta">${trip.region||'—'} · ${trip.start_date||'—'} → ${trip.end_date||'—'}</div>
+        <div class="card-meta">${trip.region||'—'} · ${trip.start_date?utcDateStr(trip.start_date):'—'} → ${trip.end_date?utcDateStr(trip.end_date):'—'}</div>
         ${summary?html`<div class="mt-10 text-small"><strong>${num(summary.total_places)}</strong> places · <strong>${num(summary.total_distance_km).toFixed(1)}</strong> km · <strong>${num(summary.total_hours).toFixed(1)}</strong> hours</div>`:''}
       </div>
       <div class="card-actions">
@@ -129,11 +129,11 @@ async function showTripDetail(id) {
 }
 async function deleteTrip(id){
   if(!confirm('Delete trip?'))return;
-  try{await api(`/api/trips/${encodeURIComponent(id)}`,{method:'DELETE'});toast('Trip deleted','success');loadTrips();}catch{toast('Failed','error');}
+  try{await api(`/api/trips/${enc(id)}`,{method:'DELETE'});toast('Trip deleted','success');loadTrips();}catch{toast('Failed','error');}
 }
 async function exportTrip(id,fmt){
   try{
-    const d=await api(`/api/trips/${encodeURIComponent(id)}/export`,{method:'POST',body:{format:fmt}});
+    const d=await api(`/api/trips/${enc(id)}/export`,{method:'POST',body:{format:fmt}});
     downloadText(d.filename||`trip.${fmt}`, d.content, 'text/plain');
     toast('Exported!','success');
   }catch{toast('Export failed','error');}

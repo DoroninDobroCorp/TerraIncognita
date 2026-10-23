@@ -267,7 +267,7 @@ _CONNECT_HOSTS = (
 # recomputes these hashes, so editing one of those blocks fails the test until this list is
 # updated.
 _LEGACY_INLINE_SCRIPT_HASHES = (
-    "'sha256-YXOtHXWMnrhorRKpzhDpo5cuU0LWtdUG8Dyi4w3WYrY='",  # map/explorer.html
+    "'sha256-k/9l6xyrtmIX3CqCDu6hl/hjESDl+ct5lRriyXzfF+s='",  # map/explorer.html
     "'sha256-KrR/MfVPb3/O9bqsYx0jP7ekZ2bWxAY9I9QYz0ZKpf4='",  # map/index.html
     "'sha256-GvjjD+oQ0458JuVUf5MygZK9je1zL4KR7YQAInG6HGA='",  # map/debug.html
 )

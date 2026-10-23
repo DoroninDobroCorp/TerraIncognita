@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const SHELL_VERSION = 'v5';
+const SHELL_VERSION = 'v6';
 const SHELL_CACHE = `ti-shell-${SHELL_VERSION}`;
 const STATIC_CACHE = `ti-static-${SHELL_VERSION}`;
 const API_CACHE = `ti-api-${SHELL_VERSION}`;
@@ -200,9 +200,10 @@ async function networkFirstApi(event) {
 }
 
 // ── bounded caches ──
-let tilePuts = 0;
+// Stateless on purpose: the browser stops an idle worker after ~30 s, which would reset a put counter
+// and let the cache grow past its cap. A random draw trims often enough (every ~10 puts) to stay bounded.
 async function maybeTrimTiles(cache) {
-  if (++tilePuts % 20 === 0) await trimCache(cache, TILE_CACHE_MAX);
+  if (Math.random() < 0.1) await trimCache(cache, TILE_CACHE_MAX);
 }
 async function trimCache(cache, max) {
   const keys = await cache.keys(); // oldest first (insertion order)

@@ -15,7 +15,7 @@ let navRouteLoading = false;
 let navLastRouteFrom = null; // to avoid re-fetching on every GPS tick
 
 function mapCenter() {
-  if (mapAvailable) { const c = map.getCenter(); if (c && typeof c.lat === 'number') return { lat: c.lat, lng: c.lng }; }
+  if (mapAvailable) { const c = map.getCenter().wrap(); if (c && typeof c.lat === 'number') return { lat: c.lat, lng: c.lng }; }
   return { lat: state.userLat, lng: state.userLng };
 }
 
@@ -192,7 +192,7 @@ async function buildNavRoute() {
   if (route) {
     navRouteCoords = route.geometry.coordinates;
     navRouteDist = route.distance;
-    navRouteDur = route.duration;
+    navRouteDur = route.distance / 1.2; // not route.duration: the public OSRM demo ignores the foot profile
     navLastRouteFrom = { lat: state.userLat, lng: state.userLng };
     drawNavLine();
     updateNavBadge();

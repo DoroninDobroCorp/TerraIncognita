@@ -21,8 +21,7 @@ async function buildRoute() {
   analytics.track('route_build', { mode: $('route-mode').value });
   try {
     const data = await api('/api/route',{method:'POST',timeout:60000,body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
-    setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links });
-    toast('Route built!','success');
+    if (setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links })) toast('Route built!','success');
   } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
 
@@ -34,8 +33,7 @@ async function exploreRoute() {
   analytics.track('route_explore');
   try {
     const data = await api('/api/route/explore',{method:'POST',timeout:45000,body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
-    setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links });
-    toast('Circular walk generated!','success');
+    if (setCurrentRoute(data.route || data, { summary: data.summary, links: data.navigation_links })) toast('Circular walk generated!','success');
   } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
 
@@ -58,8 +56,7 @@ async function buildLoop() {
       categories: selectedCats('loop-cats'),
       max_stops: clamp(parseInt($('loop-stops').value) || 5, 2, 8),
     } });
-    setCurrentRoute(data.route || data, { label: '🔁 Loop route', summary: data.summary, links: data.navigation_links });
-    toast('Loop ready!','success');
+    if (setCurrentRoute(data.route || data, { label: '🔁 Loop route', summary: data.summary, links: data.navigation_links })) toast('Loop ready!','success');
   } catch (e) {
     if (featureUnavailable('loop', e)) { toast('This server cannot build loop routes yet','warning'); selectTab($('tab-r-build')); }
     else toast('Loop failed: ' + (apiDetail(e) || 'check connection'), 'error');
@@ -68,9 +65,12 @@ async function buildLoop() {
 
 // ── Result card (shared by every route builder) ──
 /** Make `route` the current one: show it in the panel and draw it on the map. */
+/** Show and draw `route`; false (after saying why) when there is nothing to show. */
 function setCurrentRoute(route, opts = {}) {
   state.currentRoute = route;
-  if (showRouteResult(route, opts)) drawRouteOnMap(route);
+  const ok = showRouteResult(route, opts);
+  if (ok) drawRouteOnMap(route);
+  return ok;
 }
 
 /** "Open in Google Maps / OsmAnd" links the backend builds for every route (navigation_links). */
@@ -88,6 +88,7 @@ function renderNavLinks(links) {
 }
 
 function showRouteResult(route, { label = null, summary = null, links = null } = {}) {
+  if (route && Array.isArray(route.waypoints) && !route.total_distance_m) { toast('No interesting places found for this route — try more time or another area','warning'); return false; }
   if (!route || !route.total_distance_m) { toast('Invalid route data','error'); return false; }
   $('route-result').hidden = false;
   $('route-title').textContent = label || (route.is_circular?'🔄 Circular Walk':'🛤️ Route');

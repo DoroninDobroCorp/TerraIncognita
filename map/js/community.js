@@ -10,7 +10,7 @@ async function loadCommunityPlaces() {
   const filter=$('comm-places-filter')?.value||'';
   showSkeleton(list);
   try {
-    const q = filter?`?status=${encodeURIComponent(filter)}&limit=30`:'?limit=30';
+    const q = filter?`?status=${enc(filter)}&limit=30`:'?limit=30';
     const data = await api('/api/community/places'+q);
     if(!data.places||!data.places.length){setHtml(list, emptyStateHtml('👥', 'No community places yet. Submit the first one!'));return;}
     setHtml(list, html`${data.places.map(p => html`
@@ -60,7 +60,7 @@ async function submitCommunityPlace() {
 
 async function loadPlaceReviews(placeId) {
   try {
-    const data = await api(`/api/community/places/${encodeURIComponent(placeId)}/reviews?limit=20`);
+    const data = await api(`/api/community/places/${enc(placeId)}/reviews?limit=20`);
     const reviews = data.reviews||[];
     setHtml($('community-places-list'), html`
       <button class="btn btn-secondary btn-sm mb-14" data-action="load-community-places">← Back</button>
@@ -80,11 +80,11 @@ async function loadPlaceReviews(placeId) {
 async function writeReview(placeId) {
   const t = $('review-text').value;
   if(!t.trim()){toast('Please write a review first','warning');return;}
-  try{await api(`/api/community/places/${encodeURIComponent(placeId)}/reviews`,{method:'POST',body:{author_id:getActiveUserId(),text:t,review_type:'review'}});toast('Review posted!','success');loadPlaceReviews(placeId);}
+  try{await api(`/api/community/places/${enc(placeId)}/reviews`,{method:'POST',body:{author_id:getActiveUserId(),text:t,review_type:'review'}});toast('Review posted!','success');loadPlaceReviews(placeId);}
   catch{toast('Failed to post review','error');}
 }
 async function voteReview(reviewId, up) {
-  try{await api(`/api/community/reviews/${encodeURIComponent(reviewId)}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{toast('Could not register your vote (you cannot vote on your own review)','warning');}
+  try{await api(`/api/community/reviews/${enc(reviewId)}/vote`,{method:'POST',body:{user_id:getActiveUserId(),upvote:up}});toast(up?'👍':'👎','info');}catch{toast('Could not register your vote (you cannot vote on your own review)','warning');}
 }
 
 // ── Community routes ──
@@ -109,7 +109,7 @@ async function loadFollowing() {
   const uid=getActiveUserId();
   const list=$('people-list');
   try {
-    const d=await api(`/api/community/following/${encodeURIComponent(uid)}`);
+    const d=await api(`/api/community/following/${enc(uid)}`);
     const follows = d.follows || [];
     setHtml(list, follows.length ? html`${follows.map(f => html`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${f.following_id}</div></div><button class="btn btn-danger btn-sm" data-action="unfollow" data-a="${f.follower_id}" data-b="${f.following_id}">Unfollow</button></div>`)}` : html`<div class="empty-state">Not following anyone yet</div>`);
   } catch { setHtml(list, errorStateHtml('👤', 'Could not load following', 'load-following')); }
@@ -118,17 +118,17 @@ async function loadFollowers() {
   const uid=getActiveUserId();
   const list=$('people-list');
   try {
-    const d=await api(`/api/community/followers/${encodeURIComponent(uid)}`);
+    const d=await api(`/api/community/followers/${enc(uid)}`);
     const follows = d.follows || [];
     setHtml(list, follows.length ? html`${follows.map(f => html`<div class="list-item"><div class="item-icon">👤</div><div class="item-body"><div class="item-title">${f.follower_id}</div></div></div>`)}` : html`<div class="empty-state">No followers yet</div>`);
   } catch { setHtml(list, errorStateHtml('👤', 'Could not load followers', 'load-followers')); }
 }
 async function unfollow(a, b) {
-  try{await api(`/api/community/follow/${encodeURIComponent(a)}/${encodeURIComponent(b)}`,{method:'DELETE'});toast('Unfollowed','info');loadFollowing();}catch{toast('Unfollow failed','error');}
+  try{await api(`/api/community/follow/${enc(a)}/${enc(b)}`,{method:'DELETE'});toast('Unfollowed','info');loadFollowing();}catch{toast('Unfollow failed','error');}
 }
 async function loadKarma() {
   try {
-    const d = await api(`/api/community/karma/${encodeURIComponent(getActiveUserId())}`);
+    const d = await api(`/api/community/karma/${enc(getActiveUserId())}`);
     const k = (d.karma && typeof d.karma === 'object') ? d.karma.karma : d.karma;  // {"karma": {"karma": 12, ...}}
     $('karma-display').textContent = (k||0)+' karma';
   } catch { $('karma-display').textContent='—'; }

@@ -27,7 +27,7 @@ async function loadDaily() {
   if (daily.key === key || Date.now() - daily.failedAt < 5 * 60 * 1000) return;
   daily.key = key;
   try {
-    const d = await api(`/api/daily?lat=${state.userLat.toFixed(4)}&lng=${state.userLng.toFixed(4)}&radius_km=10&lang=${uiLang()}`, { retries: 1, timeout: 15000 });
+    const d = await api(`/api/daily?lat=${state.userLat.toFixed(2)}&lng=${state.userLng.toFixed(2)}&radius_km=10&lang=${uiLang()}`, { retries: 1, timeout: 15000 });
     if (!d || !d.place || !d.place.coordinates) throw new Error('empty daily response');
     daily.data = d;
     renderDaily();

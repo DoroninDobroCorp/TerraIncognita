@@ -24,7 +24,7 @@ function showSection(sec, { runHooks = true } = {}) {
 }
 
 function showOnMap(lat, lng) {
-  if (!lat || !lng) return;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return; // 0 is a valid coordinate
   showSection('map', { runHooks: false });
   map.resize(); map.flyTo({ center: [lng, lat], zoom: 15 });
 }

@@ -113,8 +113,11 @@ if docs are disabled the UI stays optimistic and a 404/405/501 from the endpoint
 * New script/CSS/icon referenced from `app.html` ⇒ add it to `SHELL_FILES` (a test checks this).
   Changing the maplibre version/SRI in `app.html` ⇒ change `CDN_FILES` too (also tested).
 * Also keep the maplibre `https://unpkg.com` host in the CSP `connect-src`; the worker re-fetches it.
-* The UI stores one thing offline on purpose: the last `/api/discover` result (`ti_last_places`, public place data
-  only), shown when the server is unreachable. No journal or other private data is cached.
+* The UI stores two things offline on purpose: the last `/api/discover` result (`ti_last_places`, public place data
+  only), shown when the server is unreachable, and check-ins made while offline (`ti_pending_visits`, at most 100),
+  which `flushPendingVisits()` (`places.js`) replays when the connection is back — on the `online` transition and at
+  start. They are recorded with the time they are synced. The worker's API cache never holds journal data, and the
+  daily-place request carries coordinates rounded to ~1 km.
 * Development: serve a page with `?nosw=1` to unregister the worker and delete its caches (and skip registering),
   or tick "Update on reload" in DevTools → Application → Service Workers. Workers need `https` or `localhost`.
 
@@ -147,6 +150,16 @@ those inline scripts the test tells you the new hash). `style-src` still allows 
 and colours in templates, inline `<style>` of the legacy pages).
 (`explorer.html`'s marker popup is built with DOM APIs and `addEventListener`; an `onclick=` string built at runtime
 could not be allowed by any hash, so keep it that way rather than loosening the CSP.)
+
+## Small conventions that matter
+
+* **Ids in URL paths go through `enc()`** (`util.js`), never raw `encodeURIComponent`: `api()` strips `! ' ( ) * ~`
+  from paths, which would silently turn the id `o'brien` into `obrien`; `enc()` percent-encodes them. A test enforces it.
+* **Date-only values stored as midnight UTC** (trip start/end) are shown with `utcDateStr()`, so they never slip to
+  the previous day west of UTC.
+* **Errors from the backend**: `isMissingEndpoint(err)` means "this server does not have the route" (405/501, or
+  the router's own `{"detail":"Not Found"}`); a 404 with a message of its own ("no places nearby") is a real
+  answer and must not hide a feature. `apiDetail(err)` extracts the server's message for toasts.
 
 ## Backend contract the UI codes against
 

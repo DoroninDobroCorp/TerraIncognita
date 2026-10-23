@@ -1533,26 +1533,30 @@ function findPlacesAlongRoute(routeCoords, destId) {
     return;
   }
 
-  list.innerHTML = routeSuggestions.map((p, i) => {
-    const cats = (p.categories || []).map(c => {
-      const def = CATEGORIES[c] || CATEGORIES.landmark;
-      return `${def.icon}`;
-    }).join(' ');
+  // DOM APIs, not innerHTML: names and descriptions come from third-party data (OSM is world-editable).
+  const textEl = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    node.textContent = text;
+    return node;
+  };
+  list.replaceChildren(...routeSuggestions.map((p, i) => {
+    const cats = (p.categories || []).map(c => (CATEGORIES[c] || CATEGORIES.landmark).icon).join(' ');
     const detour = p._detourM < 1000 ? `${Math.round(p._detourM)}m detour` : `${(p._detourM/1000).toFixed(1)}km detour`;
     const desc = (p.description || '').substring(0, 100);
     const isAdded = routeWaypoints.some(w => w.lat === p.coordinates.lat && w.lng === p.coordinates.lng);
-    return `
-      <div class="suggestion-card ${isAdded ? 'added' : ''}" data-idx="${i}">
-        <div class="suggestion-name">${cats} ${p.name || 'Unknown'}</div>
-        <div class="suggestion-meta">
-          <span>📏 ${detour}</span>
-          <span>⭐ ${Math.round((p.confidence||0)*100)}%</span>
-        </div>
-        ${desc ? `<div class="suggestion-desc">${desc}...</div>` : ''}
-        <button class="suggestion-add ${isAdded ? 'added' : ''}" data-idx="${i}">${isAdded ? '✓ Added' : '+ Add to route'}</button>
-      </div>
-    `;
-  }).join('');
+    const card = textEl('div', `suggestion-card ${isAdded ? 'added' : ''}`.trim(), '');
+    card.dataset.idx = i;
+    card.appendChild(textEl('div', 'suggestion-name', `${cats} ${p.name || 'Unknown'}`));
+    const meta = textEl('div', 'suggestion-meta', '');
+    meta.append(textEl('span', '', `📏 ${detour}`), textEl('span', '', `⭐ ${Math.round((p.confidence||0)*100)}%`));
+    card.appendChild(meta);
+    if (desc) card.appendChild(textEl('div', 'suggestion-desc', `${desc}...`));
+    const add = textEl('button', `suggestion-add ${isAdded ? 'added' : ''}`.trim(), isAdded ? '✓ Added' : '+ Add to route');
+    add.dataset.idx = i;
+    card.appendChild(add);
+    return card;
+  }));
 
   // Bind click handlers
   list.querySelectorAll('.suggestion-add').forEach(btn => {

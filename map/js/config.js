@@ -58,6 +58,7 @@ const LS = {
   dailyDismissed: 'ti_daily_dismissed',
   lastPlaces: 'ti_last_places',
   features: 'ti_features',
+  pendingVisits: 'ti_pending_visits',
 };
 
 // Shared mutable app state. Persisted pieces are loaded lazily by main.js (see loadPersistedState).
