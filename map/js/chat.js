@@ -30,7 +30,7 @@ async function sendChat(msg) {
   container.scrollTop = container.scrollHeight;
 
   try {
-    const data = await api('/api/chat', {method:'POST', body:{message:msg, lat:state.userLat, lng:state.userLng, radius_km:state.radius, conversation_id:conversationId, language:'ru'}});
+    const data = await api('/api/chat', {method:'POST', timeout:45000, body:{message:msg, lat:state.userLat, lng:state.userLng, radius_km:state.radius, conversation_id:conversationId, language:'ru'}});
     conversationId = data.conversation_id;
     const el = $('chat-loading');
     const places = data.places || [];

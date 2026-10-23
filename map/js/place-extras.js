@@ -74,7 +74,7 @@ function renderPhotos(place, photos) {
   setHtml(el, html`${items.map(ph => html`
     <figure class="photo">
       ${ph.full ? html`<a href="${ph.full}" target="_blank" rel="noopener noreferrer" data-native aria-label="Open photo page${ph.title ? ': ' + ph.title : ''}"><img src="${ph.thumb}" alt="${ph.title || place.name || 'Photo of the place'}" loading="lazy" referrerpolicy="no-referrer"></a>` : html`<img src="${ph.thumb}" alt="${ph.title || place.name || 'Photo of the place'}" loading="lazy" referrerpolicy="no-referrer">`}
-      <figcaption>${[ph.author, ph.license].filter(Boolean).join(' · ') || 'Wikimedia Commons'}</figcaption>
+      <figcaption>${ph.full ? html`<a href="${ph.full}" target="_blank" rel="noopener noreferrer" data-native>${[ph.author, ph.license].filter(Boolean).join(' · ') || 'Wikimedia Commons'}</a>` : ([ph.author, ph.license].filter(Boolean).join(' · ') || 'Wikimedia Commons')}</figcaption>
     </figure>`)}`);
   el.hidden = false;
 }

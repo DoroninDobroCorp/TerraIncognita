@@ -46,19 +46,19 @@ const MAP_THEMES = {
     streets:   { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-contrast': 0, 'raster-saturation': 0, 'raster-hue-rotate': 0 },
     satellite: { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-contrast': 0, 'raster-saturation': 0, 'raster-hue-rotate': 0 },
     terrain:   { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-contrast': 0, 'raster-saturation': 0, 'raster-hue-rotate': 0 },
-    overlay: { fog: '#1b2540', fogOpacity: 0.42, stroke: '#ffffff', text: '#ffffff', halo: 'rgba(0,0,0,0.6)', radius: 1 },
+    overlay: { fog: '#1b2540', fogOpacity: 0.42, stroke: '#ffffff', text: '#ffffff', halo: 'rgba(0,0,0,0.6)', radius: 1, disc: '#ffffff', fogDisc: '#cfd4de', fogRing: '#7b8497' },
   },
   dark: {
     streets:   { 'raster-brightness-min': 0.9, 'raster-brightness-max': 0.16, 'raster-contrast': 0.05, 'raster-saturation': -0.35, 'raster-hue-rotate': 180 },
     satellite: { 'raster-brightness-min': 0, 'raster-brightness-max': 0.8, 'raster-contrast': 0, 'raster-saturation': 0, 'raster-hue-rotate': 0 },
     terrain:   { 'raster-brightness-min': 0, 'raster-brightness-max': 0.6, 'raster-contrast': 0.1, 'raster-saturation': -0.2, 'raster-hue-rotate': 0 },
-    overlay: { fog: '#0a0a1e', fogOpacity: 0.55, stroke: '#ffffff', text: '#ffffff', halo: 'rgba(0,0,0,0.6)', radius: 1 },
+    overlay: { fog: '#0a0a1e', fogOpacity: 0.55, stroke: '#ffffff', text: '#ffffff', halo: 'rgba(0,0,0,0.6)', radius: 1, disc: '#f4f5fa', fogDisc: '#aab0c0', fogRing: '#5d6579' },
   },
   sun: {
     streets:   { 'raster-brightness-min': 0, 'raster-brightness-max': 0.95, 'raster-contrast': 0.4, 'raster-saturation': 0.25, 'raster-hue-rotate': 0 },
     satellite: { 'raster-brightness-min': 0, 'raster-brightness-max': 1, 'raster-contrast': 0.15, 'raster-saturation': 0.1, 'raster-hue-rotate': 0 },
     terrain:   { 'raster-brightness-min': 0, 'raster-brightness-max': 0.95, 'raster-contrast': 0.35, 'raster-saturation': 0.2, 'raster-hue-rotate': 0 },
-    overlay: { fog: '#000000', fogOpacity: 0.38, stroke: '#000000', text: '#ffffff', halo: '#000000', radius: 1.2 },
+    overlay: { fog: '#000000', fogOpacity: 0.38, stroke: '#000000', text: '#ffffff', halo: '#000000', radius: 1.2, disc: '#ffffff', fogDisc: '#d0d0d0', fogRing: '#000000' },
   },
 };
 function mapTheme() { return MAP_THEMES[document.documentElement.dataset.theme] || MAP_THEMES.dark; }
@@ -93,6 +93,29 @@ function isInFog(place) { return state.fogEnabled && !state.visitedPlaces.has(pl
 function beforePlaceLayers() { return map.getLayer('place-clusters') ? 'place-clusters' : undefined; }
 
 // ── Place markers ──
+// The demo glyph server has no emoji, so category icons are drawn once on a canvas and registered
+// as map images (icon-image). Disc = neutral, ring = category colour: readable on every base layer.
+function emojiImageData(emoji, px = 32, dpr = 2) {
+  const c = document.createElement('canvas');
+  c.width = c.height = px * dpr;
+  const g = c.getContext('2d');
+  g.scale(dpr, dpr);
+  g.font = `${Math.round(px * 0.72)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(emoji, px / 2, px / 2 + 1);
+  return g.getImageData(0, 0, px * dpr, px * dpr);
+}
+function ensureMarkerImages() {
+  try {
+    const wanted = { 'fog-q': '❓' };
+    for (const k of Object.keys(CATEGORIES)) wanted['cat-' + k] = catDef(k).icon;
+    for (const [id, emoji] of Object.entries(wanted)) {
+      if (!map.hasImage(id)) map.addImage(id, emojiImageData(emoji), { pixelRatio: 2 });
+    }
+  } catch (e) { console.warn('Marker icons unavailable, showing plain discs:', e.message); }
+}
+
 function renderPlaces() {
   if (!mapStyleReady) return;
   ['place-clusters','cluster-count','unclustered-bg','unclustered-icon','place-silhouettes'].forEach(id => { if(map.getLayer(id)) map.removeLayer(id); });
@@ -103,15 +126,17 @@ function renderPlaces() {
     const cat = (p.categories&&p.categories[0])||'landmark';
     const def = catDef(cat);
     const inFog = isInFog(p);
-    return {type:'Feature', properties:{id:p.id,name:p.name||'Unknown',icon:def.icon,color:def.color,category:cat,confidence:p.confidence||0.5,distance:p.distance_m||0,inFog,description:p.description||'',source:p.source||'osm'}, geometry:{type:'Point',coordinates:[p.coordinates.lng,p.coordinates.lat]}};
+    const iconId = CATEGORIES[cat] ? 'cat-' + cat : (CATEGORIES.landmark ? 'cat-landmark' : 'fog-q');
+    return {type:'Feature', properties:{id:p.id,name:p.name||'Unknown',icon:def.icon,iconId,color:def.color,category:cat,confidence:p.confidence||0.5,distance:p.distance_m||0,inFog,description:p.description||'',source:p.source||'osm'}, geometry:{type:'Point',coordinates:[p.coordinates.lng,p.coordinates.lat]}};
   });
 
+  ensureMarkerImages();
   map.addSource('places',{type:'geojson',data:{type:'FeatureCollection',features},cluster:true,clusterMaxZoom:17,clusterRadius:50});
   map.addLayer({id:'place-clusters',type:'circle',source:'places',filter:['has','point_count'],paint:{'circle-color':['step',['get','point_count'],'#ff6b35',10,'#e74c3c',30,'#8e44ad'],'circle-radius':['step',['get','point_count'],22*ov.radius,10,28*ov.radius,30,34*ov.radius],'circle-opacity':1,'circle-stroke-width':3,'circle-stroke-color':ov.stroke}});
   map.addLayer({id:'cluster-count',type:'symbol',source:'places',filter:['has','point_count'],layout:{'text-field':'{point_count_abbreviated}','text-font':['Open Sans Regular','Arial Unicode MS Regular'],'text-size':15*ov.radius},paint:{'text-color':ov.text,'text-halo-color':ov.halo,'text-halo-width':1}});
-  map.addLayer({id:'unclustered-bg',type:'circle',source:'places',filter:['!',['has','point_count']],paint:{'circle-color':['get','color'],'circle-radius':['case',['get','inFog'],10*ov.radius,14*ov.radius],'circle-opacity':1,'circle-stroke-width':3,'circle-stroke-color':['case',['get','inFog'],'rgba(255,255,255,0.3)',ov.stroke]}});
-  map.addLayer({id:'unclustered-icon',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['!',['get','inFog']]],layout:{'text-field':['get','icon'],'text-size':22,'text-offset':[0,-1.5],'text-allow-overlap':true}});
-  map.addLayer({id:'place-silhouettes',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['get','inFog']],layout:{'text-field':'❓','text-size':18,'text-offset':[0,-1.5],'text-allow-overlap':true},paint:{'text-opacity':0.5}});
+  map.addLayer({id:'unclustered-bg',type:'circle',source:'places',filter:['!',['has','point_count']],paint:{'circle-color':['case',['get','inFog'],ov.fogDisc,ov.disc],'circle-radius':['case',['get','inFog'],11*ov.radius,16*ov.radius],'circle-opacity':1,'circle-stroke-width':['case',['get','inFog'],2,4],'circle-stroke-color':['case',['get','inFog'],ov.fogRing,['get','color']]}});
+  map.addLayer({id:'unclustered-icon',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['!',['get','inFog']]],layout:{'icon-image':['get','iconId'],'icon-size':0.8*ov.radius,'icon-allow-overlap':true,'icon-ignore-placement':true}});
+  map.addLayer({id:'place-silhouettes',type:'symbol',source:'places',filter:['all',['!',['has','point_count']],['get','inFog']],layout:{'icon-image':'fog-q','icon-size':0.5*ov.radius,'icon-allow-overlap':true,'icon-ignore-placement':true},paint:{'icon-opacity':0.6}});
 }
 
 // ── Fog of war ──

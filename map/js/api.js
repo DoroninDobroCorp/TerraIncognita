@@ -116,8 +116,18 @@ function featureUnavailable(name, err) {
   }
   return false;
 }
-/** One cheap look at /openapi.json tells us which optional endpoints this backend has. */
+/**
+ * One look at /openapi.json (~120 KB) tells us which optional endpoints this backend has. The derived flags are
+ * remembered for an hour so we do not download it on every page load.
+ */
+const FEATURE_TTL_MS = 60 * 60 * 1000;
 async function probeFeatures() {
+  const cached = store.getJSON(LS.features, null);
+  if (cached && cached.origin === API && Date.now() - cached.t < FEATURE_TTL_MS && cached.flags) {
+    Object.assign(features, cached.flags);
+    applyFeatureVisibility();
+    return;
+  }
   try {
     const res = await fetch(API + '/openapi.json', { cache: 'no-store' });
     if (!res.ok) throw new Error('no openapi');
@@ -126,6 +136,7 @@ async function probeFeatures() {
     for (const [name, p] of Object.entries(FEATURE_PATHS)) features[name] = !!paths[p];
     const sortPattern = spec.components?.schemas?.DiscoverRequest?.properties?.sort_by?.pattern;
     if (typeof sortPattern === 'string') features.unusual = sortPattern.includes('unusual');
+    store.setJSON(LS.features, { t: Date.now(), origin: API, flags: { ...features } });
   } catch { /* docs disabled or offline: stay optimistic, 404s will hide the UI later */ }
   applyFeatureVisibility();
 }

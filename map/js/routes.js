@@ -20,7 +20,7 @@ async function buildRoute() {
   toast('Building route...','info');
   analytics.track('route_build', { mode: $('route-mode').value });
   try {
-    const data = await api('/api/route',{method:'POST',body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
+    const data = await api('/api/route',{method:'POST',timeout:60000,body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
     setCurrentRoute(data.route || data, { summary: data.summary });
     toast('Route built!','success');
   } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
@@ -33,7 +33,7 @@ async function exploreRoute() {
   toast('Generating circular walk...','info');
   analytics.track('route_explore');
   try {
-    const data = await api('/api/route/explore',{method:'POST',body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
+    const data = await api('/api/route/explore',{method:'POST',timeout:45000,body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
     setCurrentRoute(data.route || data, { summary: data.summary });
     toast('Circular walk generated!','success');
   } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
@@ -156,7 +156,7 @@ async function getRouteStory() {
   if (places.length < 2) { toast('A story needs at least 2 places on the route','warning'); return; }
   toast('Generating route story...','info');
   try {
-    const data = await api('/api/story/route',{method:'POST',body:{places,language:'ru'}});
+    const data = await api('/api/story/route',{method:'POST',timeout:45000,body:{places,language:'ru'}});
     $('route-story').hidden = false;
     $('route-story-text').textContent = data.story;
     toast('Story ready!','success');

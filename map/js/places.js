@@ -7,7 +7,7 @@ async function fetchChat(q) {
   showMapLoading(true);
   analytics.track('search', { query: q.substring(0, 50) });
   try {
-    const data = await api('/api/chat', {method:'POST', body:{message:q, lat:state.userLat, lng:state.userLng, radius_km:state.radius}});
+    const data = await api('/api/chat', {method:'POST', timeout: 45000, body:{message:q, lat:state.userLat, lng:state.userLng, radius_km:state.radius}});
     if (data.places && data.places.length > 0) { state.places = data.places; applyFilters(); toast(`Found ${data.places.length} places`,'success'); }
   } catch(e) { toast('Search failed','error'); }
   showMapLoading(false);
@@ -52,11 +52,11 @@ async function fetchPlaces() {
     if (!TI.net.ok) throw new Error('offline');
     let data;
     try {
-      data = await api('/api/discover', {method:'POST', body: discoverBody()});
+      data = await api('/api/discover', {method:'POST', timeout: 25000, body: discoverBody()});
     } catch (e) {
       if (e.status !== 422 || features.unusual === false || !String(e.message).includes('sort_by')) throw e;
       features.unusual = false; // older backend: sort_by "unusual" is not accepted, fall back for good
-      data = await api('/api/discover', {method:'POST', body: discoverBody()});
+      data = await api('/api/discover', {method:'POST', timeout: 25000, body: discoverBody()});
     }
     state.places = data.places || []; applyFilters();
     saveLastPlaces(state.places);
@@ -123,7 +123,7 @@ async function showPlaceStory() {
   const p = state.selectedPlace;
   toast('Generating story...','info');
   try {
-    const data = await api('/api/story',{method:'POST',body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,place_categories:p.categories,language:'ru'}});
+    const data = await api('/api/story',{method:'POST',timeout:45000,body:{place_id:p.id,place_name:p.name,lat:p.coordinates.lat,lng:p.coordinates.lng,place_categories:p.categories,language:'ru'}});
     setHtml($('card-desc'), html`<strong>📖 AI Story:</strong><br>${data.story}`);
     toast('Story generated!','success');
   } catch { toast('Story generation failed','error'); }
