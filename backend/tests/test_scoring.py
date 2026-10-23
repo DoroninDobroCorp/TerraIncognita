@@ -576,3 +576,51 @@ class TestScoringJudgement:
         reason = "not linked to Wikipedia — likely off the tourist path"
         assert reason in score_place(osm_place({"historic": "ruins", "name": "Kasarna"})).reasons
         assert reason not in score_place(osm_place({"historic": "ruins", "name": "Kasarna", **extra})).reasons
+
+
+def test_a_very_long_railway_is_still_one_site_even_though_its_words_are_common():
+    """150 ways carry one name: the name words are 'common' by frequency, the whole name is not."""
+    line = [_scored(f"seg{i}", 0.74, 42.40 + i * 0.0008, 18.5, name="Dalmatinerbahn Strecke") for i in range(150)]
+    other = _scored("g", 0.5, 43.0, 19.0, name="Cave of Winds")
+    out = [p.id for p in diversify_by_site(sorted([*line, other], key=unusual_sort_key))]
+    assert out.index("g") <= 6  # without the whole-name rule the 150 segments would all outrank it
+
+
+def test_recurring_common_words_do_not_make_diversification_slow():
+    """A quarter of a big city's names share one of a few words (Villa, Denkmal...): each used to bring ~100
+    fuzzy comparisons per candidate (1.9 s here at 3000 places, 20-40 s end to end with 5000)."""
+    rng = random.Random(33)
+    words = ["Denkmal", "Villa", "Palais", "Hof", "Kapelle", "Turm", "Muehle", "Brunnen"]
+    places = []
+    for i in range(3000):
+        name = f"{rng.choice(words)} Familie{i}" if rng.random() < 0.25 else f"Objekt{i} Strasse{i}"
+        places.append(_scored(f"p{i}", rng.uniform(0.3, 0.9), 48.2 + rng.uniform(-0.1, 0.1), 16.37 + rng.uniform(-0.15, 0.15), name=name))
+    ranked = sorted(places, key=unusual_sort_key)
+    t0 = time.process_time()
+    out = diversify_by_site(ranked)
+    assert time.process_time() - t0 < 0.8
+    assert sorted(p.id for p in out) == sorted(p.id for p in ranked)
+
+
+class TestScoringJudgementPass4:
+    @pytest.mark.parametrize("tags", [
+        {"historic": "castle", "castle_type": "stately", "name": "Schloss Herrenhaus"},
+        {"historic": "castle", "castle_type": "manor", "name": "Manor House"},
+        {"historic": "castle", "tourism": "hotel", "name": "Hotel Castle Bellevue"},
+        {"historic": "castle", "amenity": "restaurant", "name": "Burgschenke"},
+    ])
+    def test_a_mansion_or_a_hotel_is_not_a_historic_fortification(self, tags):
+        assert "historic fortification" not in score_place(osm_place(tags)).reasons
+
+    @pytest.mark.parametrize("tags", [
+        {"historic": "castle", "castle_type": "defensive", "name": "Burg Hohenwerfen"},
+        {"historic": "fort", "name": "Fort Mamula"},
+        {"historic": "castle", "name": "Kula"},
+    ])
+    def test_real_fortifications_still_are(self, tags):
+        assert "historic fortification" in score_place(osm_place(tags)).reasons
+
+    def test_a_heritage_listed_chimney_is_not_still_in_operation(self):
+        result = score_place(osm_place({"man_made": "chimney", "name": "Dimnjak", "heritage": "2", "start_date": "1890"}))
+        assert "still in operation" not in result.penalties
+        assert "industrial heritage" in result.reasons

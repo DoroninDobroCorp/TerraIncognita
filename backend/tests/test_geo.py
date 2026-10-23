@@ -44,3 +44,30 @@ class TestBoundingBox:
         south, west, north, east = bounding_box(0.0, 0.0, 1.0)
         assert south < 0 < north
         assert west < 0 < east
+
+
+class TestBoundingBoxStaysOnTheGlobe:
+    """Wikidata answered HTTP 500 for any box beyond +-180 / +-90, so a search near the antimeridian or a pole failed every time."""
+
+    @pytest.mark.parametrize(("lat", "lng", "radius"), [
+        (-16.85, 179.98, 10.0), (65.6, -179.99, 50.0), (-90.0, 0.0, 5.0), (89.99, 0.0, 50.0), (90.0, 180.0, 50.0), (0.0, -180.0, 50.0),
+    ])
+    def test_the_box_is_valid(self, lat, lng, radius):
+        south, west, north, east = bounding_box(lat, lng, radius)
+        assert -90 <= south < north <= 90
+        assert -180 <= west < east <= 180
+
+    def test_a_box_that_fits_is_not_changed(self):
+        south, west, north, east = bounding_box(42.0, 18.0, 10.0)
+        assert (north - south) == pytest.approx(2 * 10.0 / 111.19, rel=0.01)
+        assert west < 18.0 < east
+
+    def test_the_wikidata_query_is_valid_near_the_antimeridian(self):
+        from app.sources import wikidata as wd
+
+        south, west, north, east = bounding_box(-16.85, 179.98, 10.0)
+        query = wd._SPARQL_TEMPLATE.format(
+            south=south, west=west, north=north, east=east, type_values="wd:Q1",
+            common_values="wd:Q2", limit=10,
+        )
+        assert "Point(180.0" in query or "Point(180 " in query  # the east corner is the 180th meridian, not 180.07

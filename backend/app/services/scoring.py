@@ -63,7 +63,12 @@ CATEGORY_WEIGHTS: dict[PlaceCategory, float] = {
     C.HOTEL_NOTABLE: 0.06,
 }
 DEFAULT_BASE = 0.12  # nothing is known about what it is
-_MAX_NAMESAKE_TOKEN_FREQUENCY = 300  # a name word used by more places than this is an area word (the search stays linear)
+# A name word used by more places than this is an area word ("Villa", "Denkmal", a street): fuzzy name matching ignores it,
+# which keeps the search near-linear (every fuzzy comparison costs a SequenceMatcher).
+_MAX_NAMESAKE_TOKEN_FREQUENCY = 60
+# ...but a *whole name* shared by this many places or fewer is one site however common its words are: the 200 ways of
+# one abandoned railway. Found by exact lookup, so it costs nothing per comparison.
+_MAX_SAME_NAME_FREQUENCY = 300
 _SITE_NAMESAKE_RADIUS_M = 5_000.0  # same-named entries this close are parts of one site
 _REASON_MIN_WEIGHT = 0.40  # categories rarer than this are explained to the user
 
@@ -155,9 +160,19 @@ class Penalty:
 _WORKING_INDUSTRY_FEATURES = frozenset({"man_made=water_tower", "man_made=silo", "man_made=chimney"})
 
 
+def _is_residence_or_hotel(c: _Ctx) -> bool:
+    """`castle_type=stately|manor|palace` (a mansion) or a "castle" that is a hotel, restaurant or museum:
+    not a fortification worth the trip for being one."""
+    return (
+        c.tags.get("castle_type") in {"stately", "manor", "palace"}
+        or c.tags.get("tourism") in {"hotel", "hostel", "motel", "guest_house", "apartment", "museum", "gallery"}
+        or c.tags.get("amenity") in {"restaurant", "cafe", "bar", "pub"}
+    )
+
+
 def _is_operating_industry(c: _Ctx) -> bool:
-    """Industrial and in use: no abandonment/ruin state, no `historic=*`, not a craft relic."""
-    if C.INDUSTRIAL not in c.cats or (c.info and c.info.lifecycles) or c.tags.get("historic"):
+    """Industrial and in use: no abandonment/ruin state, no `historic=*`/`heritage=*`, not a craft relic."""
+    if C.INDUSTRIAL not in c.cats or (c.info and c.info.lifecycles) or c.tags.get("historic") or c.tags.get("heritage"):
         return False
     if PlaceSource.ATLAS_OBSCURA in c.sources:
         return False
@@ -201,7 +216,7 @@ SIGNALS: tuple[Signal, ...] = (
     # a *named* fort or castle is a place worth the trip: without this, ~35 anonymous derelict houses
     # (same abandonment bonus, no history) outranked Fort Mamula on real data
     Signal("historic fortification", 0.10,
-           lambda c: c.named and c.has_feature(_FORT_FEATURES), priority=26),
+           lambda c: c.named and c.has_feature(_FORT_FEATURES) and not _is_residence_or_hotel(c), priority=26),
     Signal("industrial heritage", 0.08,
            lambda c: c.has_feature(_INDUSTRY_FEATURES) and not _is_operating_industry(c), priority=50),
     Signal(None, 0.04, lambda c: "bunker_type" in c.tags),
@@ -463,8 +478,12 @@ def diversify_by_site(
         frozenset(t for t in tokens if document_frequency[t] <= _MAX_NAMESAKE_TOKEN_FREQUENCY)
         for tokens in all_tokens
     ]
+    same_name = [
+        frozenset(t for t in tokens if document_frequency[t] <= _MAX_SAME_NAME_FREQUENCY) for tokens in all_tokens
+    ]
     grid: dict[tuple[int, int], list[int]] = {}
     by_token: dict[str, list[int]] = {}  # distinctive name token → selected places carrying it
+    by_name: dict[frozenset[str], list[int]] = {}  # the whole distinctive name → selected places bearing it
 
     def close(i: int, j: int, limit: float) -> bool:
         return math.hypot(xs[i] - xs[j], ys[i] - ys[j]) <= limit
@@ -482,6 +501,8 @@ def diversify_by_site(
             if close(i, j, chain_radius_m)
             and names.token_similarity(name_tokens[i], name_tokens[j]) >= names.STRONG_MATCH
         }
+        if same_name[i]:
+            namesakes |= {j for j in by_name.get(same_name[i], ()) if j not in near and close(i, j, chain_radius_m)}
         return len(near), len(namesakes)
 
     def effective(i: int, crowd: tuple[int, int]) -> float:
@@ -506,4 +527,6 @@ def diversify_by_site(
         grid.setdefault(cell_of(i), []).append(i)
         for token in name_tokens[i]:
             by_token.setdefault(token, []).append(i)
+        if same_name[i]:
+            by_name.setdefault(same_name[i], []).append(i)
     return out

@@ -316,3 +316,26 @@ class TestTypeRowsAndTruncation:
 def test_the_timeout_leaves_room_for_a_dense_city_centre():
     """Measured against the live service: Vienna (10 km) 7-17 s, Paris (20 km) 29 s; it cuts queries off at 60 s."""
     assert 45 <= settings.wikidata_timeout <= 60
+
+
+class TestRowOrderDoesNotMatter:
+    def test_categories_order_and_type_are_the_same_for_every_row_order(self):
+        import itertools
+
+        types = ["Q109607", "Q35509", "Q839954"]  # ruins, cave, archaeological site
+        outcomes = set()
+        for order in itertools.permutations(types):
+            rows = [_row("Q1", "Kula", t) for t in order]
+            [place] = WikidataSource()._parse_results({"results": {"bindings": rows}})
+            outcomes.add((tuple(c.value for c in place.categories), place.metadata["type_qid"], place.name))
+        assert len(outcomes) == 1, outcomes
+
+    def test_the_smallest_type_id_is_reported(self):
+        rows = [_row("Q1", "Kula", "Q35509"), _row("Q1", "Kula", "Q109607")]
+        [place] = WikidataSource()._parse_results({"results": {"bindings": rows}})
+        assert place.metadata["type_qid"] == min("Q35509", "Q109607")
+
+    def test_an_unlabelled_item_gets_the_same_generated_name_whatever_the_order(self):
+        rows = [_row("Q9", "Q9", "Q109607"), _row("Q9", "Q9", "Q35509")]
+        names = {WikidataSource()._parse_results({"results": {"bindings": r}})[0].name for r in (rows, rows[::-1])}
+        assert len(names) == 1

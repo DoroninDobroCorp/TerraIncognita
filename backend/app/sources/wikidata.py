@@ -159,30 +159,29 @@ class WikidataSource(BaseSource):
         return self._parse_results(data), rows < _QUERY_LIMIT
 
     def _parse_results(self, data: dict) -> list[Place]:
-        by_qid: dict[str, Place] = {}
-        places: list[Place] = []
-
+        # One row per (item, type): gather every type of an item first. Row order is not stable, so the
+        # result must depend on the *set* of types only (category order and `type_qid` included).
+        first: dict[str, tuple[dict, float, float]] = {}
+        types: dict[str, set[str]] = {}
         for binding in data.get("results", {}).get("bindings", []):
-            item_uri = binding.get("item", {}).get("value", "")
-            qid = item_uri.rsplit("/", 1)[-1]
-            if qid in by_qid:
-                # another type row of an item we already have: its categories join the first row's
-                # (SPARQL row order is not stable, so "first row wins" would be arbitrary)
-                known = by_qid[qid]
-                type_qid = binding.get("type", {}).get("value", "").rsplit("/", 1)[-1]
-                for cat in _TYPE_MAP.get(type_qid, ()):
-                    if cat not in known.categories:
-                        known.categories.append(cat)
+            qid = binding.get("item", {}).get("value", "").rsplit("/", 1)[-1]
+            type_qid = binding.get("type", {}).get("value", "").rsplit("/", 1)[-1]
+            if qid in first:
+                types[qid].add(type_qid)
                 continue
-
-            coord_str = binding.get("coord", {}).get("value", "")
-            lat, lng = self._parse_point(coord_str)
+            lat, lng = self._parse_point(binding.get("coord", {}).get("value", ""))
             if lat is None:
                 continue
+            first[qid] = (binding, lat, lng)
+            types[qid] = {type_qid}
 
-            type_uri = binding.get("type", {}).get("value", "")
-            type_qid = type_uri.rsplit("/", 1)[-1]
-            categories = _TYPE_MAP.get(type_qid, [PlaceCategory.LANDMARK])
+        places: list[Place] = []
+        for qid, (binding, lat, lng) in first.items():
+            type_qids = sorted(types[qid])
+            categories: list[PlaceCategory] = []
+            for type_qid in type_qids:
+                categories.extend(c for c in _TYPE_MAP.get(type_qid, ()) if c not in categories)
+            categories = categories or [PlaceCategory.LANDMARK]
 
             name = binding.get("itemLabel", {}).get("value")
             description = binding.get("itemDescription", {}).get("value")
@@ -198,7 +197,7 @@ class WikidataSource(BaseSource):
             if name_generated:
                 name = _generated_name(description, categories)
 
-            place = (
+            places.append(
                 Place(
                     id=f"wiki_{qid}",
                     source=PlaceSource.WIKIDATA,
@@ -211,15 +210,13 @@ class WikidataSource(BaseSource):
                     metadata={
                         "wikidata_id": qid,
                         "wikipedia_url": wiki_url,
-                        "type_qid": type_qid,
+                        "type_qid": type_qids[0],
                         **({"name_generated": True} if name_generated else {}),
                         # How many Wikipedia language editions cover it: a mainstream-ness signal.
                         **({"sitelinks": sitelinks} if sitelinks is not None else {}),
                     },
                 )
             )
-            by_qid[qid] = place
-            places.append(place)
         return places
 
     @staticmethod

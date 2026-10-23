@@ -111,3 +111,33 @@ def test_tokens_do_not_shred_scripts_with_combining_marks(raw, words):
     out = tokens(raw)
     assert len(out) == words
     assert all(len(t) > 1 for t in out if not t.isdigit())
+
+
+def test_the_same_text_folds_alike_composed_or_decomposed():
+    import unicodedata
+
+    for raw in ("Йосип", "Київ Їжак", "Ёлка", "Škoda Čačak", "Ѓуро Ќосе"):
+        assert fold(unicodedata.normalize("NFC", raw)) == fold(unicodedata.normalize("NFD", raw)), raw
+
+
+def test_macedonian_letters_are_transliterated_not_left_in_cyrillic():
+    assert fold("Ѓорѓи") == "gjorgji"
+    assert name_similarity("Ѓуро", "Gjuro") == 1.0
+    assert not any("\u0400" <= ch <= "\u04ff" for ch in fold("Ѓорѓи Ќосе Ѕвезда"))
+
+
+def test_fold_is_idempotent():
+    for raw in ("Мост Ѓорѓи", "Київ", "Straße", "Ünïcödé", "Łódź", "ශ්\u200dරී ලංකා", "Fort Mamula"):
+        assert fold(fold(raw)) == fold(raw), raw
+
+
+def test_joiners_do_not_split_a_word():
+    out = tokens("ශ්\u200dරී ලංකා")
+    assert len(out) == 2 and all(len(t) > 1 for t in out)
+    assert tokens("\u200dAbc") == ["abc"] and tokens("Abc\u200d") == ["abc"]
+
+
+def test_cyrillic_letters_that_only_exist_as_base_plus_accent_are_transliterated():
+    """Decomposition frees the base letter ("ѐ" is "е" + grave); it must be transliterated after the accent is dropped."""
+    assert fold("Ѐ") == "e" and fold("ӣ") == "i"
+    assert not any("Ѐ" <= ch <= "ӿ" for ch in fold("ѐӣӑӓё"))

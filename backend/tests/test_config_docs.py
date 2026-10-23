@@ -162,3 +162,43 @@ def test_default_radii_never_exceed_a_lowered_max_radius(tmp_path):
     radii = json.loads(out.stdout.strip().splitlines()[-1])
     assert set(radii) == {"chat", "recommend", "explore", "discover"}
     assert all(0 < r <= 3 for r in radii.values()), radii
+
+
+def test_default_limit_never_exceeds_a_lowered_max_limit(tmp_path):
+    """A schema default of 50 with TERRA_MAX_LIMIT=20 answered 200 for a request that omitted `limit`, 422 for limit=30."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import json;"
+        "from app.models.place import DiscoverRequest;"
+        "print(json.dumps({'default': DiscoverRequest(lat=1, lng=1).limit}))"
+    )
+    env = {**os.environ, **_sandbox(tmp_path), "TERRA_MAX_LIMIT": "20", "PYTHONPATH": str(ROOT / "backend")}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env,
+                         cwd=ROOT / "backend", timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout.strip().splitlines()[-1])["default"] == 20
+
+
+async def test_chat_asks_discovery_for_no_more_than_max_limit(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.config import settings
+    from app.models.chat import ChatRequest
+    from app.models.place import DiscoverResponse
+    from app.services import llm_discovery
+
+    monkeypatch.setattr(settings, "max_limit", 5)
+    seen = []
+
+    async def fake_discover(req):
+        seen.append(req.limit)
+        return DiscoverResponse(places=[], total=0, has_more=False)
+
+    monkeypatch.setattr(llm_discovery, "discover", fake_discover)
+    monkeypatch.setattr(llm_discovery, "chat_completion", AsyncMock(side_effect=ValueError("no key")))
+    await llm_discovery.process_chat(ChatRequest(message="caves", lat=42.4, lng=18.5))
+    assert seen == [5]

@@ -11,6 +11,7 @@ import logging
 import re
 import uuid
 
+from app.config import settings
 from app.models.chat import ChatRequest, ChatResponse, ParsedIntent
 from app.models.place import DiscoverRequest, Place, PlaceCategory
 from app.services.discovery import discover
@@ -136,7 +137,7 @@ async def process_chat(req: ChatRequest) -> ChatResponse:
         lng=req.lng,
         radius_km=req.radius_km,
         categories=intent.categories,
-        limit=10,
+        limit=min(10, settings.max_limit),
         sort_by="confidence",
     )
     result = await discover(discover_req)

@@ -285,7 +285,7 @@ How a search turns raw map data into "3 genuinely unusual places nearby":
    two places. Merging keeps all photos, tags, sources, categories, deep-merged metadata,
    `merged_ids` / `alt_names`, and the highest unusual score.
 4. **Scoring** (`services/scoring.py`): every place gets `unusual_score` (0..1) and
-   `unusual_reasons` (e.g. `["military bunker", "abandoned", "no Wikipedia article — off the
+   `unusual_reasons` (e.g. `["military bunker", "abandoned", "not linked to Wikipedia — likely off the
    tourist path"]`). Deterministic and rule-based: category rarity, Atlas Obscura listing, OSM
    lifecycle/bunker/mine/cave tags, age, restricted access, a small data-richness bonus; penalties
    for famous (Wikipedia language editions via Wikidata `sitelinks`), ticketed, museum,

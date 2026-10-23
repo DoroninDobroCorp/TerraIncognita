@@ -23,6 +23,7 @@ _CYRILLIC = {
     "л": "l", "љ": "lj", "м": "m", "н": "n", "њ": "nj", "о": "o", "п": "p", "р": "r", "с": "s",
     "т": "t", "ћ": "c", "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "џ": "dz", "ш": "sh",
     "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya", "ѝ": "i", "ў": "u",
+    "ѓ": "gj", "ќ": "kj", "ѕ": "dz",
 }
 _LATIN_SPECIAL = {"đ": "dj", "ł": "l", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe", "ı": "i", "ð": "d",
                   "þ": "th"}
@@ -50,18 +51,20 @@ kasarna military vojni vojna object objekat entrance shaft
 """.split())
 
 
+def _transliterate(text: str) -> str:
+    return "".join(_CYRILLIC[ch] if ch in _CYRILLIC else _LATIN_SPECIAL.get(ch, ch) for ch in text)
+
+
 def fold(text: str) -> str:
-    """Lower-case, strip accents, transliterate Cyrillic to ASCII."""
-    out: list[str] = []
-    for ch in text.lower():
-        if ch in _CYRILLIC:
-            out.append(_CYRILLIC[ch])
-        elif ch in _LATIN_SPECIAL:
-            out.append(_LATIN_SPECIAL[ch])
-        else:
-            out.append(ch)
-    decomposed = unicodedata.normalize("NFKD", "".join(out))
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
+    """Lower-case, strip accents, transliterate Cyrillic to ASCII.
+
+    Composed first (the same text typed composed or decomposed folds alike: "й" is one letter, not "и" plus
+    a mark), transliterated, decomposed to drop accents, and transliterated once more for the base letters
+    that decomposition frees (Macedonian "ѓ" is "г" plus an accent).
+    """
+    composed = unicodedata.normalize("NFC", text).lower()
+    decomposed = unicodedata.normalize("NFKD", _transliterate(composed))
+    return _transliterate("".join(c for c in decomposed if not unicodedata.combining(c)))
 
 
 def tokens(name: str | None) -> list[str]:
@@ -73,6 +76,8 @@ def tokens(name: str | None) -> list[str]:
     out: list[str] = []
     word: list[str] = []
     for ch in fold(name):
+        if ch in "\u200c\u200d" and word:
+            continue  # joiners sit inside a word (Sinhala "ශ්\u200dරී", Malayalam chillus): they do not end it
         if ch.isalnum() or unicodedata.category(ch).startswith("M"):
             word.append(ch)
         elif word:
