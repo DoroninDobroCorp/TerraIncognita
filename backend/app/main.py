@@ -14,15 +14,21 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.chat import router as chat_router
 from app.api.community import router as community_router
+from app.api.daily import router as daily_router
 from app.api.descriptions import router as descriptions_router
 from app.api.discover import router as discover_router
 from app.api.gamification import router as gamification_router
 from app.api.journal import router as journal_router
+from app.api.loop_route import router as loop_route_router
 from app.api.map_config import router as map_config_router
 from app.api.offline import router as offline_router
+from app.api.place_ask import router as place_ask_router
+from app.api.place_collections import router as place_collections_router
 from app.api.recommendations import router as recommendations_router
 from app.api.routes import router as routes_router
 from app.api.storytelling import router as storytelling_router
+from app.api.streak import router as streak_router
+from app.api.walk_report import router as walk_report_router
 from app.config import settings
 from app.middleware import (
     RateLimitMiddleware,
@@ -89,6 +95,12 @@ app.include_router(recommendations_router)
 app.include_router(storytelling_router)
 app.include_router(offline_router)
 app.include_router(community_router)
+app.include_router(daily_router)
+app.include_router(loop_route_router)
+app.include_router(place_ask_router)
+app.include_router(place_collections_router)
+app.include_router(streak_router)
+app.include_router(walk_report_router)
 
 # Serve map static files (explorer.html, etc.)
 _project_root = Path(__file__).resolve().parent.parent.parent

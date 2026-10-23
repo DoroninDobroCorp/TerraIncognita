@@ -41,17 +41,18 @@ class RateRule:
 
 
 _POST = frozenset({"POST"})
+_GET = frozenset({"GET"})
 
 # First matching rule wins.
 RATE_RULES: tuple[RateRule, ...] = (
     RateRule(
         "LLM", limit=30, methods=_POST,
         exact=frozenset({"/api/chat", "/api/describe", "/api/recommend", "/api/story",
-                         "/api/story/route"}),
+                         "/api/story/route", "/api/story/walk", "/api/place/ask"}),
     ),
     RateRule(
         "discovery", limit=60, methods=_POST,
-        exact=frozenset({"/api/discover", "/api/route", "/api/route/explore"}),
+        exact=frozenset({"/api/discover", "/api/route", "/api/route/explore", "/api/route/loop"}),
     ),
     RateRule("journal", limit=120, prefixes=("/api/visits", "/api/trips")),
     RateRule(
@@ -60,6 +61,10 @@ RATE_RULES: tuple[RateRule, ...] = (
     ),
     RateRule("offline", limit=30, methods=_POST, prefixes=("/api/offline/",)),
     RateRule("community", limit=60, prefixes=("/api/community/",)),
+    RateRule(
+        "daily", limit=30, methods=_GET,
+        exact=frozenset({"/api/daily"}), prefixes=("/api/collections",),
+    ),
 )
 
 
