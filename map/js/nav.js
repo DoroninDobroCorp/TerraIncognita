@@ -140,6 +140,7 @@ function stopGpsTracking() {
 
 // Stop polling the GPS (the biggest battery drain) while the page is hidden; resume on return.
 document.addEventListener('visibilitychange', () => {
+  document.body.classList.toggle('page-hidden', document.hidden);
   if (document.hidden) endGpsWatch(); else beginGpsWatch();
 });
 

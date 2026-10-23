@@ -8,7 +8,7 @@ const EXPLORE_CATS = ['abandoned','ruins','nature_hidden','viewpoint','undergrou
 function categoryChipsHtml(keys = EXPLORE_CATS) {
   return html`${keys.filter(k => CATEGORIES[k]).map(k => { const d = catDef(k); return html`<div class="chip active" data-action="toggle-simple-chip" data-cat="${k}" role="checkbox" aria-checked="true" tabindex="0"><span class="chip-icon">${d.icon}</span>${d.label}</div>`; })}`;
 }
-function buildExploreCats() { setHtml($('explore-cats'), categoryChipsHtml()); }
+function buildExploreCats() { setHtml($('explore-cats'), categoryChipsHtml()); setHtml($('loop-cats'), categoryChipsHtml()); }
 function selectedCats(containerId) { return $$(`#${containerId} .chip.active`).map(c => c.dataset.cat); }
 
 // ── Build / explore ──
@@ -21,7 +21,7 @@ async function buildRoute() {
   analytics.track('route_build', { mode: $('route-mode').value });
   try {
     const data = await api('/api/route',{method:'POST',body:{origin:from,destination:to,max_duration_hours:clamp(parseFloat($('route-time').value)||2,0.5,24),transport_mode:$('route-mode').value}});
-    setCurrentRoute(data.route || data);
+    setCurrentRoute(data.route || data, { summary: data.summary });
     toast('Route built!','success');
   } catch(e) { toast('Route building failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
@@ -34,23 +34,54 @@ async function exploreRoute() {
   analytics.track('route_explore');
   try {
     const data = await api('/api/route/explore',{method:'POST',body:{origin:center,max_duration_hours:clamp(parseFloat($('explore-time').value)||2,0.5,8),categories:selectedCats('explore-cats'),transport_mode:'walking'}});
-    setCurrentRoute(data.route || data);
+    setCurrentRoute(data.route || data, { summary: data.summary });
     toast('Circular walk generated!','success');
   } catch(e) { toast('Generation failed: '+(e.message||'check connection'),'error'); } finally { btn.disabled=false; }
 }
 
-// ── Result card (shared by every route builder) ──
-/** Make `route` the current one: show it in the panel and draw it on the map. */
-function setCurrentRoute(route) {
-  state.currentRoute = route;
-  if (showRouteResult(route)) drawRouteOnMap(route);
+// ── Loop route (POST /api/route/loop): same RouteResponse as the other builders ──
+function loopMode() { const b = $('loop-mode').querySelector('[aria-checked="true"]'); return b ? b.dataset.mode : 'walking'; }
+function setLoopMode(mode) {
+  $$('#loop-mode [role="radio"]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.mode === mode)));
+}
+async function buildLoop() {
+  const center = parseCoords($('loop-center').value);
+  if (!center) { toast('Enter a valid start point as "lat, lng" (or tap 📍 on the map first)','warning'); return; }
+  const btn = $('route-loop-btn'); btn.disabled = true;
+  toast('Building your loop...','info');
+  analytics.track('route_loop', { mode: loopMode() });
+  try {
+    const data = await api('/api/route/loop', { method: 'POST', retries: 0, timeout: 30000, body: {
+      lat: center.lat, lng: center.lng,
+      duration_hours: clamp(parseFloat($('loop-hours').value) || 2, 0.5, 12),
+      mode: loopMode(),
+      categories: selectedCats('loop-cats'),
+      max_stops: clamp(parseInt($('loop-stops').value) || 5, 2, 8),
+    } });
+    setCurrentRoute(data.route || data, { label: '🔁 Loop route', summary: data.summary });
+    toast('Loop ready!','success');
+  } catch (e) {
+    if (featureUnavailable('loop', e)) { toast('This server cannot build loop routes yet','warning'); selectTab($('tab-r-build')); }
+    else toast('Loop failed: ' + (e.message || 'check connection'), 'error');
+  } finally { btn.disabled = false; }
 }
 
-function showRouteResult(route) {
+// ── Result card (shared by every route builder) ──
+/** Make `route` the current one: show it in the panel and draw it on the map. */
+function setCurrentRoute(route, opts = {}) {
+  state.currentRoute = route;
+  if (showRouteResult(route, opts)) drawRouteOnMap(route);
+}
+
+function showRouteResult(route, { label = null, summary = null } = {}) {
   if (!route || !route.total_distance_m) { toast('Invalid route data','error'); return false; }
   $('route-result').hidden = false;
-  $('route-title').textContent = route.is_circular?'🔄 Circular Walk':'🛤️ Route';
-  $('route-meta').textContent = `${((route.total_distance_m||0)/1000).toFixed(1)} km · ${Math.round((route.total_duration_s||0)/60)} min · ${route.places_count||route.waypoints?.length||0} places`;
+  $('route-title').textContent = label || (route.is_circular?'🔄 Circular Walk':'🛤️ Route');
+  const modeIcon = { walking: '🚶', cycling: '🚲', driving: '🚗' }[route.transport_mode] || '';
+  $('route-meta').textContent = `${modeIcon ? modeIcon + ' ' : ''}${((route.total_distance_m||0)/1000).toFixed(1)} km · ${Math.round((route.total_duration_s||0)/60)} min · ${route.places_count||route.waypoints?.length||0} places`;
+  const sum = $('route-summary');
+  sum.textContent = typeof summary === 'string' ? summary : '';
+  sum.hidden = !sum.textContent;
   const wps = route.waypoints||[];
   setHtml($('route-waypoints'), wps.length ? html`${wps.map((w,i) => html`
     <div class="list-item list-item-compact">
@@ -169,6 +200,8 @@ TI.tabHooks['r:saved'] = () => renderSavedRoutes();
 registerActions({
   'route-build': () => buildRoute(),
   'route-explore': () => exploreRoute(),
+  'route-loop': () => buildLoop(),
+  'loop-mode': (el) => setLoopMode(el.dataset.mode),
   'route-export': (el) => exportRoute(el.dataset.fmt),
   'route-story': () => getRouteStory(),
   'route-save': () => saveRouteLocal(),

@@ -22,6 +22,7 @@ function initMap(onReady) {
   try {
     map = new maplibregl.Map({ container:'map', style:buildStyle(), center:[state.userLng,state.userLat], zoom:13, maxZoom:19, minZoom:3, dragRotate:false });
     mapAvailable = true;
+    if (state.lowPower && typeof map.setPixelRatio === 'function') map.setPixelRatio(1);
     map.addControl(new maplibregl.NavigationControl({showCompass:true,showZoom:true}), 'bottom-right');
     map.once('style.load', () => {
       mapStyleReady = true;
@@ -88,7 +89,7 @@ function setBaseLayer(key) {
   applyBaseLayerState();
 }
 
-function isInFog(place) { return state.fogEnabled && !state.visitedPlaces.has(place.id); }
+function isInFog(place) { return state.fogEnabled && !state.visitedPlaces.has(place.id) && !state.revealedIds.has(place.id); }
 function beforePlaceLayers() { return map.getLayer('place-clusters') ? 'place-clusters' : undefined; }
 
 // ── Place markers ──

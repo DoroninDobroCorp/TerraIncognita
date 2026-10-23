@@ -14,7 +14,7 @@
  */
 'use strict';
 
-const SHELL_VERSION = 'v1';
+const SHELL_VERSION = 'v3';
 const SHELL_CACHE = `ti-shell-${SHELL_VERSION}`;
 const STATIC_CACHE = `ti-static-${SHELL_VERSION}`;
 const API_CACHE = `ti-api-${SHELL_VERSION}`;
@@ -35,11 +35,17 @@ const SHELL_FILES = [
   'js/actions.js',
   'js/ui.js',
   'js/help.js',
+  'js/settings.js',
+  'js/theme-init.js',
   'js/api.js',
   'js/map.js',
   'js/nav.js',
   'js/places.js',
+  'js/place-extras.js',
+  'js/daily.js',
+  'js/heatmap.js',
   'js/chat.js',
+  'js/voice.js',
   'js/journal.js',
   'js/routes.js',
   'js/profile.js',

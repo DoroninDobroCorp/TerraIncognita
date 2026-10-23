@@ -161,7 +161,7 @@ async function loadStats() {
       </div>
       ${streak?html`<div class="card mb-14"><div class="card-title">🔥 Streak</div><div class="stat-value mt-4">${num(streak.current_streak)} days</div><div class="stat-label">Longest: ${num(streak.longest_streak)} days</div></div>`:''}
       ${cats.length?html`<div class="card"><div class="card-title">🏷️ Top Categories</div>${cats.map(c => html`<div class="row-between mt-6"><span class="text-small">${(CATEGORIES[c.category]||{icon:'📍'}).icon} ${c.category}</span><span class="text-small text-accent bold">${num(c.count)}</span></div>`)}</div>`:''}
-      <div class="card mt-14"><div class="card-title">🗺️ Activity Heatmap</div><div class="text-small text-secondary mt-4">${heatmap.points?.length||0} data points</div></div>
+      <div class="card mt-14"><div class="card-title">🗺️ Activity Heatmap</div><div class="text-small text-secondary mt-4">${heatmap.points?.length||0} data points</div>${heatmap.points?.length ? html`<button class="btn btn-secondary btn-sm mt-8" data-action="show-heatmap">🔥 Show on map</button>` : ''}</div>
     `);
   } catch { setHtml(c, errorStateHtml('📊', 'Could not load stats.', 'load-stats')); }
 }

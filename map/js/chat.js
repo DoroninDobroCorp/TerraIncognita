@@ -70,6 +70,3 @@ registerActions({
   'chat-place': (el) => chatPlaceClick(el.dataset.id),
 });
 registerEnter({ 'chat-input': () => sendChatFromInput() });
-
-// Placeholder until the voice module (voice.js) is loaded.
-function speakReply() {}

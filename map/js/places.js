@@ -17,7 +17,7 @@ function discoverBody() {
   return {
     lat:state.userLat, lng:state.userLng, radius_km:state.radius,
     categories:[...state.activeCategories], exclude_visited:state.hideVisited?[...state.visitedPlaces]:[],
-    limit:200, sort_by:'confidence'
+    limit:200, sort_by: features.unusual === false ? 'confidence' : 'unusual' // newest backends rank by unusualness
   };
 }
 
@@ -50,9 +50,17 @@ async function fetchPlaces() {
   showMapLoading(true);
   try {
     if (!TI.net.ok) throw new Error('offline');
-    const data = await api('/api/discover', {method:'POST', body: discoverBody()});
+    let data;
+    try {
+      data = await api('/api/discover', {method:'POST', body: discoverBody()});
+    } catch (e) {
+      if (e.status !== 422 || features.unusual === false || !String(e.message).includes('sort_by')) throw e;
+      features.unusual = false; // older backend: sort_by "unusual" is not accepted, fall back for good
+      data = await api('/api/discover', {method:'POST', body: discoverBody()});
+    }
     state.places = data.places || []; applyFilters();
     saveLastPlaces(state.places);
+    loadDaily();
   } catch(e) { showFallbackPlaces(); }
   showMapLoading(false);
   fetchBusy = false;
@@ -90,7 +98,7 @@ function showPlaceCard(placeId) {
   const place = state.places.find(p=>p.id===placeId); if(!place)return;
   state.selectedPlace = place;
   const cats = place.categories||[];
-  setHtml($('card-categories'), html`${cats.map(c => { const d = catDef(c); return html`<span class="card-category" style="background:${d.color}">${d.icon} ${d.label}</span>`; })}`);
+  setHtml($('card-categories'), html`${cats.map(c => { const d = catDef(c); return html`<span class="card-category" style="background:${d.color};color:${contrastText(d.color)}">${d.icon} ${d.label}</span>`; })}`);
   const inFog = isInFog(place);
   $('card-name').textContent = inFog?'❓ Mystery Place':(place.name||'Unknown');
   $('card-meta').textContent = `📡 ${SOURCE_NAMES[place.source]||place.source}${place.distance_m?' · 📏 '+(place.distance_m/1000).toFixed(1)+' km':''}`;
@@ -98,6 +106,7 @@ function showPlaceCard(placeId) {
   const conf=place.confidence||0.5, fill=$('card-conf-fill');
   fill.style.width=(conf*100)+'%'; fill.style.background=conf>0.7?'#2ecc71':conf>0.4?'#f39c12':'#e74c3c';
   updateSaveButton();
+  renderPlaceExtras(place, inFog);
   $('place-card').classList.add('visible');
 }
 function updateSaveButton() {
@@ -128,6 +137,7 @@ async function checkInSelectedPlace() {
   try {
     await api('/api/visits',{method:'POST',body:{place_id:p.id,lat:p.coordinates.lat,lng:p.coordinates.lng,place_name:p.name,status:'visited'}});
     markVisited(); toast('✅ Checked in at '+p.name,'success');
+    refreshHeatmap(); loadStreak();
   } catch { toast('Check-in failed — saved locally','warning'); markVisited(); }
 }
 

@@ -69,6 +69,7 @@ const state = {
   currentPreset: 'all', selectedPlace: null, currentRoute: null,
   pinMode: false,
   lowPower: false,
+  revealedIds: new Set(), // places shown despite fog this session (e.g. the place of the day)
 };
 
 // Base map layers. All three raster layers live in ONE style; switching just flips visibility,

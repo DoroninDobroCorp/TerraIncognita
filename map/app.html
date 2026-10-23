@@ -5,6 +5,7 @@
   <title>Terra Incognita</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Terra Incognita — discover hidden and unusual places around you">
+  <script src="js/theme-init.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"
           integrity="sha256-G0W6/JRzbzxZYK5MP4SRlKnxYFr7F8kmnF0ZT1fnlxk="
           crossorigin="anonymous"></script>
@@ -32,10 +33,11 @@
   <button class="nav-btn" aria-label="Journal" data-action="show-section" data-section="journal" title="Journal">📓<span class="nav-tooltip">Journal</span></button>
   <button class="nav-btn" aria-label="Routes" data-action="show-section" data-section="routes" title="Routes">🛤️<span class="nav-tooltip">Routes</span></button>
   <div class="nav-divider"></div>
-  <button class="nav-btn" aria-label="Achievements" data-action="show-section" data-section="gamification" title="Gamification">🏆<span class="nav-tooltip">Achievements</span></button>
+  <button class="nav-btn" aria-label="Achievements" data-action="show-section" data-section="gamification" title="Gamification">🏆<span class="nav-badge" id="nav-streak" hidden></span><span class="nav-tooltip">Achievements</span></button>
   <button class="nav-btn" aria-label="Community" data-action="show-section" data-section="community" title="Community">👥<span class="nav-tooltip">Community</span></button>
   <button class="nav-btn" aria-label="Offline" data-action="show-section" data-section="offline" title="Offline">📴<span class="nav-tooltip">Offline</span></button>
   <div class="nav-spacer"></div>
+  <button class="nav-btn" aria-label="Settings" data-action="open-settings" title="Settings">⚙️<span class="nav-tooltip">Settings</span></button>
   <div class="nav-btn nav-status" id="nav-status" role="status" aria-label="API status" title="API Status">🟢<span class="nav-tooltip">Connected</span></div>
 </nav>
 
@@ -56,13 +58,24 @@
     <button class="ctrl-btn" id="btn-pin" aria-pressed="false" title="Set location on map" aria-label="Set custom search point on map" data-action="toggle-pin">📌</button>
     <button class="ctrl-btn active" id="btn-fog" aria-pressed="true" title="Fog of War" aria-label="Toggle fog of war" data-action="toggle-fog">🌫️</button>
     <button class="ctrl-btn" id="btn-refresh" title="Refresh" aria-label="Refresh places" data-action="refresh" data-needs-network>🔄</button>
+    <button class="ctrl-btn" id="btn-heatmap" aria-pressed="false" title="Life heatmap: where you have been" aria-label="Toggle life heatmap" data-action="toggle-heatmap">🔥</button>
+    <button class="ctrl-btn" id="btn-theme" title="Switch theme (light / dark / sun)" aria-label="Switch colour theme" data-action="cycle-theme">🌗</button>
     <button class="ctrl-btn help-btn" title="Help" aria-label="Help" data-action="help" data-topic="map">?</button>
   </div>
   <div id="search-bar">
     <label for="search-input" class="sr-only">Search for places</label>
     <input type="text" id="search-input" placeholder="🔍 Что-то заброшенное у воды..." autocomplete="off" aria-label="Search for places using natural language" data-enter="search" data-needs-network />
   </div>
-  <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill"></div></div><span class="fog-pct" id="fog-pct">0%</span></div></div>
+  <div id="map-stack">
+    <div id="fog-stats"><div class="fog-progress"><span>🗺️ Explored:</span><div class="fog-bar"><div class="fog-bar-fill" id="fog-fill"></div></div><span class="fog-pct" id="fog-pct">0%</span></div></div>
+    <div id="daily-card" class="daily-card" data-feature="daily" hidden>
+      <button class="daily-close" aria-label="Dismiss place of the day" data-action="daily-dismiss">✕</button>
+      <div class="daily-label">🌅 Place of the day</div>
+      <div class="daily-name" id="daily-name"></div>
+      <div class="daily-reason" id="daily-reason"></div>
+      <button class="btn btn-primary btn-sm mt-8" data-action="daily-open">Show on map</button>
+    </div>
+  </div>
   <div id="historical-panel">
     <button class="hist-close" id="hist-close" aria-label="Close history panel" data-action="close-history">✕</button>
     <div class="hist-title">🕰️ Time Travel</div>
@@ -73,10 +86,13 @@
   <div id="map" role="application" aria-label="Map"></div>
   <div id="place-card" role="region" aria-label="Place details">
     <button class="card-close" id="card-close" aria-label="Close place card" data-action="close-card">✕</button>
-    <div id="card-categories"></div>
+    <div class="card-head"><span id="card-categories"></span><span class="unusual-badge" id="card-unusual" hidden></span></div>
     <div class="card-name" id="card-name"></div>
     <div class="card-meta-info" id="card-meta"></div>
+    <div class="reasons" id="card-reasons" hidden></div>
     <div class="card-desc" id="card-desc"></div>
+    <div class="card-wiki" id="card-wiki" hidden></div>
+    <div class="photo-strip" id="card-photos" hidden></div>
     <div class="mt-8"><div class="text-tiny text-secondary mb-3">Confidence</div><div class="confidence-bar"><div class="confidence-fill" id="card-conf-fill"></div></div></div>
     <div class="card-buttons">
       <button class="btn btn-primary flex-1" id="card-navigate" data-action="card-navigate">🧭 Navigate</button>
@@ -84,6 +100,14 @@
       <button class="btn btn-secondary" id="card-story" title="Get AI story" aria-label="Get AI story" data-action="card-story" data-needs-network>📖</button>
       <button class="btn btn-secondary" id="card-checkin" title="Check in" aria-label="Check in" data-action="card-checkin">📍</button>
     </div>
+    <details class="card-ask" id="card-ask">
+      <summary>💬 Ask about this place</summary>
+      <div class="ask-log" id="ask-log" role="log" aria-live="polite"></div>
+      <div class="ask-row">
+        <input type="text" class="input" id="ask-input" maxlength="500" placeholder="Is it safe to go inside?" aria-label="Question about this place" data-enter="ask-send" data-needs-network />
+        <button class="btn btn-primary" id="ask-send" aria-label="Ask" data-action="ask-send" data-needs-network>➤</button>
+      </div>
+    </details>
   </div>
 
   <div class="nav-distance-badge" id="nav-distance" role="status">🧭 <span id="nav-dist-text"></span><button class="nav-stop" id="nav-stop" aria-label="Stop navigation" data-action="nav-stop">✕</button></div>
@@ -115,6 +139,7 @@
   <div class="panel">
     <div class="panel-header">
       <h2>🤖 AI Explorer Chat</h2>
+      <button class="help-btn icon-btn" id="chat-speak" aria-pressed="false" aria-label="Read replies aloud" title="Read replies aloud" data-action="toggle-speak" hidden>🔈</button>
       <button class="help-btn" aria-label="Help" data-action="help" data-topic="chat">?</button>
     </div>
     <div id="chat-messages" role="log" aria-live="polite" aria-label="Chat conversation">
@@ -133,6 +158,7 @@
     </div>
     <div id="chat-input-row">
       <input type="text" class="input" id="chat-input" placeholder="Спроси что-нибудь..." maxlength="1000" aria-label="Chat message" data-enter="chat-input" data-needs-network />
+      <button class="btn btn-secondary" id="chat-mic" aria-pressed="false" aria-label="Dictate a message" title="Speak your question" data-action="chat-mic" hidden>🎤</button>
       <button class="btn btn-primary" id="chat-send" aria-label="Send message" data-action="chat-send" data-needs-network>➤</button>
     </div>
   </div>
@@ -198,6 +224,7 @@
       <div class="tabs" id="route-tabs" role="tablist" aria-label="Route types">
         <button class="tab active" role="tab" id="tab-r-build" aria-selected="true" aria-controls="rtab-build" data-action="tab" data-group="r" data-tab="build">Point-to-Point</button>
         <button class="tab" role="tab" id="tab-r-explore" aria-selected="false" tabindex="-1" aria-controls="rtab-explore" data-action="tab" data-group="r" data-tab="explore">Circular Walk</button>
+        <button class="tab" role="tab" id="tab-r-loop" aria-selected="false" tabindex="-1" aria-controls="rtab-loop" data-feature="loop" data-action="tab" data-group="r" data-tab="loop">Loop</button>
         <button class="tab" role="tab" id="tab-r-saved" aria-selected="false" tabindex="-1" aria-controls="rtab-saved" data-action="tab" data-group="r" data-tab="saved">My Routes</button>
       </div>
 
@@ -222,6 +249,26 @@
         <button class="btn btn-primary w-100" id="route-explore-btn" data-action="route-explore" data-needs-network>🔄 Generate Circular Walk</button>
       </div>
 
+      <!-- Loop route (POST /api/route/loop) -->
+      <div id="rtab-loop" class="rtab" role="tabpanel" aria-labelledby="tab-r-loop" data-feature="loop" hidden>
+        <p class="text-small text-secondary mb-14">A round trip that starts and ends here and fits your time, passing a few interesting places.</p>
+        <div class="form-group"><label class="form-label" for="loop-center">Start Point (lat, lng)</label><input class="input" id="loop-center" placeholder="42.441, 18.771 or use 📍"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label" for="loop-hours">Duration (hours)</label><input type="number" class="input" id="loop-hours" value="2" min="0.5" max="12" step="0.5"></div>
+          <div class="form-group"><label class="form-label" for="loop-stops">Max stops</label><input type="number" class="input" id="loop-stops" value="5" min="2" max="8" step="1"></div>
+        </div>
+        <div class="form-group"><span class="form-label" id="lbl-loop-mode">How</span>
+          <div class="seg" role="radiogroup" aria-labelledby="lbl-loop-mode" id="loop-mode">
+            <button type="button" role="radio" aria-checked="true" data-action="loop-mode" data-mode="walking">🚶 On foot</button>
+            <button type="button" role="radio" aria-checked="false" data-action="loop-mode" data-mode="cycling">🚲 By bike</button>
+          </div>
+        </div>
+        <div class="form-group"><span class="form-label" id="lbl-loop-cats">Categories</span>
+          <div id="loop-cats" class="category-chips mt-4" role="group" aria-labelledby="lbl-loop-cats"></div>
+        </div>
+        <button class="btn btn-primary w-100" id="route-loop-btn" data-action="route-loop" data-needs-network>🔁 Build loop</button>
+      </div>
+
       <!-- Saved routes -->
       <div id="rtab-saved" class="rtab" role="tabpanel" aria-labelledby="tab-r-saved" hidden>
         <div id="saved-routes-list"></div>
@@ -232,6 +279,7 @@
         <div class="card">
           <div class="card-title" id="route-title">Route</div>
           <div class="card-meta" id="route-meta"></div>
+          <div class="text-small mt-6" id="route-summary" hidden></div>
           <div id="route-waypoints" class="mt-10"></div>
           <div class="card-actions mt-12">
             <button class="btn btn-primary btn-sm" data-action="route-export" data-fmt="gpx" data-needs-network>📥 GPX</button>
@@ -270,6 +318,16 @@
             <div class="profile-stat"><div class="profile-stat-value" id="ps-visits">0</div><div class="profile-stat-label">visits</div></div>
           </div>
         </div>
+      </div>
+
+      <div class="card streak-card mb-14" id="streak-card" data-feature="streak" hidden>
+        <div class="row-between"><div><div class="streak-main"><span class="flame" id="streak-flame" aria-hidden="true">🔥</span> <span id="streak-count">0</span> <span class="streak-unit">day streak</span></div><div class="text-small text-secondary" id="streak-sub"></div></div></div>
+        <div class="streak-days" id="streak-days" role="img" aria-label="Activity over the last 60 days"></div>
+      </div>
+      <div class="card collections-card mb-14" id="collections-card" data-feature="collections" hidden>
+        <div class="card-title">📚 Collections</div>
+        <div class="text-small text-secondary mb-8" id="collections-sub">Places you visited within 50 km of you</div>
+        <div id="collections-list"></div>
       </div>
 
       <div class="tabs" id="gam-tabs" role="tablist" aria-label="Profile sections">
@@ -423,11 +481,16 @@
 <script src="js/actions.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/help.js"></script>
+<script src="js/settings.js"></script>
 <script src="js/api.js"></script>
 <script src="js/map.js"></script>
 <script src="js/nav.js"></script>
 <script src="js/places.js"></script>
+<script src="js/place-extras.js"></script>
+<script src="js/daily.js"></script>
+<script src="js/heatmap.js"></script>
 <script src="js/chat.js"></script>
+<script src="js/voice.js"></script>
 <script src="js/journal.js"></script>
 <script src="js/routes.js"></script>
 <script src="js/profile.js"></script>

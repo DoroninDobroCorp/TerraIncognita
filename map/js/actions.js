@@ -85,7 +85,7 @@ document.addEventListener('keydown', (ev) => {
 
   // WAI-ARIA tabs: arrow keys move between tabs of the same tablist.
   if (t.getAttribute('role') === 'tab' && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) {
-    const tabs = $$('[role="tab"]', t.closest('[role="tablist"]') || document);
+    const tabs = $$('[role="tab"]', t.closest('[role="tablist"]') || document).filter(x => !x.hidden);
     let i = tabs.indexOf(t);
     if (ev.key === 'ArrowRight') i = (i + 1) % tabs.length;
     else if (ev.key === 'ArrowLeft') i = (i - 1 + tabs.length) % tabs.length;

@@ -128,6 +128,16 @@ function safeColor(c, fallback = '#888888') {
   const s = String(c || '').trim();
   return /^#[0-9a-f]{3,8}$/i.test(s) || /^(rgb|hsl)a?\([\d\s.,%/]+\)$/i.test(s) ? s : fallback;
 }
+/** Black or white, whichever reads better on `bg` (#rgb / #rrggbb); white for anything else. */
+function contrastText(bg) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(bg || '').trim());
+  if (!m) return '#ffffff';
+  let h = m[1];
+  if (h.length === 3) h = [...h].map(c => c + c).join('');
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map(c => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.179 ? '#000000' : '#ffffff';
+}
 /** Category definition for an id, never undefined and with safe colour. */
 function catDef(id) {
   const d = CATEGORIES[id] || CATEGORIES.landmark || { icon:'📍', label:String(id || 'Place'), color:'#888888' };

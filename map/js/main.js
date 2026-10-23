@@ -4,6 +4,7 @@
 
 /** Runs once the map style is ready (see initMap). */
 async function startApp() {
+  syncLocationInputs(); // route forms start with the default/map location instead of empty fields
   try {
     const config = await api('/api/map/config');
     if (config.category_styles) {
@@ -37,11 +38,13 @@ async function startApp() {
 function boot() {
   loadPersistedState();
   initUi();
+  initSettings();
   initPlaces();
+  initVoice();
   buildExploreCats();
   initPwa();
   initMap(startApp);
-  probeFeatures();
+  probeFeatures().then(() => loadStreak());
   checkHealth();
 }
 

@@ -104,6 +104,8 @@ const FEATURE_PATHS = {
 
 function applyFeatureVisibility() {
   $$('[data-feature]').forEach(el => { el.hidden = features[el.dataset.feature] === false; });
+  const ask = $('card-ask'); // lives in the place card, whose visibility also depends on fog
+  if (ask && features.ask === false) ask.hidden = true;
 }
 /** Mark a feature unavailable when the server answers 404/405/501 for it. Returns true if it did. */
 function featureUnavailable(name, err) {
